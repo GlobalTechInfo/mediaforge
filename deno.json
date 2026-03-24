@@ -1,0 +1,52 @@
+{
+  "name": "@globaltech/mediaforge",
+  "version": "0.0.1",
+  "author": "Qasim Ali",
+  "license": "MIT",
+  "nodeModulesDir": "none",
+  "exports": {
+    ".": "./lib/index.ts"
+  },
+  "test": {
+    "include": [
+      "deno-tests/"
+    ],
+    "permissions": {
+      "env": true,
+      "run": true,
+      "write": true,
+      "read": true,
+      "sys": [
+        "uid"
+      ]
+    }
+  },
+  "lint": {
+    "include": [
+      "lib/"
+    ],
+    "exclude": [
+      "deno-tests",
+      "tests/",
+      "src/",
+      "eslint.config.mjs",
+      "node_modules/",
+      "dist/"
+    ]
+  },
+  "publish": {
+    "include": [
+      "lib/**/*.ts",
+      "README.md",
+      "LICENSE",
+      "deno.json"
+    ],
+    "exclude": [
+      "src/**",
+      "deno-tests",
+      "tests/**",
+      "dist/**",
+      "node_modules/**"
+    ]
+  }
+}

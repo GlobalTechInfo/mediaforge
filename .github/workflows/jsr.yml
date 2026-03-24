@@ -1,0 +1,30 @@
+name: Publish to JSR
+
+on:
+  release:
+    types: [released]
+  workflow_dispatch:
+
+jobs:
+  publish-jsr:
+    name: Publish to JSR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Lint
+        run: deno lint
+
+      - name: Dry run
+        run: deno publish --dry-run
+
+      - name: Publish to JSR
+        run: deno publish

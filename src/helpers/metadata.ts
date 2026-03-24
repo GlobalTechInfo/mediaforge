@@ -1,0 +1,131 @@
+import { runFFmpeg } from '../process/spawn.js';
+import { resolveBinary } from '../utils/binary.js';
+
+export interface WriteMetadataOptions {
+  /** Input file */
+  input: string;
+  /** Output file */
+  output: string;
+  /** Container-level metadata */
+  metadata: Record<string, string>;
+  /** Per-stream metadata: key is stream specifier e.g. 'v:0', 'a:0', 's:0' */
+  streamMetadata?: Record<string, Record<string, string>>;
+  /** Chapter definitions */
+  chapters?: ChapterMeta[];
+  /** ffmpeg binary override */
+  binary?: string;
+}
+
+export interface ChapterMeta {
+  /** Chapter title */
+  title: string;
+  /** Start time in seconds */
+  startSec: number;
+  /** End time in seconds */
+  endSec: number;
+}
+
+/**
+ * Write metadata tags to a file without re-encoding.
+ *
+ * @example
+ * await writeMetadata({
+ *   input: 'video.mp4',
+ *   output: 'tagged.mp4',
+ *   metadata: { title: 'My Film', artist: 'Director', year: '2025' },
+ * });
+ */
+export async function writeMetadata(opts: WriteMetadataOptions): Promise<void> {
+  const {
+    input,
+    output,
+    metadata,
+    streamMetadata = {},
+    chapters = [],
+    binary = resolveBinary(),
+  } = opts;
+
+  const args: string[] = ['-y', '-i', input];
+
+  // Add chapter file if chapters provided
+  let chapterInput: string | null = null;
+  if (chapters.length > 0) {
+    const { writeFileSync } = await import('fs');
+    const { join } = await import('path');
+    const { tmpdir } = await import('os');
+    chapterInput = join(tmpdir(), `chapters-${Date.now()}.txt`);
+    let chapterContent = ';FFMETADATA1\n';
+    for (const ch of chapters) {
+      chapterContent += `\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=${Math.round(ch.startSec * 1000)}\nEND=${Math.round(ch.endSec * 1000)}\ntitle=${ch.title}\n`;
+    }
+    writeFileSync(chapterInput, chapterContent);
+    args.push('-i', chapterInput, '-map_chapters', '1');
+  }
+
+  args.push('-c', 'copy', '-map_metadata', '0');
+
+  // Container metadata
+  for (const [k, v] of Object.entries(metadata)) {
+    args.push('-metadata', `${k}=${v}`);
+  }
+
+  // Stream metadata
+  for (const [spec, tags] of Object.entries(streamMetadata)) {
+    for (const [k, v] of Object.entries(tags)) {
+      args.push(`-metadata:s:${spec}`, `${k}=${v}`);
+    }
+  }
+
+  args.push(output);
+
+  try {
+    await runFFmpeg({ binary, args });
+  } finally {
+    if (chapterInput) {
+      const { unlinkSync, existsSync } = await import('fs');
+      if (existsSync(chapterInput)) unlinkSync(chapterInput);
+    }
+  }
+}
+
+/**
+ * Strip ALL metadata from a file (privacy-safe export).
+ *
+ * @example
+ * await stripMetadata({ input: 'original.mp4', output: 'clean.mp4' });
+ */
+export interface StripMetadataOptions {
+  input: string;
+  output: string;
+  binary?: string;
+}
+
+export async function stripMetadata(opts: StripMetadataOptions): Promise<void> {
+  const { input, output, binary = resolveBinary() } = opts;
+  await runFFmpeg({
+    binary,
+    args: ['-y', '-i', input, '-c', 'copy', '-map_metadata', '-1', '-map_chapters', '-1', output],
+  });
+}
+
+// ─── Arg builders ─────────────────────────────────────────────────────────────
+
+export function buildMetadataArgs(
+  metadata: Record<string, string>,
+  streamMetadata?: Record<string, Record<string, string>>,
+): string[] {
+  const args: string[] = ['-c', 'copy', '-map_metadata', '0'];
+  for (const [k, v] of Object.entries(metadata)) args.push('-metadata', `${k}=${v}`);
+  for (const [spec, tags] of Object.entries(streamMetadata ?? {})) {
+    for (const [k, v] of Object.entries(tags)) args.push(`-metadata:s:${spec}`, `${k}=${v}`);
+  }
+  return args;
+}
+
+export function buildChapterContent(chapters: ChapterMeta[]): string {
+  let content = ';FFMETADATA1\n';
+  for (const ch of chapters) {
+    content += `\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=${Math.round(ch.startSec * 1000)}\nEND=${Math.round(ch.endSec * 1000)}\ntitle=${ch.title}\n`;
+  }
+  return content;
+}

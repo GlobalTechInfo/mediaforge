@@ -1,0 +1,64 @@
+{
+  "name": "mediaforge",
+  "version": "0.0.1",
+  "description": "Fully typed TypeScript wrapper for FFmpeg — fluent API, v6/v7/v8 compatible, zero native bindings",
+  "type": "module",
+  "author": "Qasim Ali",
+  "license": "MIT",
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/esm/index.d.ts",
+  "bin": {
+    "mediaforge": "./dist/esm/cli/index.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/esm/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.cjs.json && echo '{\"type\":\"commonjs\"}' > dist/cjs/package.json && chmod +x dist/esm/cli/index.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/ tests/",
+    "test": "node --import tsx/esm --test 'tests/**/*.test.ts'",
+    "test:unit": "node --import tsx/esm --test 'tests/unit/**/*.test.ts'",
+    "test:integration": "node --import tsx/esm --test 'tests/integration/**/*.test.ts'",
+    "test:watch": "node --import tsx/esm --test --watch 'tests/**/*.test.ts'",
+    "test:coverage": "node --import tsx/esm --experimental-test-coverage --test-reporter=lcov --test-reporter-destination=lcov.info --test 'tests/unit/**/*.test.ts'"
+  },
+  "keywords": [
+    "ffmpeg",
+    "ffprobe",
+    "video",
+    "audio",
+    "typescript",
+    "fluent"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GlobalTechInfo/mediaforge.git"
+  },
+  "bugs": {
+    "url": "https://github.com/GlobalTechInfo/mediaforge/issues"
+  },
+  "homepage": "https://github.com/GlobalTechInfo/mediaforge#readme",
+  "publishConfig": {
+    "provenance": true
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^9.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.5.0",
+    "typescript-eslint": "^8.0.0"
+  }
+}
