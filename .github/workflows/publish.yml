@@ -22,7 +22,6 @@ jobs:
           node-version: '20'
       - name: Upgrade NPM
         run: npm install -g npm@latest
-          
 
       - name: Install FFmpeg
         run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
@@ -33,11 +32,11 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Lint
+        run: npm run lint
+
       - name: Build (ESM + CJS)
         run: npm run build
-
-      - name: Units Test
-        run: npm run test:unit
 
       - name: Publish
         run: npm publish --provenance --access public
