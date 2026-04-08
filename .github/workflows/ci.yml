@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  node:
+    name: Node.js ${{ matrix.node }} — ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22', '24']
+        os: [ubuntu-latest]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install FFmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests with coverage (Node 22 only)
+        if: matrix.node == '22'
+        run: npm run test:coverage
+
+      - name: Upload coverage to Codecov (Node 22 only)
+        if: matrix.node == '22'
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./lcov.info
+          fail_ci_if_error: false
+
+      - name: Unit tests (Node 22 and 24)
+        if: matrix.node != '20'
+        run: npm run test:unit
+
+      - name: Integration tests
+        run: npm run test:integration
+        continue-on-error: true
+
+  deno:
+    name: Deno — ubuntu-latest
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Install FFmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+
+      - name: Type check (lib/ only)
+        run: deno task check
+
+      - name: Lint
+        run: deno lint
+
+      - name: Unit tests
+        run: deno task test:unit
+
+      - name: Integration tests
+        run: deno task test:integration
+        continue-on-error: true

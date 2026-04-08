@@ -4,3 +4,8 @@ dist/
 .DS_Store
 ffmpeg2pass-0.log*
 /tmp/
+docs/
+*.lock
+*.mp4
+*.jpg
+*.png

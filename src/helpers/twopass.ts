@@ -5,35 +5,19 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { unlinkSync, existsSync } from 'fs';
 
-/**
- * Options for a two-pass encode.
- */
 export interface TwoPassOptions {
-  /** Path to the input file */
   input: string;
-  /** Path to the output file */
   output: string;
-  /** Video codec, e.g. 'libx264', 'libx265', 'libvpx-vp9' */
   videoCodec: string;
-  /** Target video bitrate, e.g. '2M', '4000k' */
   videoBitrate: string;
-  /** Audio codec, e.g. 'aac', 'libopus'. Set to 'none' to disable audio in pass 1. */
   audioCodec?: string;
-  /** Audio bitrate, e.g. '128k' */
   audioBitrate?: string;
-  /** Pass log file prefix (default: temp dir) */
   passlogfile?: string;
-  /** Path to ffmpeg binary */
   binary?: string;
-  /** Extra output args applied to both passes */
   extraOutputArgs?: string[];
-  /** Extra input args */
   extraInputArgs?: string[];
-  /** Overwrite output without asking */
   overwrite?: boolean;
-  /** Called after pass 1 completes */
   onPass1Complete?: () => void;
-  /** Called after pass 2 completes */
   onPass2Complete?: () => void;
 }
 
@@ -53,10 +37,21 @@ export interface TwoPassOptions {
  */
 export async function twoPassEncode(opts: TwoPassOptions): Promise<void> {
   const binary = resolveBinary(opts.binary);
-  const passlog = opts.passlogfile ?? join(tmpdir(), `mediaforge-passlog-${Date.now()}`);
+  const ts = Date.now();
+  const passlog = opts.passlogfile ?? join(tmpdir(), `mediaforge-passlog-${ts}`);
+
+  // Write pass 1 to a real temp MKV instead of -f null /dev/null.
+  // On ARM Linux (Android Termux FFmpeg 8.x, Ubuntu ARM FFmpeg 7.x) the null
+  // muxer drops frames before they reach the encoder stats writer so the
+  // passlog .log is never created and pass 2 fails with:
+  //   "ratecontrol_init: can't open stats file"
+  // MKV is streamable (no moov-atom seek) so it works on all platforms.
+  const pass1TempOut = join(tmpdir(), `mediaforge-pass1-${ts}.mkv`);
 
   const inputArgs = ['-i', opts.input, ...(opts.extraInputArgs ?? [])];
-  const videoArgs = ['-c:v', opts.videoCodec, '-b:v', opts.videoBitrate];
+  const videoArgs: string[] = [];
+  if (opts.videoCodec) videoArgs.push('-c:v', opts.videoCodec);
+  if (opts.videoBitrate) videoArgs.push('-b:v', opts.videoBitrate);
   const extraOut = opts.extraOutputArgs ?? [];
 
   try {
@@ -67,10 +62,10 @@ export async function twoPassEncode(opts: TwoPassOptions): Promise<void> {
       ...videoArgs,
       '-pass', '1',
       '-passlogfile', passlog,
-      '-an',           // no audio in pass 1 (saves time)
-      '-f', 'null',    // discard output
+      '-an',
+      '-f', 'matroska',
       ...extraOut,
-      '/dev/null',
+      pass1TempOut,
     ];
 
     await runSpawn(binary, pass1Args);
@@ -83,8 +78,7 @@ export async function twoPassEncode(opts: TwoPassOptions): Promise<void> {
       if (opts.audioBitrate !== undefined) audioArgs.push('-b:a', opts.audioBitrate);
     } else if (opts.audioCodec === 'none') {
       audioArgs.push('-an');
-    } else if (opts.audioCodec === undefined) {
-      // Default: copy audio in pass 2
+    } else {
       audioArgs.push('-c:a', 'copy');
     }
 
@@ -103,8 +97,8 @@ export async function twoPassEncode(opts: TwoPassOptions): Promise<void> {
     opts.onPass2Complete?.();
 
   } finally {
-    // Clean up pass log files regardless of success/failure
     cleanPasslog(passlog);
+    tryUnlink(pass1TempOut);
   }
 }
 
@@ -113,15 +107,17 @@ function runSpawn(binary: string, args: string[]): Promise<void> {
   return runFFmpeg(spawnOpts);
 }
 
+function tryUnlink(path: string): void {
+  try {
+    if (existsSync(path)) unlinkSync(path);
+  } catch {
+    // Best effort
+  }
+}
+
 function cleanPasslog(prefix: string): void {
-  // ffmpeg creates prefix-0.log and prefix-0.log.mbtree
   for (const suffix of ['-0.log', '-0.log.mbtree', '.log', '.log.mbtree']) {
-    const path = prefix + suffix;
-    try {
-      if (existsSync(path)) unlinkSync(path);
-    } catch {
-      // Best effort
-    }
+    tryUnlink(prefix + suffix);
   }
 }
 
@@ -136,9 +132,12 @@ export function buildTwoPassArgs(opts: TwoPassOptions): {
 } {
   const binary = opts.binary ?? 'ffmpeg'; void binary;
   const passlog = opts.passlogfile ?? join(tmpdir(), `mediaforge-passlog`);
+  const pass1TempOut = join(tmpdir(), `mediaforge-pass1.mkv`);
 
   const inputArgs = ['-i', opts.input, ...(opts.extraInputArgs ?? [])];
-  const videoArgs = ['-c:v', opts.videoCodec, '-b:v', opts.videoBitrate];
+  const videoArgs: string[] = [];
+  if (opts.videoCodec) videoArgs.push('-c:v', opts.videoCodec);
+  if (opts.videoBitrate) videoArgs.push('-b:v', opts.videoBitrate);
   const extraOut = opts.extraOutputArgs ?? [];
 
   const pass1: string[] = [
@@ -148,9 +147,9 @@ export function buildTwoPassArgs(opts: TwoPassOptions): {
     '-pass', '1',
     '-passlogfile', passlog,
     '-an',
-    '-f', 'null',
+    '-f', 'matroska',
     ...extraOut,
-    '/dev/null',
+    pass1TempOut,
   ];
 
   const audioArgs: string[] = [];

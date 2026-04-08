@@ -67,7 +67,7 @@ export function hlsPackage(opts: HlsOptions): FFmpegBuilder {
     segmentDuration = 6,
     segmentFilename = 'segment%03d.ts',
     hlsListSize = 0,
-    hlsVersion = 3,
+    hlsVersion: _hlsVersion = 3,
     videoCodec = 'libx264',
     videoBitrate = '2M',
     audioCodec = 'aac',
@@ -96,7 +96,6 @@ export function hlsPackage(opts: HlsOptions): FFmpegBuilder {
     .addOutputOption('-sc_threshold', '0')
     .addOutputOption('-hls_time', String(segmentDuration))
     .addOutputOption('-hls_list_size', String(hlsListSize))
-    .addOutputOption('-hls_version', String(hlsVersion))
     .addOutputOption('-hls_segment_filename', segmentPath);
 
   if (crf !== undefined) builder.addOutputOption('-crf', String(crf));
@@ -174,7 +173,7 @@ export function adaptiveHls(opts: AdaptiveHlsOptions): FFmpegBuilder {
     outputDir,
     variants,
     segmentDuration = 6,
-    hlsVersion = 3,
+    hlsVersion: _hlsVersion = 3,
     videoCodec = 'libx264',
     audioCodec = 'aac',
     variantPlaylist = '%v/playlist.m3u8',
@@ -220,7 +219,6 @@ export function adaptiveHls(opts: AdaptiveHlsOptions): FFmpegBuilder {
     builder
       .addOutputOption('-hls_time', String(segmentDuration))
       .addOutputOption('-hls_list_size', '0')
-      .addOutputOption('-hls_version', String(hlsVersion))
       .addOutputOption('-hls_segment_filename', segmentFile)
       .addOutputOption('-g', String(segmentDuration * 30)) // approximate
       .addOutputOption('-sc_threshold', '0');
@@ -333,8 +331,10 @@ export function buildHlsArgs(input: string, outputDir: string, opts: HlsOptions)
   const playlistName = opts.playlistName ?? 'playlist.m3u8';
   const args: string[] = ['-y', '-i', input];
   if (opts.videoCodec) args.push('-c:v', opts.videoCodec);
-  if (opts.videoBitrate) args.push('-b:v', opts.videoBitrate);
   if (opts.audioBitrate) args.push('-b:a', opts.audioBitrate);
+  if (opts.videoBitrate) args.push('-b:v', opts.videoBitrate);
+  // -f hls MUST appear before any hls_* output-private options
+  args.push('-f', 'hls');
   args.push(
     '-hls_time', String(segDuration),
     '-hls_list_size', String(opts.hlsListSize ?? 0),

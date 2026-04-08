@@ -7,19 +7,28 @@
   "exports": {
     ".": "./lib/index.ts"
   },
+  "tasks": {
+    "test": "deno test --allow-env --allow-run --allow-write --allow-read --allow-sys=uid deno-tests/",
+    "test:unit": "deno test --allow-env --allow-run --allow-write --allow-read --allow-sys=uid deno-tests/unit/",
+    "test:integration": "deno test --allow-env --allow-run --allow-write --allow-read --allow-sys=uid deno-tests/integration/",
+    "check": "deno check lib/index.ts"
+  },
   "test": {
     "include": [
       "deno-tests/"
+    ]
+  },
+  "check": {
+    "include": [
+      "lib/",
+      "deno-tests/"
     ],
-    "permissions": {
-      "env": true,
-      "run": true,
-      "write": true,
-      "read": true,
-      "sys": [
-        "uid"
-      ]
-    }
+    "exclude": [
+      "src/",
+      "tests/",
+      "dist/",
+      "node_modules/"
+    ]
   },
   "lint": {
     "include": [
@@ -39,7 +48,8 @@
       "lib/**/*.ts",
       "README.md",
       "LICENSE",
-      "deno.json"
+      "deno.json",
+      "CHANGELOG.md"
     ],
     "exclude": [
       "src/**",

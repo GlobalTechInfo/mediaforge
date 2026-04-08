@@ -50,15 +50,24 @@ export async function generateWaveform(opts: WaveformOptions): Promise<void> {
     binary = resolveBinary(),
   } = opts;
 
-  const filter = [
-    `[0:a:${streamIndex}]`,
-    `showwavespic=s=${width}x${height}`,
-    `:colors=${color}`,
-    `:bgcolor=${backgroundColor}`,
-    `:scale=${scale}`,
-    `:draw=${mode}`,
-    `[v]`,
-  ].join('');
+  // Build showwavespic params conditionally — FFmpeg 7.x removed bgcolor and draw
+  const params: string[] = [];
+  params.push(`s=${width}x${height}`);
+  params.push(`colors=${color}`);
+
+  // Only emit bgcolor when it is explicitly non-default (black); FFmpeg 7.x rejects it
+  if (backgroundColor && backgroundColor.toLowerCase() !== '#000000') {
+    params.push(`bgcolor=${backgroundColor}`);
+  }
+
+  params.push(`scale=${scale}`);
+
+  // draw was removed in FFmpeg 7.x — omit when it is the default value
+  if (mode && mode !== 'line') {
+    params.push(`draw=${mode}`);
+  }
+
+  const filter = `[0:a:${streamIndex}]showwavespic=${params.join(':')}[v]`;
 
   const args: string[] = [
     '-y', '-i', input,
@@ -123,15 +132,23 @@ export async function generateSpectrum(opts: SpectrumOptions): Promise<void> {
 export function buildWaveformFilter(
   width: number, height: number,
   color: string, scale: string, mode: string, streamIndex: number,
+  backgroundColor?: string,
 ): string {
-  return [
-    `[0:a:${streamIndex}]`,
-    `showwavespic=s=${width}x${height}`,
-    `:colors=${color}`,
-    `:scale=${scale}`,
-    `:draw=${mode}`,
-    `[v]`,
-  ].join('');
+  const params: string[] = [];
+  params.push(`s=${width}x${height}`);
+  params.push(`colors=${color}`);
+
+  if (backgroundColor && backgroundColor.toLowerCase() !== '#000000') {
+    params.push(`bgcolor=${backgroundColor}`);
+  }
+
+  params.push(`scale=${scale}`);
+
+  if (mode && mode !== 'line') {
+    params.push(`draw=${mode}`);
+  }
+
+  return `[0:a:${streamIndex}]showwavespic=${params.join(':')}[v]`;
 }
 
 export function buildSpectrumFilter(width: number, height: number, color: string, fps: number): string {

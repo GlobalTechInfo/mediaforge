@@ -1,0 +1,45 @@
+{
+  "$schema": "https://typedoc.app/schema.json",
+  "entryPointStrategy": "expand",
+  "entryPoints": ["src"],
+  "out": "docs",
+  "name": "mediaforge",
+  "includeVersion": true,
+  "readme": "README.md",
+  "tsconfig": "tsconfig.build.json",
+  "excludePrivate": true,
+  "excludeInternal": true,
+  "excludeExternals": false,
+  "excludeNotDocumented": false,
+  "cleanOutputDir": true,
+  "hideGenerator": false,
+  "searchInComments": true,
+  "searchInDocuments": true,
+  "categorizeByGroup": true,
+  "groupOrder": [
+    "Builder",
+    "Process",
+    "Helpers",
+    "Codecs",
+    "Filters",
+    "Probe",
+    "Compatibility",
+    "Utilities",
+    "Types",
+    "*"
+  ],
+  "sort": ["source-order"],
+  "navigationLinks": {
+    "GitHub": "https://github.com/GlobalTechInfo/mediaforge",
+    "npm": "https://www.npmjs.com/package/mediaforge",
+    "JSR": "https://jsr.io/@globaltech/mediaforge",
+    "Changelog": "https://github.com/GlobalTechInfo/mediaforge/blob/main/CHANGELOG.md"
+  },
+  "exclude": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/tests/**",
+    "**/deno-tests/**",
+    "**/*.test.ts"
+  ]
+}

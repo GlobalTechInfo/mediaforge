@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process';
 import type { VersionInfo } from '../types/version.ts';
 
-/** Matches "ffmpeg version 7.1.1 ..." and "ffmpeg version N-116912-gabcdef ..." */
-const RELEASE_RE = /^ffmpeg version (\d+)\.(\d+)\.(\d+)/;
+/** Matches "ffmpeg version 7.1.1 ...", "ffmpeg version 8.1 ..." and "ffmpeg version N-116912-gabcdef ..." */
+const RELEASE_RE = /^ffmpeg version (\d+)\.(\d+)(?:\.(\d+))?/;
 const GIT_RE = /^ffmpeg version (N-\S+)/;
 
 /** Matches "  libavcodec     61.19.100 / 61.19.100" and "  libavformat    61. 7.100 / ..." */
@@ -26,7 +26,7 @@ export function parseVersionOutput(output: string): VersionInfo {
 
   const releaseMatch = RELEASE_RE.exec(firstLine);
   if (releaseMatch !== null) {
-    raw = `${releaseMatch[1]}.${releaseMatch[2]}.${releaseMatch[3]}`;
+    raw = `${releaseMatch[1]}.${releaseMatch[2]}${releaseMatch[3] !== undefined ? `.${releaseMatch[3]}` : ''}`;
     major = parseInt(releaseMatch[1] ?? '0', 10);
     minor = parseInt(releaseMatch[2] ?? '0', 10);
     patch = parseInt(releaseMatch[3] ?? '0', 10);

@@ -59,13 +59,34 @@ export function pipeThrough(opts: PipeOptions): PipeProcess {
   const {
     inputStream,
     inputFormat,
-    outputArgs = [],
     outputFormat,
     parseProgress = false,
     binary = resolveBinary(),
   } = opts;
 
+  let { outputArgs = [] } = opts;
+
+  // MP4/MOV written to a pipe cannot seek back to write the moov atom.
+  // Automatically inject fragmented-MP4 flags so the output is streamable.
+  // Only injected when the user has not already supplied -movflags themselves.
+  const pipedContainerNeedsFragmentation =
+    outputFormat === 'mp4' || outputFormat === 'mov';
+  const userAlreadySetMovflags = outputArgs.includes('-movflags');
+  if (pipedContainerNeedsFragmentation && !userAlreadySetMovflags) {
+    outputArgs = [...outputArgs, '-movflags', 'frag_keyframe+empty_moov+default_base_moof'];
+  }
+
   const args: string[] = ['-y'];
+
+  // MP4/MOV piped as INPUT: the moov atom is normally at the end of the file,
+  // so FFmpeg cannot find codec parameters when reading from a non-seekable pipe.
+  // Increase analyzeduration and probesize so FFmpeg buffers enough data to
+  // detect stream parameters before giving up with "unspecified pixel format".
+  const pipedInputNeedsProbe =
+    inputFormat === 'mp4' || inputFormat === 'mov' || inputFormat === 'm4v';
+  if (pipedInputNeedsProbe) {
+    args.push('-analyzeduration', '100M', '-probesize', '100M');
+  }
 
   if (inputFormat) args.push('-f', inputFormat);
   args.push('-i', 'pipe:0');
@@ -229,9 +250,27 @@ export function buildPipeThroughArgs(
   outputFormat: string | undefined,
 ): string[] {
   const args: string[] = ['-y'];
+
+  // MP4/MOV piped as INPUT: moov atom is at end of file — buffer more data
+  const pipedInputNeedsProbe =
+    inputFormat === 'mp4' || inputFormat === 'mov' || inputFormat === 'm4v';
+  if (pipedInputNeedsProbe) {
+    args.push('-analyzeduration', '100M', '-probesize', '100M');
+  }
+
   if (inputFormat) args.push('-f', inputFormat);
   args.push('-i', 'pipe:0');
-  args.push(...outputArgs);
+
+  // Auto-inject fragmented-MP4 flags when piping to MP4/MOV (no seek available)
+  const pipedContainerNeedsFragmentation =
+    outputFormat === 'mp4' || outputFormat === 'mov';
+  const userAlreadySetMovflags = outputArgs.includes('-movflags');
+  const effectiveOutputArgs =
+    pipedContainerNeedsFragmentation && !userAlreadySetMovflags
+      ? [...outputArgs, '-movflags', 'frag_keyframe+empty_moov+default_base_moof']
+      : outputArgs;
+
+  args.push(...effectiveOutputArgs);
   if (outputFormat) args.push('-f', outputFormat);
   args.push('pipe:1');
   return args;

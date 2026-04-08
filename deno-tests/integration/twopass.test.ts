@@ -16,9 +16,9 @@ describe('buildTwoPassArgs (pure — no ffmpeg)', () => {
     expect(typeof r.passlog).toBe('string');
   });
 
-  it('pass1 targets /dev/null', () => {
+  it('pass1 targets a temp MKV file', () => {
     const { pass1 } = buildTwoPassArgs(BASE);
-    expect(pass1[pass1.length - 1]).toBe('/dev/null');
+    expect(pass1[pass1.length - 1]).toMatch(/\.mkv$/);
   });
 
   it('pass1 has -an', () => {

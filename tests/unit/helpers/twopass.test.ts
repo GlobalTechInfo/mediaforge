@@ -10,11 +10,11 @@ describe('buildTwoPassArgs', () => {
     videoBitrate: '2M',
   };
 
-  it('pass 1 writes to /dev/null with -f null', () => {
+  it('pass 1 writes to a temp MKV with -f matroska', () => {
     const { pass1 } = buildTwoPassArgs(BASE);
     expect(pass1).toContain('-f');
-    expect(pass1).toContain('null');
-    expect(pass1[pass1.length - 1]).toBe('/dev/null');
+    expect(pass1).toContain('matroska');
+    expect(pass1[pass1.length - 1]).toMatch(/\.mkv$/);
   });
 
   it('pass 1 has -an to disable audio', () => {

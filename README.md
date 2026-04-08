@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="https://raw.githubusercontent.com/GlobalTechInfo/Database/main/images/mediaforge.png" alt="mediaforge" width="100%" />
+
 [![NPM](https://img.shields.io/npm/v/mediaforge.svg)](https://www.npmjs.com/package/mediaforge)
 [![JSR](https://jsr.io/badges/@globaltech/mediaforge)](https://jsr.io/@globaltech/mediaforge)
 [![codecov](https://codecov.io/gh/GlobalTechInfo/mediaforge/branch/main/graph/badge.svg)](https://codecov.io/gh/GlobalTechInfo/mediaforge)
@@ -17,7 +19,9 @@
 `mediaforge` is a zero-dependency TypeScript library that wraps the system `ffmpeg` binary with a fluent, fully-typed API. No native bindings, no bundled binaries — it uses whatever `ffmpeg` is installed on the system.
 
 ```ts
-import { ffmpeg } from 'mediaforge';
+import { ffmpeg } from 'mediaforge';             // ESM ✅
+// or
+const { ffmpeg } = require('mediaforge');        // CJS ✅
 
 await ffmpeg('input.mp4')
   .output('output.mp4')
@@ -67,9 +71,8 @@ Requires `ffmpeg` (and `ffprobe`) to be installed and on `PATH`, or set `FFMPEG_
 
 | Runtime | Supported | Notes |
 |---------|-----------|-------|
-| Node.js 18+ | ✅ | Full support |
-| Node.js 20+ | ✅ | Recommended |
-| Deno 2.x | ✅ | Via `node:` compat layer — requires `--allow-env` and `--allow-run` |
+| Node 20+ | ✅ | Recommended |
+| Deno 2.x | ✅ | Full support |
 | Bun | ✅ | Full support |
 | npm | ✅ | Full support |
 | pnpm | ✅ | Full support |
@@ -80,7 +83,7 @@ Requires `ffmpeg` (and `ffprobe`) to be installed and on `PATH`, or set `FFMPEG_
 > `--allow-run` (for spawning the `ffmpeg`/`ffprobe` binaries) when running your script:
 >
 > ```bash
-> deno run --allow-env --allow-run my-script.ts
+> deno run --allow-run --allow-write --allow-read my-script.ts
 > ```
 
 ---
@@ -233,6 +236,9 @@ import { pipeThrough, streamOutput, streamToFile } from 'mediaforge';
 import fs from 'fs';
 
 // Pipe: readable stream → ffmpeg → writable stream
+// When outputFormat is 'mp4' or 'mov', the library automatically injects
+// -movflags frag_keyframe+empty_moov+default_base_moof so the output is
+// streamable without seeking. You do not need to set this manually.
 const proc = pipeThrough({
   inputFormat: 'webm',
   outputArgs: ['-c:v', 'libx264', '-c:a', 'aac'],
@@ -264,6 +270,15 @@ await streamToFile({
   outputArgs: ['-c:v', 'libx264', '-c:a', 'aac'],
 });
 ```
+
+> **MP4/MOV pipe fixes:** Two automatic fixes are applied when piping MP4/MOV:
+> 1. **Output:** `-movflags frag_keyframe+empty_moov+default_base_moof` is injected
+>    automatically for `mp4`/`mov` output formats so the stream is seekable-free.
+>    Pass your own `-movflags` to override.
+> 2. **Input:** `-analyzeduration 100M -probesize 100M` is injected automatically
+>    when `inputFormat` is `mp4`/`mov`/`m4v`, giving FFmpeg enough buffer to locate
+>    the `moov` atom even when it is at the end of the file. For large files,
+>    pre-processing with `-movflags +faststart` (moov at start) is still recommended.
 
 ---
 
@@ -378,7 +393,7 @@ await addWatermark({
 await addTextWatermark({
   input: 'video.mp4',
   output: 'watermarked.mp4',
-  text: '© MyCompany 2025',
+  text: '© MyCompany 2026',
   position: 'bottom-right',
   fontSize: 24,
   fontColor: 'white@0.8',
@@ -425,7 +440,7 @@ import { writeMetadata, stripMetadata } from 'mediaforge';
 await writeMetadata({
   input: 'video.mp4',
   output: 'tagged.mp4',
-  metadata: { title: 'My Film', artist: 'Director', year: '2025', comment: 'Draft' },
+  metadata: { title: 'My Film', artist: 'Director', year: '2026', comment: 'Draft' },
   streamMetadata: {
     'a:0': { language: 'eng', title: 'English Audio' },
     's:0': { language: 'fra' },
@@ -456,7 +471,7 @@ await generateWaveform({
   width: 1920,
   height: 240,
   color: '#00aaff',
-  backgroundColor: '#1a1a2e',
+  backgroundColor: '#1a1a2e',  // Only emitted when non-default (FFmpeg 7.x safe)
   mode: 'line',    // line | point | p2p | cline
   scale: 'lin',    // lin | log
 });
@@ -471,6 +486,11 @@ await generateSpectrum({
   fps: 25,
 });
 ```
+
+> **FFmpeg 7.x compatibility:** The `showwavespic` filter's `bgcolor` and `draw`
+> parameters were removed in FFmpeg 7.1. `generateWaveform` only emits `bgcolor`
+> when you set a non-default (non-black) value, and only emits `draw` when the
+> mode is not the default `'line'`.
 
 ---
 
@@ -529,6 +549,7 @@ await hlsPackage({
   input: 'input.mp4',
   outputDir: './hls-output',
   segmentDuration: 6,
+  hlsVersion: 3,          // 3 | 4 | 5 | 6 | 7 — default: 3
   videoCodec: 'libx264',
   videoBitrate: '2M',
   audioBitrate: '128k',
@@ -554,6 +575,11 @@ await dashPackage({
   videoBitrate: '2M',
 }).run();
 ```
+
+> **FFmpeg 7.x compatibility:** `hls_version` and all other `hls_*` flags are
+> output-private options in FFmpeg — they must follow `-f hls` in the argument
+> list or FFmpeg will reject them with `Unrecognized option 'hls_version'`. The
+> library now guarantees correct flag ordering internally.
 
 ---
 
@@ -858,7 +884,7 @@ const codec = await builder.selectVideoCodec([
 | v6.x | ✅ Full |
 | v5.x and below | ⚠️ Partial |
 
-Tested with Node.js 18, 20, 22.
+Tested with Node.js 20, 22.
 
 ---
 
