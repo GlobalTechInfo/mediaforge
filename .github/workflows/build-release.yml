@@ -41,12 +41,13 @@ jobs:
 
       - name: Lint
         run: npm run lint
+      
+      - name: Build (ESM + CJS)
+        run: npm run build
 
       - name: Unit tests
         run: npm run test:unit
-
-      - name: Build (ESM + CJS)
-        run: npm run build
+        
 
       - name: Package dist archive
         run: |
