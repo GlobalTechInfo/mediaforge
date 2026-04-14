@@ -71,12 +71,16 @@ export async function addWatermark(opts: WatermarkOptions): Promise<void> {
 
   const overlayExpr = positionToOverlay(position, margin);
 
-  // Build watermark filter chain
-  let wmarkFilter = '[1:v]';
-  if (scaleWidth) wmarkFilter += `scale=${scaleWidth}:-1,`;
-  if (opacity < 1) wmarkFilter += `format=rgba,colorchannelmixer=aa=${opacity},`;
-  wmarkFilter += `[wm]`;
+  // Build watermark filter chain — collect transforms into an array to avoid
+  // trailing-comma bugs (e.g. "format=rgba,colorchannelmixer=aa=0.8,[wm]"
+  // creates an empty filter '' that FFmpeg 8.x rejects).
+  const transforms: string[] = [];
+  if (scaleWidth) transforms.push(`scale=${scaleWidth}:-1`);
+  if (opacity < 1) transforms.push('format=rgba', `colorchannelmixer=aa=${opacity}`);
+  // Always need at least one filter between [1:v] and [wm]
+  if (transforms.length === 0) transforms.push('copy');
 
+  const wmarkFilter = `[1:v]${transforms.join(',')}[wm]`;
   const filterComplex = `${wmarkFilter};[0:v][wm]overlay=${overlayExpr}[out]`;
 
   await new FFmpegBuilder([input, watermark])
@@ -166,10 +170,11 @@ export function buildWatermarkFilter(
   scaleWidth?: number,
 ): string {
   const overlayExpr = positionToOverlay(position, margin);
-  let wmarkFilter = '[1:v]';
-  if (scaleWidth) wmarkFilter += `scale=${scaleWidth}:-1,`;
-  if (opacity < 1) wmarkFilter += `format=rgba,colorchannelmixer=aa=${opacity},`;
-  wmarkFilter += `[wm]`;
+  const transforms: string[] = [];
+  if (scaleWidth) transforms.push(`scale=${scaleWidth}:-1`);
+  if (opacity < 1) transforms.push('format=rgba', `colorchannelmixer=aa=${opacity}`);
+  if (transforms.length === 0) transforms.push('copy');
+  const wmarkFilter = `[1:v]${transforms.join(',')}[wm]`;
   return `${wmarkFilter};[0:v][wm]overlay=${overlayExpr}[out]`;
 }
 

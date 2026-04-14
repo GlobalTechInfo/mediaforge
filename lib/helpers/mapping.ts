@@ -67,12 +67,26 @@ export function ss(
 
 /**
  * Build a -map flag from a StreamSpecifier or raw string.
+ * Returns `['-map', specStr]` tuple when called with a StreamSpecifier/string.
+ * Returns the specifier string directly when called with (fileIndex, type, streamIndex).
  *
  * @example
- * mapStream(ss(0, 'v', 0)) → ['-map', '0:v:0']
- * mapStream('0:a:1')       → ['-map', '0:a:1']
+ * mapStream(ss(0, 'v', 0))   → ['-map', '0:v:0']
+ * mapStream('0:a:1')         → ['-map', '0:a:1']
+ * mapStream(0, 'v', 0)       → '0:v:0'   (convenience — string only)
  */
-export function mapStream(spec: StreamSpecifier | string): ['-map', string] {
+export function mapStream(spec: StreamSpecifier | string): ['-map', string];
+export function mapStream(fileIndex: number, type: MediaTypeChar, streamIndex?: number): string;
+export function mapStream(
+  spec: StreamSpecifier | string | number,
+  type?: MediaTypeChar,
+  streamIndex?: number,
+): ['-map', string] | string {
+  if (typeof spec === 'number') {
+    // Convenience: called as mapStream(0, 'v', 0) → returns spec string
+    const s: StreamSpecifier = { fileIndex: spec, ...(type !== undefined ? { type } : {}), ...(streamIndex !== undefined ? { streamIndex } : {}) };
+    return serializeSpecifier(s);
+  }
   const str = typeof spec === 'string' ? spec : serializeSpecifier(spec);
   return ['-map', str];
 }

@@ -538,3 +538,133 @@ describe('vaapiToArgs — extended options', () => {
     expect(args).toContain('-rc_mode');
   });
 });
+
+// ─── New Video Codec Helpers ────────────────────────────────────────────────
+
+import {
+  proResToArgs, dnxhdToArgs, mjpegToArgs, mpeg2ToArgs,
+  mpeg4ToArgs, vp8ToArgs, theoraToArgs, ffv1ToArgs,
+} from '../../../lib/codecs/video.ts';
+import {
+  alacToArgs, eac3ToArgs, truehdToArgs, vorbisToArgs,
+  wavpackToArgs, pcmToArgs, mp2ToArgs,
+} from '../../../lib/codecs/audio.ts';
+import { mediacodecVideoToArgs, vulkanVideoToArgs } from '../../../lib/codecs/hardware.ts';
+
+describe('proResToArgs', () => {
+  it('defaults to prores_ks', () => { expect(proResToArgs()).toContain('prores_ks'); });
+  it('sets profile:v', () => {
+    const args = proResToArgs({ profile: 3 });
+    expect(args).toContain('-profile:v');
+    expect(args).toContain('3');
+  });
+  it('accepts prores_aw encoder', () => { expect(proResToArgs({}, 'prores_aw')).toContain('prores_aw'); });
+});
+
+describe('dnxhdToArgs', () => {
+  it('emits dnxhd codec', () => { expect(dnxhdToArgs()).toContain('dnxhd'); });
+  it('sets bitrate', () => { expect(dnxhdToArgs({ bitrate: 145 })).toContain('145k'); });
+  it('sets pixFmt', () => { expect(dnxhdToArgs({ pixFmt: 'yuv422p10le' })).toContain('yuv422p10le'); });
+});
+
+describe('mjpegToArgs', () => {
+  it('emits mjpeg codec', () => { expect(mjpegToArgs()).toContain('mjpeg'); });
+  it('sets qscale', () => {
+    const args = mjpegToArgs({ qscale: 3 });
+    expect(args).toContain('-q:v');
+    expect(args).toContain('3');
+  });
+});
+
+describe('mpeg2ToArgs', () => {
+  it('emits mpeg2video codec', () => { expect(mpeg2ToArgs()).toContain('mpeg2video'); });
+  it('sets bitrate', () => { expect(mpeg2ToArgs({ bitrate: 8000 })).toContain('8000k'); });
+  it('sets interlaced flags', () => { expect(mpeg2ToArgs({ interlaced: true })).toContain('+ildct+ilme'); });
+});
+
+describe('mpeg4ToArgs', () => {
+  it('emits mpeg4 codec by default', () => { expect(mpeg4ToArgs()).toContain('mpeg4'); });
+  it('accepts libxvid', () => { expect(mpeg4ToArgs({}, 'libxvid')).toContain('libxvid'); });
+});
+
+describe('vp8ToArgs', () => {
+  it('emits libvpx codec', () => { expect(vp8ToArgs()).toContain('libvpx'); });
+  it('sets bitrate', () => { expect(vp8ToArgs({ bitrate: 800 })).toContain('800k'); });
+});
+
+describe('theoraToArgs', () => {
+  it('emits libtheora codec', () => { expect(theoraToArgs()).toContain('libtheora'); });
+  it('sets quality', () => {
+    const args = theoraToArgs({ qscale: 7 });
+    expect(args).toContain('-q:v');
+    expect(args).toContain('7');
+  });
+});
+
+describe('ffv1ToArgs', () => {
+  it('emits ffv1 codec', () => { expect(ffv1ToArgs()).toContain('ffv1'); });
+  it('sets sliceCrc', () => { expect(ffv1ToArgs({ sliceCrc: true })).toContain('1'); });
+});
+
+describe('alacToArgs', () => {
+  it('emits alac codec', () => { expect(alacToArgs()).toContain('alac'); });
+});
+
+describe('eac3ToArgs', () => {
+  it('emits eac3 codec', () => { expect(eac3ToArgs()).toContain('eac3'); });
+  it('sets bitrate', () => { expect(eac3ToArgs({ bitrate: 640 })).toContain('640k'); });
+  it('sets dialnorm', () => {
+    const args = eac3ToArgs({ dialNorm: -24 });
+    expect(args).toContain('-dialnorm');
+    expect(args).toContain('-24');
+  });
+});
+
+describe('truehdToArgs', () => {
+  it('emits truehd codec', () => { expect(truehdToArgs()).toContain('truehd'); });
+});
+
+describe('vorbisToArgs', () => {
+  it('emits libvorbis codec', () => { expect(vorbisToArgs()).toContain('libvorbis'); });
+  it('sets quality', () => {
+    const args = vorbisToArgs({ qscale: 5 });
+    expect(args).toContain('-q:a');
+    expect(args).toContain('5');
+  });
+});
+
+describe('wavpackToArgs', () => {
+  it('emits wavpack codec', () => { expect(wavpackToArgs()).toContain('wavpack'); });
+});
+
+describe('pcmToArgs', () => {
+  it('emits pcm_s16le', () => { expect(pcmToArgs('pcm_s16le')).toContain('pcm_s16le'); });
+  it('emits pcm_s24le', () => { expect(pcmToArgs('pcm_s24le')).toContain('pcm_s24le'); });
+  it('emits pcm_f32le', () => { expect(pcmToArgs('pcm_f32le')).toContain('pcm_f32le'); });
+  it('sets sampleRate', () => {
+    const args = pcmToArgs('pcm_s16le', { sampleRate: 48000 });
+    expect(args).toContain('-ar');
+    expect(args).toContain('48000');
+  });
+  it('sets channels', () => { expect(pcmToArgs('pcm_s24le', { channels: 2 })).toContain('2'); });
+});
+
+describe('mp2ToArgs', () => {
+  it('emits mp2 codec', () => { expect(mp2ToArgs()).toContain('mp2'); });
+  it('sets bitrate', () => { expect(mp2ToArgs({ bitrate: 192 })).toContain('192k'); });
+  it('sets sampleRate', () => { expect(mp2ToArgs({ sampleRate: 48000 })).toContain('48000'); });
+});
+
+describe('mediacodecVideoToArgs', () => {
+  it('defaults to h264_mediacodec', () => { expect(mediacodecVideoToArgs({})).toContain('h264_mediacodec'); });
+  it('accepts hevc_mediacodec', () => { expect(mediacodecVideoToArgs({}, 'hevc_mediacodec')).toContain('hevc_mediacodec'); });
+  it('sets bitrate', () => { expect(mediacodecVideoToArgs({ bitrate: 4000 })).toContain('4000k'); });
+  it('accepts av1_mediacodec', () => { expect(mediacodecVideoToArgs({}, 'av1_mediacodec')).toContain('av1_mediacodec'); });
+});
+
+describe('vulkanVideoToArgs', () => {
+  it('defaults to h264_vulkan', () => { expect(vulkanVideoToArgs({})).toContain('h264_vulkan'); });
+  it('accepts hevc_vulkan', () => { expect(vulkanVideoToArgs({}, 'hevc_vulkan')).toContain('hevc_vulkan'); });
+  it('sets crf', () => { expect(vulkanVideoToArgs({ crf: 22 })).toContain('22'); });
+  it('accepts av1_vulkan', () => { expect(vulkanVideoToArgs({}, 'av1_vulkan')).toContain('av1_vulkan'); });
+});

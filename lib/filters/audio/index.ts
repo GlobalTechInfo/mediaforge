@@ -1,4 +1,4 @@
-import type { FilterChain } from '../../types/filters.ts';
+import { FilterChain, serializeNode } from '../../types/filters.ts';
 
 // ─── Volume ───────────────────────────────────────────────────────────────────
 
@@ -13,15 +13,26 @@ export interface VolumeOptions {
   precision?: 'fixed' | 'float' | 'double';
 }
 
-export function volume(chain: FilterChain, opts: VolumeOptions | number | string): FilterChain {
-  if (typeof opts === 'number' || typeof opts === 'string') {
-    return chain.add({ name: 'volume', positional: [String(opts)], named: {} });
+export function volume(opts: VolumeOptions | number | string): string;
+export function volume(chain: FilterChain, opts: VolumeOptions | number | string): FilterChain;
+export function volume(
+  chainOrOpts: FilterChain | VolumeOptions | number | string,
+  opts?: VolumeOptions | number | string,
+): FilterChain | string {
+  const isStandalone = !(chainOrOpts instanceof FilterChain);
+  const o = isStandalone ? chainOrOpts as (VolumeOptions | number | string) : opts!;
+  let node: { name: string; positional: (string|number)[]; named: Record<string,string|number|boolean> };
+  if (typeof o === 'number' || typeof o === 'string') {
+    node = { name: 'volume', positional: [String(o)], named: {} };
+  } else {
+    const named: Record<string, string | number | boolean> = {};
+    if (o.replaygain !== undefined) named['replaygain'] = o.replaygain;
+    if (o.eval !== undefined) named['eval'] = o.eval;
+    if (o.precision !== undefined) named['precision'] = o.precision;
+    node = { name: 'volume', positional: [String(o.volume)], named };
   }
-  const named: Record<string, string | number | boolean> = {};
-  if (opts.replaygain !== undefined) named['replaygain'] = opts.replaygain;
-  if (opts.eval !== undefined) named['eval'] = opts.eval;
-  if (opts.precision !== undefined) named['precision'] = opts.precision;
-  return chain.add({ name: 'volume', positional: [String(opts.volume)], named });
+  if (isStandalone) return serializeNode(node);
+  return (chainOrOpts as FilterChain).add(node);
 }
 
 // ─── Loudnorm (EBU R128) ─────────────────────────────────────────────────────
@@ -51,20 +62,26 @@ export interface LoudnormOptions {
   dual_mono?: boolean;
 }
 
-export function loudnorm(chain: FilterChain, opts: LoudnormOptions = {}): FilterChain {
+export function loudnorm(opts?: LoudnormOptions): string;
+export function loudnorm(chain: FilterChain, opts?: LoudnormOptions): FilterChain;
+export function loudnorm(chainOrOpts?: FilterChain | LoudnormOptions, opts?: LoudnormOptions): FilterChain | string {
+  const isStandalone = !(chainOrOpts instanceof FilterChain);
+  const o: LoudnormOptions = (isStandalone ? chainOrOpts : opts) ?? {};
   const named: Record<string, string | number | boolean> = {};
-  if (opts.i !== undefined) named['i'] = opts.i;
-  if (opts.lra !== undefined) named['lra'] = opts.lra;
-  if (opts.tp !== undefined) named['tp'] = opts.tp;
-  if (opts.measured_i !== undefined) named['measured_i'] = opts.measured_i;
-  if (opts.measured_tp !== undefined) named['measured_tp'] = opts.measured_tp;
-  if (opts.measured_lra !== undefined) named['measured_lra'] = opts.measured_lra;
-  if (opts.measured_thresh !== undefined) named['measured_thresh'] = opts.measured_thresh;
-  if (opts.offset !== undefined) named['offset'] = opts.offset;
-  if (opts.linear !== undefined) named['linear'] = opts.linear ? 'true' : 'false';
-  if (opts.print_format !== undefined) named['print_format'] = opts.print_format;
-  if (opts.dual_mono !== undefined) named['dual_mono'] = opts.dual_mono ? 'true' : 'false';
-  return chain.add({ name: 'loudnorm', positional: [], named });
+  if (o.i !== undefined) named['i'] = o.i;
+  if (o.lra !== undefined) named['lra'] = o.lra;
+  if (o.tp !== undefined) named['tp'] = o.tp;
+  if (o.measured_i !== undefined) named['measured_i'] = o.measured_i;
+  if (o.measured_tp !== undefined) named['measured_tp'] = o.measured_tp;
+  if (o.measured_lra !== undefined) named['measured_lra'] = o.measured_lra;
+  if (o.measured_thresh !== undefined) named['measured_thresh'] = o.measured_thresh;
+  if (o.offset !== undefined) named['offset'] = o.offset;
+  if (o.linear !== undefined) named['linear'] = o.linear ? 'true' : 'false';
+  if (o.print_format !== undefined) named['print_format'] = o.print_format;
+  if (o.dual_mono !== undefined) named['dual_mono'] = o.dual_mono ? 'true' : 'false';
+  const node = { name: 'loudnorm', positional: [] as (string|number)[], named };
+  if (isStandalone) return serializeNode(node);
+  return (chainOrOpts as FilterChain).add(node);
 }
 
 // ─── Equalizer ────────────────────────────────────────────────────────────────
@@ -86,17 +103,23 @@ export interface EqualizerOptions {
   mix?: number;
 }
 
-export function equalizer(chain: FilterChain, opts: EqualizerOptions): FilterChain {
+export function equalizer(opts: EqualizerOptions): string;
+export function equalizer(chain: FilterChain, opts: EqualizerOptions): FilterChain;
+export function equalizer(chainOrOpts: FilterChain | EqualizerOptions, opts?: EqualizerOptions): FilterChain | string {
+  const isStandalone = !(chainOrOpts instanceof FilterChain);
+  const o = isStandalone ? (chainOrOpts as EqualizerOptions) : opts!;
   const named: Record<string, string | number | boolean> = {
-    f: opts.frequency,
-    width: opts.width,
-    g: opts.gain,
+    f: o.frequency,
+    width: o.width,
+    g: o.gain,
   };
-  if (opts.width_type !== undefined) named['width_type'] = opts.width_type;
-  if (opts.channels !== undefined) named['c'] = opts.channels;
-  if (opts.poles !== undefined) named['p'] = opts.poles;
-  if (opts.mix !== undefined) named['mix'] = opts.mix;
-  return chain.add({ name: 'equalizer', positional: [], named });
+  if (o.width_type !== undefined) named['width_type'] = o.width_type;
+  if (o.channels !== undefined) named['c'] = o.channels;
+  if (o.poles !== undefined) named['p'] = o.poles;
+  if (o.mix !== undefined) named['mix'] = o.mix;
+  const node = { name: 'equalizer', positional: [] as (string|number)[], named };
+  if (isStandalone) return serializeNode(node);
+  return (chainOrOpts as FilterChain).add(node);
 }
 
 /** Bass/treble boost: positive gain boosts, negative cuts */
@@ -461,8 +484,17 @@ export function rubberband(chain: FilterChain, opts: RubberbandOptions = {}): Fi
 // ─── Atempo ───────────────────────────────────────────────────────────────────
 
 /** Change audio playback speed without affecting pitch. Range: 0.5–100.0 */
-export function atempo(chain: FilterChain, factor: number): FilterChain {
-  return chain.add({ name: 'atempo', positional: [factor], named: {} });
+export function atempo(opts: { tempo: number } | number): string;
+export function atempo(chain: FilterChain, factor: number): FilterChain;
+export function atempo(chainOrOpts: FilterChain | { tempo: number } | number, factor?: number): FilterChain | string {
+  const isStandalone = !(chainOrOpts instanceof FilterChain);
+  let f: number;
+  if (isStandalone) {
+    f = typeof chainOrOpts === 'number' ? chainOrOpts : (chainOrOpts as { tempo: number }).tempo;
+    return serializeNode({ name: 'atempo', positional: [f], named: {} });
+  }
+  f = factor ?? 1;
+  return (chainOrOpts as FilterChain).add({ name: 'atempo', positional: [f], named: {} });
 }
 
 // ─── Agate ────────────────────────────────────────────────────────────────────

@@ -492,3 +492,72 @@ describe('hflip', () => {
     expect(hflip(chain()).toString()).toBe('hflip');
   });
 });
+
+// ─── Standalone overloads ─────────────────────────────────────────────────────
+
+describe('scale — standalone (no chain)', () => {
+  it('scale({w, h}) returns string', () => {
+    const s = scale({ w: 640, h: 360 });
+    expect(typeof s).toBe('string');
+    expect(s).toContain('scale=');
+    expect(s).toContain('640');
+    expect(s).toContain('360');
+  });
+  it('scale({width, height}) also works', () => {
+    const s = scale({ width: 1280, height: 720 });
+    expect(s).toContain('1280');
+    expect(s).toContain('720');
+  });
+  it('scale with flags standalone', () => {
+    const s = scale({ w: 320, h: 180, flags: 'lanczos' });
+    expect(s).toContain('flags=lanczos');
+  });
+});
+
+describe('crop — standalone', () => {
+  it('crop({w, h, x, y}) returns string', () => {
+    const s = crop({ w: 320, h: 180, x: 10, y: 10 });
+    expect(typeof s).toBe('string');
+    expect(s).toContain('crop=');
+    expect(s).toContain('320');
+  });
+  it('crop({width, height}) also works', () => {
+    expect(crop({ width: 640, height: 360 })).toContain('640');
+  });
+});
+
+describe('overlay — standalone', () => {
+  it('overlay({x, y}) returns string', () => {
+    const s = overlay({ x: 10, y: 20 });
+    expect(typeof s).toBe('string');
+    expect(s).toContain('overlay=');
+    expect(s).toContain('10');
+  });
+  it('overlay with eval option', () => {
+    expect(overlay({ x: 0, y: 0, eval: 'frame' })).toContain('eval=frame');
+  });
+});
+
+describe('drawtext — standalone', () => {
+  it('drawtext({text}) returns string', () => {
+    const s = drawtext({ text: 'hello', x: 10, y: 10, fontsize: 24 });
+    expect(typeof s).toBe('string');
+    expect(s).toContain('drawtext=');
+    expect(s).toContain('hello');
+  });
+  it('drawtext with fontcolor standalone', () => {
+    expect(drawtext({ text: 'hi', fontcolor: 'white' })).toContain('fontcolor=white');
+  });
+});
+
+describe('fade — standalone', () => {
+  it('fade({type, duration}) returns string', () => {
+    const s = fade({ type: 'in', start_time: 0, duration: 1 });
+    expect(typeof s).toBe('string');
+    expect(s).toContain('fade=');
+    expect(s).toContain('type=in');
+  });
+  it('fade out standalone', () => {
+    expect(fade({ type: 'out', start_time: 5, duration: 2 })).toContain('type=out');
+  });
+});

@@ -176,7 +176,7 @@ export function mediacodecToArgs(opts: MediaCodecOptions, codec = 'h264_mediacod
 // ─── Vulkan (v8+ cross-platform GPU) ─────────────────────────────────────────
 
 /** Video codecs available via Vulkan compute */
-export type VulkanVideoCodec = 'h264_vulkan' | 'hevc_vulkan' | 'av1_vulkan' | 'ffv1_vulkan';
+export type VulkanVideoCodec = 'h264_vulkan' | 'hevc_vulkan' | 'av1_vulkan' | 'ffv1_vulkan' | 'prores_ks_vulkan';
 
 /**
  * Typed options for Vulkan encoders (v8+).
@@ -237,5 +237,67 @@ export function qsvToArgs(opts: QsvOptions, codec = 'h264_qsv'): string[] {
   if (opts.gopSize !== undefined) args.push('-g', String(opts.gopSize));
   if (opts.bFrames !== undefined) args.push('-bf', String(opts.bFrames));
   if (opts.lowLatency === true) args.push('-low_delay_brc', '1');
+  return args;
+}
+
+// ─── Android MediaCodec Extensions ───────────────────────────────────────────
+
+/**
+ * Typed options for Android h264_mediacodec / hevc_mediacodec encoders.
+ * Available in FFmpeg v8 on Android (Termux).
+ *
+ * @example
+ * import { mediacodecVideoToArgs } from 'mediaforge';
+ * const args = mediacodecVideoToArgs({ bitrate: 4000, preset: 'balanced' }, 'h264_mediacodec');
+ */
+export interface MediaCodecVideoOptions {
+  /** Target bitrate in kbps */
+  bitrate?: number;
+  /** Quality mode (where supported) */
+  quality?: number;
+  /** Operating rate (frames/sec) hint to codec */
+  operatingRate?: number;
+  /** Profile hint (codec-specific integer) */
+  profile?: number;
+  /** Level hint (codec-specific integer) */
+  level?: number;
+}
+
+export function mediacodecVideoToArgs(
+  opts: MediaCodecVideoOptions,
+  codec: MediaCodecVideoCodec = 'h264_mediacodec',
+): string[] {
+  const args: string[] = ['-c:v', codec];
+  if (opts.bitrate !== undefined) args.push('-b:v', `${opts.bitrate}k`);
+  if (opts.quality !== undefined) args.push('-q:v', String(opts.quality));
+  if (opts.operatingRate !== undefined) args.push('-operating_rate', String(opts.operatingRate));
+  if (opts.profile !== undefined) args.push('-profile:v', String(opts.profile));
+  if (opts.level !== undefined) args.push('-level', String(opts.level));
+  return args;
+}
+
+/**
+ * Typed options for Vulkan-accelerated video encoders.
+ * Available in FFmpeg v7+ (Linux) and v8 (Android with Vulkan).
+ * Supported codecs: h264_vulkan, hevc_vulkan, av1_vulkan, ffv1_vulkan, prores_ks_vulkan
+ *
+ * @example
+ * import { vulkanVideoToArgs } from 'mediaforge';
+ * const args = vulkanVideoToArgs({ crf: 23 }, 'h264_vulkan');
+ */
+export interface VulkanVideoOptions {
+  /** Quality mode CRF (0–51 for H.264/HEVC) */
+  crf?: number;
+  /** Target bitrate in kbps */
+  bitrate?: number;
+}
+
+export function vulkanVideoToArgs(
+  opts: VulkanVideoOptions,
+  codec: VulkanVideoCodec = 'h264_vulkan',
+): string[] {
+  const args: string[] = ['-c:v', codec];
+  if (opts.crf !== undefined) args.push('-crf', String(opts.crf));
+  if (opts.bitrate !== undefined) args.push('-b:v', `${opts.bitrate}k`);
   return args;
 }

@@ -4,6 +4,8 @@
  */
 
 import { FFmpegBuilder } from '../FFmpeg.js';
+import { mkdirSync } from 'fs';
+import { dirname } from 'path';
 
 // ─── HLS ──────────────────────────────────────────────────────────────────────
 
@@ -176,8 +178,8 @@ export function adaptiveHls(opts: AdaptiveHlsOptions): FFmpegBuilder {
     hlsVersion: _hlsVersion = 3,
     videoCodec = 'libx264',
     audioCodec = 'aac',
-    variantPlaylist = '%v/playlist.m3u8',
-    segmentPattern = '%v/segment%03d.ts',
+    variantPlaylist = '%v.m3u8',
+    segmentPattern = '%v_seg%03d.ts',
     masterPlaylist = 'master.m3u8',
     hlsFlags,
     binary,
@@ -203,6 +205,10 @@ export function adaptiveHls(opts: AdaptiveHlsOptions): FFmpegBuilder {
     if (variant === undefined) continue;
     const outputPlaylist = `${outputDir}/${variantPlaylist.replace('%v', variant.label)}`;
     const segmentFile = `${outputDir}/${segmentPattern.replace('%v', variant.label)}`;
+
+    // Ensure the variant subdirectory exists before FFmpeg tries to write into it
+    mkdirSync(dirname(outputPlaylist), { recursive: true });
+    mkdirSync(dirname(segmentFile), { recursive: true });
 
     builder
       .output(outputPlaylist)
@@ -306,13 +312,10 @@ export function dashPackage(opts: DashOptions): FFmpegBuilder {
     .audioCodec(audioCodec)
     .audioBitrate(audioBitrate)
     .addOutputOption('-seg_duration', String(segmentDuration))
-    .addOutputOption('-window_size', String(windowSize))
-    .addOutputOption('-min_buffer_time', String(minBufferTime));
-
-  if (useTemplate)
-    builder.addOutputOption('-use_template', '1');
-  if (useTimeline)
-    builder.addOutputOption('-use_timeline', '1');
+    .addOutputOption('-window_size', String(windowSize));
+  // min_buffer_time, use_template, use_timeline were removed from the DASH muxer
+  // in FFmpeg 7.x — emitting them causes "Unrecognized option" errors.
+  void minBufferTime; void useTemplate; void useTimeline;
   if (dashFlags !== undefined)
     builder.addOutputOption('-dash_flags', dashFlags);
   if (initSegmentName !== undefined)

@@ -220,9 +220,11 @@ describe('waveform builders', () => {
     assert.ok(f.includes('scale=log'));
   });
 
-  it('buildWaveformFilter includes draw mode', () => {
+  it('buildWaveformFilter ignores draw mode (removed in FFmpeg 7.x+)', () => {
     const f = buildWaveformFilter(1920, 240, '#00ff00', 'lin', 'p2p', 0);
-    assert.ok(f.includes('draw=p2p'));
+    // draw= was removed from showwavespic in FFmpeg 7.x — never emitted
+    assert.ok(!f.includes('draw='), 'draw= must not appear in filter string');
+    assert.ok(f.includes('showwavespic'), 'showwavespic must still be present');
   });
 
   it('buildWaveformFilter stream index non-zero', () => {

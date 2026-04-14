@@ -270,3 +270,228 @@ export function vp9ToArgs(opts: Vp9Options): string[] {
 
 // Alias for camelCase import compatibility
 export { svtav1ToArgs as svtAv1ToArgs };
+
+// ─── Additional Video Codec Helpers ──────────────────────────────────────────
+
+/**
+ * Typed options for the Apple ProRes encoder (prores_ks).
+ * Available in both FFmpeg v7 and v8 (including Android Termux).
+ */
+export interface ProResOptions {
+  /**
+   * ProRes profile:
+   *  0 = Proxy,  1 = LT,  2 = Standard,  3 = HQ,
+   *  4 = 4444,   5 = 4444 XQ
+   */
+  profile?: 0 | 1 | 2 | 3 | 4 | 5;
+  /** Bits per raw sample (10 or 12). Default: 10 */
+  bits?: 10 | 12;
+  /** Vendor tag written into the stream. Default: 'apl0' */
+  vendor?: string;
+  /** Disable alpha channel in 4444 profile */
+  alphaQuality?: number;
+  /** Motion estimation mode: 'fixed' | 'adaptive' */
+  mbs?: 'fixed' | 'adaptive';
+}
+
+export function proResToArgs(opts: ProResOptions = {}, encoder: 'prores' | 'prores_aw' | 'prores_ks' = 'prores_ks'): string[] {
+  const args: string[] = ['-c:v', encoder];
+  if (opts.profile !== undefined) args.push('-profile:v', String(opts.profile));
+  if (opts.bits !== undefined) args.push('-bits_per_raw_sample', String(opts.bits));
+  if (opts.vendor !== undefined) args.push('-vendor', opts.vendor);
+  if (opts.alphaQuality !== undefined) args.push('-alpha_quality', String(opts.alphaQuality));
+  if (opts.mbs !== undefined) args.push('-mbs_per_slice', opts.mbs === 'adaptive' ? '0' : '8');
+  return args;
+}
+
+/**
+ * Typed options for the Avid DNxHD / DNxHR encoder.
+ * Used in professional post-production workflows.
+ * Available in both FFmpeg v7 and v8.
+ */
+export interface DnxhdOptions {
+  /**
+   * DNxHD quality/bitrate profile string, e.g.:
+   *   'dnxhd_1080p_36', 'dnxhd_1080i_145', 'dnxhr_hq', 'dnxhr_444'
+   * Use `-c:v dnxhd -profile:v dnxhr_hq` for DNxHR (higher res).
+   */
+  profile?: string;
+  /** Target bitrate in kbps (alternative to profile) */
+  bitrate?: number;
+  /** Pixel format: yuv422p, yuv422p10le, yuv444p10le */
+  pixFmt?: 'yuv422p' | 'yuv422p10le' | 'yuv444p10le';
+}
+
+export function dnxhdToArgs(opts: DnxhdOptions = {}): string[] {
+  const args: string[] = ['-c:v', 'dnxhd'];
+  if (opts.profile !== undefined) args.push('-profile:v', opts.profile);
+  if (opts.bitrate !== undefined) args.push('-b:v', `${opts.bitrate}k`);
+  if (opts.pixFmt !== undefined) args.push('-pix_fmt', opts.pixFmt);
+  return args;
+}
+
+/**
+ * Typed options for the MJPEG (Motion JPEG) encoder.
+ * Widely supported — both FFmpeg v7 (via mjpeg_vaapi on Linux) and v8.
+ * Common use: frame-accurate editing, surveillance, WebRTC.
+ */
+export interface MjpegOptions {
+  /** Constant quality 1–31 (lower = better). Default: 5 */
+  qscale?: number;
+  /** Huffman table: default | optimal */
+  huffman?: 'default' | 'optimal';
+  /** Force pixel format: yuvj420p | yuvj422p | yuvj444p */
+  pixFmt?: 'yuvj420p' | 'yuvj422p' | 'yuvj444p';
+}
+
+export function mjpegToArgs(opts: MjpegOptions = {}): string[] {
+  const args: string[] = ['-c:v', 'mjpeg'];
+  if (opts.qscale !== undefined) args.push('-q:v', String(opts.qscale));
+  if (opts.huffman !== undefined) args.push('-huffman', opts.huffman);
+  if (opts.pixFmt !== undefined) args.push('-pix_fmt', opts.pixFmt);
+  return args;
+}
+
+/**
+ * Typed options for the MPEG-2 Video encoder.
+ * Used for broadcast, DVD, Blu-ray, and ATSC/DVB delivery.
+ * Available in both FFmpeg v7 and v8.
+ */
+export interface Mpeg2Options {
+  /** Constant bitrate in kbps */
+  bitrate?: number;
+  /** Maximum bitrate in kbps (VBR cap) */
+  maxrate?: number;
+  /** VBV buffer size in kbps */
+  bufsize?: number;
+  /** GOP size (keyframe interval). Default: 12 */
+  gopSize?: number;
+  /** MPEG-2 profile: 'main' | 'high' | '4:2:2' | 'simple' */
+  profile?: 'main' | 'high' | 'simple';
+  /** MPEG-2 level: 'main' | 'high' | 'low' | 'high1440' */
+  level?: 'main' | 'high' | 'low' | 'high1440';
+  /** Interlaced encoding */
+  interlaced?: boolean;
+}
+
+export function mpeg2ToArgs(opts: Mpeg2Options = {}): string[] {
+  const args: string[] = ['-c:v', 'mpeg2video'];
+  if (opts.bitrate !== undefined) args.push('-b:v', `${opts.bitrate}k`);
+  if (opts.maxrate !== undefined) args.push('-maxrate', `${opts.maxrate}k`);
+  if (opts.bufsize !== undefined) args.push('-bufsize', `${opts.bufsize}k`);
+  if (opts.gopSize !== undefined) args.push('-g', String(opts.gopSize));
+  if (opts.profile !== undefined) args.push('-profile:v', opts.profile);
+  if (opts.level !== undefined) args.push('-level', opts.level);
+  if (opts.interlaced === true) args.push('-flags', '+ildct+ilme');
+  return args;
+}
+
+/**
+ * Typed options for the MPEG-4 Part 2 encoder (libxvid / mpeg4).
+ * Legacy format — widely compatible. Available in both v7 and v8.
+ * Use libxvid encoder string for Xvid, mpeg4 for FFmpeg native.
+ */
+export interface Mpeg4Options {
+  /** Target bitrate in kbps */
+  bitrate?: number;
+  /** Maximum bitrate in kbps */
+  maxrate?: number;
+  /** Constant quality: 1–31 (lower = better) */
+  qscale?: number;
+  /** GOP size. Default: 250 */
+  gopSize?: number;
+  /** Number of B-frames */
+  bFrames?: number;
+  /** Motion estimation method */
+  me?: 'zero' | 'full' | 'log' | 'phods' | 'epzs' | 'x1' | 'hex' | 'umh' | 'iter' | 'dia' | 'mediancut';
+}
+
+export function mpeg4ToArgs(opts: Mpeg4Options = {}, encoder: 'mpeg4' | 'libxvid' = 'mpeg4'): string[] {
+  const args: string[] = ['-c:v', encoder];
+  if (opts.bitrate !== undefined) args.push('-b:v', `${opts.bitrate}k`);
+  if (opts.maxrate !== undefined) args.push('-maxrate', `${opts.maxrate}k`);
+  if (opts.qscale !== undefined) args.push('-q:v', String(opts.qscale));
+  if (opts.gopSize !== undefined) args.push('-g', String(opts.gopSize));
+  if (opts.bFrames !== undefined) args.push('-bf', String(opts.bFrames));
+  if (opts.me !== undefined) args.push('-me_method', opts.me);
+  return args;
+}
+
+/**
+ * Typed options for the libvpx VP8 encoder.
+ * Open-source, royalty-free. Both v7 and v8 include libvpx.
+ * Widely supported in WebM containers and WebRTC.
+ */
+export interface Vp8Options {
+  /** Target bitrate in kbps */
+  bitrate?: number;
+  /** Min bitrate in kbps */
+  minrate?: number;
+  /** Max bitrate in kbps */
+  maxrate?: number;
+  /** Constant quality CRF 4–63 */
+  crf?: number;
+  /** Speed / quality tradeoff: 0 (best) to 5 (fastest) */
+  cpuUsed?: number;
+  /** Quality mode */
+  quality?: 'best' | 'good' | 'realtime';
+  /** Keyframe interval */
+  keyintMax?: number;
+}
+
+export function vp8ToArgs(opts: Vp8Options = {}): string[] {
+  const args: string[] = ['-c:v', 'libvpx'];
+  if (opts.bitrate !== undefined) args.push('-b:v', `${opts.bitrate}k`);
+  if (opts.minrate !== undefined) args.push('-minrate', `${opts.minrate}k`);
+  if (opts.maxrate !== undefined) args.push('-maxrate', `${opts.maxrate}k`);
+  if (opts.crf !== undefined) args.push('-crf', String(opts.crf));
+  if (opts.cpuUsed !== undefined) args.push('-cpu-used', String(opts.cpuUsed));
+  if (opts.quality !== undefined) args.push('-quality', opts.quality);
+  if (opts.keyintMax !== undefined) args.push('-g', String(opts.keyintMax));
+  return args;
+}
+
+/**
+ * Typed options for the Ogg Theora encoder (libtheora).
+ * Open-source, patent-free. Available in both v7 and v8.
+ */
+export interface TheoraOptions {
+  /** Quality 0–10 (higher = better). Default: 7 */
+  qscale?: number;
+  /** Target bitrate in kbps (overrides quality) */
+  bitrate?: number;
+}
+
+export function theoraToArgs(opts: TheoraOptions = {}): string[] {
+  const args: string[] = ['-c:v', 'libtheora'];
+  if (opts.qscale !== undefined) args.push('-q:v', String(opts.qscale));
+  else if (opts.bitrate !== undefined) args.push('-b:v', `${opts.bitrate}k`);
+  return args;
+}
+
+/**
+ * Typed options for the FFV1 lossless video encoder.
+ * Open standard — excellent for archival. Available in both v7 and v8.
+ */
+export interface Ffv1Options {
+  /** Codec version: 0, 1, or 3. Default: 3 */
+  version?: 0 | 1 | 3;
+  /** Error correction level: 0 (none) to 3 (maximum). Default: 0 */
+  coder?: 0 | 1 | 2;
+  /** Context model: 0 or 1 */
+  context?: 0 | 1;
+  /** Number of slices (for threading). Powers of 2: 4, 8, 16, ... */
+  slices?: number;
+  /** Enable slice CRC for error detection */
+  sliceCrc?: boolean;
+}
+
+export function ffv1ToArgs(opts: Ffv1Options = {}): string[] {
+  const args: string[] = ['-c:v', 'ffv1'];
+  if (opts.version !== undefined) args.push('-level', String(opts.version));
+  if (opts.coder !== undefined) args.push('-coder', String(opts.coder));
+  if (opts.context !== undefined) args.push('-context', String(opts.context));
+  if (opts.slices !== undefined) args.push('-slices', String(opts.slices));
+  if (opts.sliceCrc !== undefined) args.push('-slicecrc', opts.sliceCrc ? '1' : '0');
+  return args;
+}

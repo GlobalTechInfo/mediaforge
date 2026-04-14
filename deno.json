@@ -8,10 +8,11 @@
     ".": "./lib/index.ts"
   },
   "tasks": {
-    "test": "deno test --allow-env --allow-run --allow-write --allow-read --allow-sys=uid deno-tests/",
+    "test": "deno test --allow-env --allow-run --allow-write --allow-read --allow-sys=uid --ignore=deno-tests/battle.test.ts deno-tests/",
     "test:unit": "deno test --allow-env --allow-run --allow-write --allow-read --allow-sys=uid deno-tests/unit/",
     "test:integration": "deno test --allow-env --allow-run --allow-write --allow-read --allow-sys=uid deno-tests/integration/",
-    "check": "deno check lib/index.ts"
+    "check": "deno check lib/index.ts",
+    "battle": "deno run --allow-env --allow-run --allow-write --allow-read --allow-sys=uid deno-tests/battle.test.ts"
   },
   "test": {
     "include": [
@@ -48,8 +49,7 @@
       "lib/**/*.ts",
       "README.md",
       "LICENSE",
-      "deno.json",
-      "CHANGELOG.md"
+      "deno.json"
     ],
     "exclude": [
       "src/**",

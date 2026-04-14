@@ -1,11 +1,17 @@
-import { FilterChain } from '../../types/filters.js';
+import { FilterChain, serializeNode } from '../../types/filters.js';
 import type { PixelFormat } from '../../types/codecs.js';
 
 // ─── Scale ────────────────────────────────────────────────────────────────────
 
 export interface ScaleOptions {
-  width: number | string;
-  height: number | string;
+  /** Width. Can use 'w' as shorthand. */
+  width?: number | string;
+  /** Height. Can use 'h' as shorthand. */
+  height?: number | string;
+  /** Shorthand for width */
+  w?: number | string;
+  /** Shorthand for height */
+  h?: number | string;
   /** Scaling algorithm. Default: bicubic */
   flags?: 'fast_bilinear' | 'bilinear' | 'bicubic' | 'experimental'
     | 'neighbor' | 'area' | 'bicublin' | 'gauss' | 'sinc' | 'lanczos' | 'spline';
@@ -17,26 +23,30 @@ export interface ScaleOptions {
   eval?: 'init' | 'frame';
 }
 
-export function scale(chain: FilterChain, opts: ScaleOptions): FilterChain {
+export function scale(opts: ScaleOptions): string;
+export function scale(chain: FilterChain, opts: ScaleOptions): FilterChain;
+export function scale(chainOrOpts: FilterChain | ScaleOptions, opts?: ScaleOptions): FilterChain | string {
+  const isStandalone = !(chainOrOpts instanceof FilterChain);
+  const o = isStandalone ? (chainOrOpts as ScaleOptions) : opts!;
+  const w = o.w ?? o.width ?? '-1';
+  const h = o.h ?? o.height ?? '-1';
   const named: Record<string, string | number | boolean> = {};
-  if (opts.flags !== undefined) named['flags'] = opts.flags;
-  if (opts.force_original_aspect_ratio !== undefined)
-    named['force_original_aspect_ratio'] = opts.force_original_aspect_ratio;
-  if (opts.force_divisible_by !== undefined)
-    named['force_divisible_by'] = opts.force_divisible_by;
-  if (opts.eval !== undefined) named['eval'] = opts.eval;
-  return chain.add({
-    name: 'scale',
-    positional: [String(opts.width), String(opts.height)],
-    named,
-  });
+  if (o.flags !== undefined) named['flags'] = o.flags;
+  if (o.force_original_aspect_ratio !== undefined) named['force_original_aspect_ratio'] = o.force_original_aspect_ratio;
+  if (o.force_divisible_by !== undefined) named['force_divisible_by'] = o.force_divisible_by;
+  if (o.eval !== undefined) named['eval'] = o.eval;
+  const node = { name: 'scale', positional: [String(w), String(h)], named };
+  if (isStandalone) return serializeNode(node);
+  return (chainOrOpts as FilterChain).add(node);
 }
 
 // ─── Crop ─────────────────────────────────────────────────────────────────────
 
 export interface CropOptions {
-  width: number | string;
-  height: number | string;
+  width?: number | string;
+  height?: number | string;
+  w?: number | string;
+  h?: number | string;
   /** X offset from left. Default: (iw-ow)/2 */
   x?: number | string;
   /** Y offset from top. Default: (ih-oh)/2 */
@@ -47,17 +57,21 @@ export interface CropOptions {
   exact?: boolean;
 }
 
-export function crop(chain: FilterChain, opts: CropOptions): FilterChain {
+export function crop(opts: CropOptions): string;
+export function crop(chain: FilterChain, opts: CropOptions): FilterChain;
+export function crop(chainOrOpts: FilterChain | CropOptions, opts?: CropOptions): FilterChain | string {
+  const isStandalone = !(chainOrOpts instanceof FilterChain);
+  const o = isStandalone ? (chainOrOpts as CropOptions) : opts!;
+  const w = o.w ?? o.width ?? 'iw';
+  const h = o.h ?? o.height ?? 'ih';
   const named: Record<string, string | number | boolean> = {};
-  if (opts.x !== undefined) named['x'] = opts.x;
-  if (opts.y !== undefined) named['y'] = opts.y;
-  if (opts.keep_aspect !== undefined) named['keep_aspect'] = opts.keep_aspect ? 1 : 0;
-  if (opts.exact !== undefined) named['exact'] = opts.exact ? 1 : 0;
-  return chain.add({
-    name: 'crop',
-    positional: [String(opts.width), String(opts.height)],
-    named,
-  });
+  if (o.x !== undefined) named['x'] = o.x;
+  if (o.y !== undefined) named['y'] = o.y;
+  if (o.keep_aspect !== undefined) named['keep_aspect'] = o.keep_aspect ? 1 : 0;
+  if (o.exact !== undefined) named['exact'] = o.exact ? 1 : 0;
+  const node = { name: 'crop', positional: [String(w), String(h)], named };
+  if (isStandalone) return serializeNode(node);
+  return (chainOrOpts as FilterChain).add(node);
 }
 
 // ─── Pad ──────────────────────────────────────────────────────────────────────
@@ -105,17 +119,19 @@ export interface OverlayOptions {
   alpha?: 'straight' | 'premultiplied';
 }
 
-export function overlay(chain: FilterChain, opts: OverlayOptions): FilterChain {
+export function overlay(opts: OverlayOptions): string;
+export function overlay(chain: FilterChain, opts: OverlayOptions): FilterChain;
+export function overlay(chainOrOpts: FilterChain | OverlayOptions, opts?: OverlayOptions): FilterChain | string {
+  const isStandalone = !(chainOrOpts instanceof FilterChain);
+  const o = isStandalone ? (chainOrOpts as OverlayOptions) : opts!;
   const named: Record<string, string | number | boolean> = {};
-  if (opts.eval !== undefined) named['eval'] = opts.eval;
-  if (opts.shortest !== undefined) named['shortest'] = opts.shortest ? 1 : 0;
-  if (opts.format !== undefined) named['format'] = opts.format;
-  if (opts.alpha !== undefined) named['alpha'] = opts.alpha;
-  return chain.add({
-    name: 'overlay',
-    positional: [String(opts.x), String(opts.y)],
-    named,
-  });
+  if (o.eval !== undefined) named['eval'] = o.eval;
+  if (o.shortest !== undefined) named['shortest'] = o.shortest ? 1 : 0;
+  if (o.format !== undefined) named['format'] = o.format;
+  if (o.alpha !== undefined) named['alpha'] = o.alpha;
+  const node = { name: 'overlay', positional: [String(o.x), String(o.y)], named };
+  if (isStandalone) return serializeNode(node);
+  return (chainOrOpts as FilterChain).add(node);
 }
 
 // ─── Drawtext ─────────────────────────────────────────────────────────────────
@@ -167,7 +183,18 @@ export interface DrawtextOptions {
   text_align?: 'left' | 'center' | 'right';
 }
 
-export function drawtext(chain: FilterChain, opts: DrawtextOptions): FilterChain {
+export function drawtext(opts: DrawtextOptions): string;
+export function drawtext(chain: FilterChain, opts: DrawtextOptions): FilterChain;
+export function drawtext(chainOrOpts: FilterChain | DrawtextOptions, opts?: DrawtextOptions): FilterChain | string {
+  const isStandalone = !(chainOrOpts instanceof FilterChain);
+  const o = isStandalone ? (chainOrOpts as DrawtextOptions) : opts!;
+  if (isStandalone) {
+    // standalone - build and serialize immediately
+    return _drawtextImpl(new FilterChain(), o).toString();
+  }
+  return _drawtextImpl(chainOrOpts as FilterChain, o);
+}
+function _drawtextImpl(chain: FilterChain, opts: DrawtextOptions): FilterChain {
   const named: Record<string, string | number | boolean> = {};
   if (opts.text !== undefined) named['text'] = opts.text;
   if (opts.textfile !== undefined) named['textfile'] = opts.textfile;
@@ -688,15 +715,21 @@ export interface FadeOptions {
   alpha?: boolean;
 }
 
-export function fade(chain: FilterChain, opts: FadeOptions): FilterChain {
-  const named: Record<string, string | number | boolean> = { type: opts.type };
-  if (opts.start_frame !== undefined) named['start_frame'] = opts.start_frame;
-  if (opts.nb_frames !== undefined) named['nb_frames'] = opts.nb_frames;
-  if (opts.start_time !== undefined) named['start_time'] = opts.start_time;
-  if (opts.duration !== undefined) named['duration'] = opts.duration;
-  if (opts.color !== undefined) named['color'] = opts.color;
-  if (opts.alpha !== undefined) named['alpha'] = opts.alpha ? 1 : 0;
-  return chain.add({ name: 'fade', positional: [], named });
+export function fade(opts: FadeOptions): string;
+export function fade(chain: FilterChain, opts: FadeOptions): FilterChain;
+export function fade(chainOrOpts: FilterChain | FadeOptions, opts?: FadeOptions): FilterChain | string {
+  const isStandalone = !(chainOrOpts instanceof FilterChain);
+  const o = isStandalone ? (chainOrOpts as FadeOptions) : opts!;
+  const named: Record<string, string | number | boolean> = { type: o.type };
+  if (o.start_frame !== undefined) named['start_frame'] = o.start_frame;
+  if (o.nb_frames !== undefined) named['nb_frames'] = o.nb_frames;
+  if (o.start_time !== undefined) named['start_time'] = o.start_time;
+  if (o.duration !== undefined) named['duration'] = o.duration;
+  if (o.color !== undefined) named['color'] = o.color;
+  if (o.alpha !== undefined) named['alpha'] = o.alpha ? 1 : 0;
+  const node = { name: 'fade', positional: [], named };
+  if (isStandalone) return serializeNode(node);
+  return (chainOrOpts as FilterChain).add(node);
 }
 
 // ─── Zoompan ──────────────────────────────────────────────────────────────────

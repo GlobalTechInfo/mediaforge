@@ -206,3 +206,165 @@ export function ac3ToArgs(opts: Ac3Options): string[] {
   if (opts.audioCodingMode !== undefined) args.push('-acmod', String(opts.audioCodingMode));
   return args;
 }
+
+// ─── Additional Audio Codec Helpers ──────────────────────────────────────────
+
+/**
+ * Typed options for the Apple Lossless Audio Codec (ALAC) encoder.
+ * Native in Apple ecosystem. Available in both FFmpeg v7 and v8.
+ */
+export interface AlacOptions {
+  /**
+   * Minimum sample size in bits (16 or 20). Default: 16
+   * Set to 24 for 24-bit source material.
+   */
+  minPredictionOrder?: number;
+  maxPredictionOrder?: number;
+}
+
+export function alacToArgs(opts: AlacOptions = {}): string[] {
+  const args: string[] = ['-c:a', 'alac'];
+  if (opts.minPredictionOrder !== undefined) args.push('-min_prediction_order', String(opts.minPredictionOrder));
+  if (opts.maxPredictionOrder !== undefined) args.push('-max_prediction_order', String(opts.maxPredictionOrder));
+  return args;
+}
+
+/**
+ * Typed options for the Enhanced AC-3 (E-AC-3 / Dolby Digital Plus) encoder.
+ * Required for streaming platforms (Netflix, Amazon). Both v7 and v8.
+ */
+export interface Eac3Options {
+  /** Target bitrate in kbps. Common: 192, 384, 640, 1024 */
+  bitrate?: number;
+  /** Dialogue normalization level, -31 to -1 dBFS. Default: -31 */
+  dialNorm?: number;
+  /** Per-frame metadata mixing level */
+  mixLevel?: number;
+  /** Room type */
+  roomType?: 'notindicated' | 'large' | 'small';
+  /** Center mix level */
+  centerMixLevel?: number;
+  /** Surround mix level */
+  surroundMixLevel?: number;
+}
+
+export function eac3ToArgs(opts: Eac3Options = {}): string[] {
+  const args: string[] = ['-c:a', 'eac3'];
+  if (opts.bitrate !== undefined) args.push('-b:a', `${opts.bitrate}k`);
+  if (opts.dialNorm !== undefined) args.push('-dialnorm', String(opts.dialNorm));
+  if (opts.centerMixLevel !== undefined) args.push('-center_mixlev', String(opts.centerMixLevel));
+  if (opts.surroundMixLevel !== undefined) args.push('-surround_mixlev', String(opts.surroundMixLevel));
+  return args;
+}
+
+/**
+ * Typed options for the Dolby TrueHD encoder.
+ * Lossless — required for Blu-ray authoring. Both v7 and v8.
+ */
+export interface TruehdOptions {
+  /** Sample rate. Default: source */
+  sampleRate?: 48000 | 96000 | 192000;
+  /** Channel layout: '5.1' | '7.1' */
+  channelLayout?: '5.1' | '7.1';
+}
+
+export function truehdToArgs(opts: TruehdOptions = {}): string[] {
+  const args: string[] = ['-c:a', 'truehd'];
+  if (opts.sampleRate !== undefined) args.push('-ar', String(opts.sampleRate));
+  if (opts.channelLayout !== undefined) args.push('-channel_layout', opts.channelLayout);
+  return args;
+}
+
+/**
+ * Typed options for the Ogg Vorbis encoder (libvorbis).
+ * Open-source, patent-free. Both v7 and v8.
+ */
+export interface VorbisOptions {
+  /** Quality mode -1.0 to 10.0 (higher = better). Default: 3 */
+  qscale?: number;
+  /** Target bitrate in kbps (overrides quality) */
+  bitrate?: number;
+  /** Minimum bitrate in kbps */
+  minrate?: number;
+  /** Maximum bitrate in kbps */
+  maxrate?: number;
+}
+
+export function vorbisToArgs(opts: VorbisOptions = {}): string[] {
+  const args: string[] = ['-c:a', 'libvorbis'];
+  if (opts.qscale !== undefined) args.push('-q:a', String(opts.qscale));
+  else if (opts.bitrate !== undefined) args.push('-b:a', `${opts.bitrate}k`);
+  if (opts.minrate !== undefined) args.push('-minrate', `${opts.minrate}k`);
+  if (opts.maxrate !== undefined) args.push('-maxrate', `${opts.maxrate}k`);
+  return args;
+}
+
+/**
+ * Typed options for the WavPack lossless/lossy audio encoder.
+ * Both v7 and v8. Supports hybrid (lossy with correction file).
+ */
+export interface WavpackOptions {
+  /** Quality 0–100 for lossy mode, or 'lossless' */
+  quality?: number | 'lossless';
+  /** Target bitrate in kbps (lossy mode) */
+  bitrate?: number;
+  /** Encode with extra processing passes for better quality */
+  extra?: 0 | 1 | 2 | 3 | 4 | 5 | 6;
+}
+
+export function wavpackToArgs(opts: WavpackOptions = {}): string[] {
+  const args: string[] = ['-c:a', 'wavpack'];
+  if (opts.quality === 'lossless' || opts.quality === undefined) {
+    // default is lossless
+  } else if (typeof opts.quality === 'number') {
+    args.push('-compression_level', String(opts.quality));
+  }
+  if (opts.bitrate !== undefined) args.push('-b:a', `${opts.bitrate}k`);
+  if (opts.extra !== undefined) args.push('-extra', String(opts.extra));
+  return args;
+}
+
+/**
+ * Typed options for PCM (raw audio) encoders.
+ * Both v7 and v8 — used for WAV, BWF, and uncompressed masters.
+ */
+export type PcmFormat =
+  | 'pcm_s16le' | 'pcm_s16be'
+  | 'pcm_s24le' | 'pcm_s24be'
+  | 'pcm_s32le' | 'pcm_s32be'
+  | 'pcm_f32le' | 'pcm_f32be'
+  | 'pcm_f64le' | 'pcm_f64be'
+  | 'pcm_u8' | 'pcm_s8'
+  | 'pcm_alaw' | 'pcm_mulaw';
+
+export interface PcmOptions {
+  /** Sample rate in Hz. Common: 44100, 48000, 96000. Default: source */
+  sampleRate?: number;
+  /** Number of channels. Default: source */
+  channels?: number;
+}
+
+export function pcmToArgs(format: PcmFormat, opts: PcmOptions = {}): string[] {
+  const args: string[] = ['-c:a', format];
+  if (opts.sampleRate !== undefined) args.push('-ar', String(opts.sampleRate));
+  if (opts.channels !== undefined) args.push('-ac', String(opts.channels));
+  return args;
+}
+
+/**
+ * Typed options for the MP2 (MPEG Audio Layer 2) encoder.
+ * Used in broadcast (DVB, ATSC), legacy archival. Both v7 and v8.
+ */
+export interface Mp2Options {
+  /** Target bitrate in kbps. Common: 128, 192, 256, 384 */
+  bitrate?: number;
+  /** Sample rate. Default: 48000 for broadcast */
+  sampleRate?: 32000 | 44100 | 48000;
+}
+
+export function mp2ToArgs(opts: Mp2Options = {}): string[] {
+  const args: string[] = ['-c:a', 'mp2'];
+  if (opts.bitrate !== undefined) args.push('-b:a', `${opts.bitrate}k`);
+  if (opts.sampleRate !== undefined) args.push('-ar', String(opts.sampleRate));
+  return args;
+}

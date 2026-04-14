@@ -227,9 +227,12 @@ describe('waveform builders', () => {
     assert.ok(f.includes('scale=log'));
   });
 
-  it('buildWaveformFilter includes draw mode', () => {
+  it('buildWaveformFilter ignores draw mode (removed in FFmpeg 7.x+)', () => {
     const f = buildWaveformFilter(1920, 240, '#00ff00', 'lin', 'p2p', 0);
-    assert.ok(f.includes('draw=p2p'));
+    // draw= was removed from showwavespic in FFmpeg 7.x — buildWaveformFilter
+    // no longer emits it regardless of the mode argument
+    assert.ok(!f.includes('draw='), 'draw= must not appear in filter string');
+    assert.ok(f.includes('showwavespic'), 'showwavespic must still be present');
   });
 
   it('buildWaveformFilter stream index non-zero', () => {
@@ -589,5 +592,42 @@ describe('twopass buildTwoPassArgs', () => {
     const r = buildTwoPassArgs({ input: 'in.mp4', output: 'out.mp4', videoCodec: 'libx264', videoBitrate: '2M', extraOutputArgs: ['-pix_fmt', 'yuv420p'] });
     assert.ok(r.pass1.includes('-pix_fmt'));
     assert.ok(r.pass2.includes('-pix_fmt'));
+  });
+});
+
+describe('stream builders — MP4 pipe options', () => {
+  let buildPipeThroughArgs: any;
+  before(async () => {
+    const m = await import('../../../dist/esm/helpers/streams.js');
+    buildPipeThroughArgs = m.buildPipeThroughArgs;
+  });
+
+  it('buildPipeThroughArgs with mp4 inputFormat injects probe args', () => {
+    const args = buildPipeThroughArgs('mp4', [], undefined);
+    assert.ok(args.includes('-analyzeduration'), 'should add analyzeduration');
+    assert.ok(args.includes('-probesize'), 'should add probesize');
+  });
+
+  it('buildPipeThroughArgs with mov inputFormat injects probe args', () => {
+    const args = buildPipeThroughArgs('mov', [], undefined);
+    assert.ok(args.includes('-analyzeduration'));
+  });
+
+  it('buildPipeThroughArgs with mp4 outputFormat injects movflags', () => {
+    const args = buildPipeThroughArgs(undefined, [], 'mp4');
+    assert.ok(args.includes('-movflags'), 'should add movflags for piped mp4');
+    const idx = args.indexOf('-movflags');
+    assert.ok(args[idx + 1].includes('frag_keyframe'));
+  });
+
+  it('buildPipeThroughArgs does NOT inject movflags if user already set them', () => {
+    const args = buildPipeThroughArgs(undefined, ['-movflags', 'custom'], 'mp4');
+    const count = args.filter((a: string) => a === '-movflags').length;
+    assert.strictEqual(count, 1, 'should not duplicate -movflags');
+  });
+
+  it('buildPipeThroughArgs with ogg output does NOT inject movflags', () => {
+    const args = buildPipeThroughArgs(undefined, [], 'ogg');
+    assert.ok(!args.includes('-movflags'), 'should not add movflags for ogg');
   });
 });

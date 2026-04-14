@@ -12,9 +12,17 @@ export interface WaveformOptions {
   height?: number;
   /** Waveform color. Default: '#00ff00' */
   color?: string;
-  /** Background color. Default: '#000000' */
+  /**
+   * Background color.
+   * @deprecated FFmpeg 7.x+ removed the bgcolor parameter from showwavespic.
+   * This option is accepted for API compatibility but has no effect.
+   */
   backgroundColor?: string;
-  /** Drawing mode: 'line', 'point', 'p2p', 'cline'. Default: 'line' */
+  /**
+   * Drawing mode: 'line', 'point', 'p2p', 'cline'.
+   * @deprecated FFmpeg 7.x+ removed the draw parameter from showwavespic.
+   * This option is accepted for API compatibility but has no effect.
+   */
   mode?: 'line' | 'point' | 'p2p' | 'cline';
   /** Display scale: 'lin' or 'log'. Default: 'lin' */
   scale?: 'lin' | 'log';
@@ -33,7 +41,6 @@ export interface WaveformOptions {
  *   output: 'waveform.png',
  *   width: 1920, height: 240,
  *   color: '#00aaff',
- *   backgroundColor: '#1a1a2e',
  * });
  */
 export async function generateWaveform(opts: WaveformOptions): Promise<void> {
@@ -43,31 +50,14 @@ export async function generateWaveform(opts: WaveformOptions): Promise<void> {
     width = 1920,
     height = 240,
     color = '#00ff00',
-    backgroundColor = '#000000',
-    mode = 'line',
     scale = 'lin',
     streamIndex = 0,
     binary = resolveBinary(),
   } = opts;
 
-  // Build showwavespic params conditionally — FFmpeg 7.x removed bgcolor and draw
-  const params: string[] = [];
-  params.push(`s=${width}x${height}`);
-  params.push(`colors=${color}`);
-
-  // Only emit bgcolor when it is explicitly non-default (black); FFmpeg 7.x rejects it
-  if (backgroundColor && backgroundColor.toLowerCase() !== '#000000') {
-    params.push(`bgcolor=${backgroundColor}`);
-  }
-
-  params.push(`scale=${scale}`);
-
-  // draw was removed in FFmpeg 7.x — omit when it is the default value
-  if (mode && mode !== 'line') {
-    params.push(`draw=${mode}`);
-  }
-
-  const filter = `[0:a:${streamIndex}]showwavespic=${params.join(':')}[v]`;
+  // FFmpeg 7.x+ removed bgcolor and draw from showwavespic.
+  // Only emit s= (size) and colors= — these are stable across v6/v7/v8.
+  const filter = `[0:a:${streamIndex}]showwavespic=s=${width}x${height}:colors=${color}:scale=${scale}[v]`;
 
   const args: string[] = [
     '-y', '-i', input,
@@ -131,24 +121,11 @@ export async function generateSpectrum(opts: SpectrumOptions): Promise<void> {
 
 export function buildWaveformFilter(
   width: number, height: number,
-  color: string, scale: string, mode: string, streamIndex: number,
-  backgroundColor?: string,
+  color: string, scale: string, _mode: string, streamIndex: number,
+  _backgroundColor?: string,
 ): string {
-  const params: string[] = [];
-  params.push(`s=${width}x${height}`);
-  params.push(`colors=${color}`);
-
-  if (backgroundColor && backgroundColor.toLowerCase() !== '#000000') {
-    params.push(`bgcolor=${backgroundColor}`);
-  }
-
-  params.push(`scale=${scale}`);
-
-  if (mode && mode !== 'line') {
-    params.push(`draw=${mode}`);
-  }
-
-  return `[0:a:${streamIndex}]showwavespic=${params.join(':')}[v]`;
+  // bgcolor and draw removed in FFmpeg 7.x+ — never emit them
+  return `[0:a:${streamIndex}]showwavespic=s=${width}x${height}:colors=${color}:scale=${scale}[v]`;
 }
 
 export function buildSpectrumFilter(width: number, height: number, color: string, fps: number): string {

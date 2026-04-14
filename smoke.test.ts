@@ -36,7 +36,7 @@ import { execFileSync } from 'node:child_process';
 // ─── Config ──────────────────────────────────────────────────────────────────
 
 const INPUT: string = 'clean.mp4';
-const TOTAL: number = 18;
+const TOTAL: number = 21;
 const COL_WIDTH: number = 40;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -374,12 +374,85 @@ async function startSuite(): Promise<void> {
     const out = 'v18_stripped.mp4';
     await stripMetadata({ input: INPUT, output: out });
     checkFile(out);
-    // Verify metadata was stripped
     const info: ProbeResult = await probeAsync(out);
     const tags = info.format.tags ?? {};
     const tagCount = Object.keys(tags).length;
     printDetail('tags remaining', tagCount);
     printDetail('method', 'map_metadata -1 + map_chapters -1');
+  }));
+
+  // ── 19. New Video Codec Serializers ───────────────────────────────────────
+  results.push(await runTest(19, 'Codec Serializers — Video (proResToArgs + dnxhdToArgs + mjpegToArgs)', async () => {
+    const { proResToArgs, dnxhdToArgs, mjpegToArgs, mpeg2ToArgs, mpeg4ToArgs, vp8ToArgs, theoraToArgs, ffv1ToArgs } = await import('./dist/esm/index.js') as Record<string, (...a: unknown[]) => string[]>;
+
+    const checks: Array<[string, string[], string]> = [
+      ['proResToArgs()',           proResToArgs(),                     'prores_ks'],
+      ['proResToArgs({profile:3})', proResToArgs({ profile: 3 }),     '3'],
+      ['proResToArgs prores_aw',   proResToArgs({}, 'prores_aw'),     'prores_aw'],
+      ['dnxhdToArgs({bitrate:145})', dnxhdToArgs({ bitrate: 145 }),  '145k'],
+      ['mjpegToArgs({qscale:3})', mjpegToArgs({ qscale: 3 }),        'mjpeg'],
+      ['mpeg2ToArgs({interlaced})', mpeg2ToArgs({ interlaced: true }),'mpeg2video'],
+      ['mpeg4ToArgs()',             mpeg4ToArgs(),                     'mpeg4'],
+      ['mpeg4ToArgs libxvid',      mpeg4ToArgs({}, 'libxvid'),       'libxvid'],
+      ['vp8ToArgs({bitrate:800})', vp8ToArgs({ bitrate: 800 }),      'libvpx'],
+      ['theoraToArgs({qscale:7})', theoraToArgs({ qscale: 7 }),      'libtheora'],
+      ['ffv1ToArgs({sliceCrc})',    ffv1ToArgs({ sliceCrc: true }),   'ffv1'],
+    ];
+
+    for (const [label, args, expected] of checks) {
+      if (!args.some((a) => String(a).includes(expected))) {
+        throw new Error(`${label}: expected '${expected}' in [${args.join(' ')}]`);
+      }
+      printDetail(label, args.join(' '));
+    }
+  }));
+
+  // ── 20. New Audio Codec Serializers ───────────────────────────────────────
+  results.push(await runTest(20, 'Codec Serializers — Audio (alacToArgs + eac3ToArgs + pcmToArgs + …)', async () => {
+    const { alacToArgs, eac3ToArgs, truehdToArgs, vorbisToArgs, wavpackToArgs, pcmToArgs, mp2ToArgs } = await import('./dist/esm/index.js') as Record<string, (...a: unknown[]) => string[]>;
+
+    const checks: Array<[string, string[], string]> = [
+      ['alacToArgs()',              alacToArgs(),                       'alac'],
+      ['eac3ToArgs({bitrate:640})', eac3ToArgs({ bitrate: 640 }),      'eac3'],
+      ['eac3ToArgs dialNorm',       eac3ToArgs({ dialNorm: -24 }),     '-24'],
+      ['truehdToArgs()',            truehdToArgs(),                     'truehd'],
+      ['vorbisToArgs({qscale:5})', vorbisToArgs({ qscale: 5 }),       'libvorbis'],
+      ['wavpackToArgs()',           wavpackToArgs(),                    'wavpack'],
+      ['pcmToArgs pcm_s16le',      pcmToArgs('pcm_s16le'),            'pcm_s16le'],
+      ['pcmToArgs pcm_s24le',      pcmToArgs('pcm_s24le'),            'pcm_s24le'],
+      ['pcmToArgs pcm_f32le',      pcmToArgs('pcm_f32le'),            'pcm_f32le'],
+      ['pcmToArgs sampleRate',     pcmToArgs('pcm_s16le', { sampleRate: 48000 }), '48000'],
+      ['mp2ToArgs({bitrate:192})', mp2ToArgs({ bitrate: 192 }),       '192k'],
+    ];
+
+    for (const [label, args, expected] of checks) {
+      if (!args.some((a) => String(a).includes(expected))) {
+        throw new Error(`${label}: expected '${expected}' in [${args.join(' ')}]`);
+      }
+      printDetail(label, args.join(' '));
+    }
+  }));
+
+  // ── 21. Hardware Codec Serializers ────────────────────────────────────────
+  results.push(await runTest(21, 'Codec Serializers — Hardware (mediacodecVideoToArgs + vulkanVideoToArgs)', async () => {
+    const { mediacodecVideoToArgs, vulkanVideoToArgs } = await import('./dist/esm/index.js') as Record<string, (...a: unknown[]) => string[]>;
+
+    const checks: Array<[string, string[], string]> = [
+      ['mediacodecVideoToArgs default',      mediacodecVideoToArgs({}),                          'h264_mediacodec'],
+      ['mediacodecVideoToArgs hevc',         mediacodecVideoToArgs({ bitrate: 4000 }, 'hevc_mediacodec'), 'hevc_mediacodec'],
+      ['mediacodecVideoToArgs av1',          mediacodecVideoToArgs({}, 'av1_mediacodec'),        'av1_mediacodec'],
+      ['vulkanVideoToArgs default',          vulkanVideoToArgs({}),                              'h264_vulkan'],
+      ['vulkanVideoToArgs hevc + crf',       vulkanVideoToArgs({ crf: 22 }, 'hevc_vulkan'),     'hevc_vulkan'],
+      ['vulkanVideoToArgs av1_vulkan',       vulkanVideoToArgs({}, 'av1_vulkan'),               'av1_vulkan'],
+    ];
+
+    for (const [label, args, expected] of checks) {
+      if (!args.some((a) => String(a).includes(expected))) {
+        throw new Error(`${label}: expected '${expected}' in [${args.join(' ')}]`);
+      }
+      printDetail(label, args.join(' '));
+    }
+    printDetail('note', 'Arg-only test — actual hardware encode not attempted');
   }));
 
   // ─── Summary ──────────────────────────────────────────────────────────────

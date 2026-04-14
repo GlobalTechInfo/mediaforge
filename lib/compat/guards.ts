@@ -274,11 +274,22 @@ export function selectBestCodec(
   registry: CapabilityRegistry,
   candidates: CodecCandidate[],
 ): string | null {
+  let lastAvailableSoftwareFallback: string | null = null;
   for (const candidate of candidates) {
     const result = guardCodecFull(version, registry, candidate.codec, 'encode', candidate.featureKey);
-    if (result.available) return candidate.codec;
+    if (result.available) {
+      // Track the last available candidate without a feature gate as a fallback
+      // in case subsequent hardware-accelerated candidates all fail.
+      if (candidate.featureKey === undefined) {
+        lastAvailableSoftwareFallback = candidate.codec;
+      }
+      // Prefer the first passing candidate (hardware-first priority)
+      return candidate.codec;
+    }
   }
-  return null;
+  // No candidate passed — return the last software codec that was actually
+  // available in the registry (null if everything in the list is fake/missing).
+  return lastAvailableSoftwareFallback;
 }
 
 /**

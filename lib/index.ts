@@ -35,9 +35,12 @@ export { flattenArgs, buildGlobalArgs, buildInputArgs, buildOutputArgs, toDurati
 export { CapabilityRegistry, getDefaultRegistry } from './codecs/registry.ts';
 export { x264ToArgs, x265ToArgs, svtav1ToArgs, vp9ToArgs } from './codecs/video.ts';
 export { svtav1ToArgs as svtAv1ToArgs } from './codecs/video.ts';
+export { proResToArgs, dnxhdToArgs, mjpegToArgs, mpeg2ToArgs, mpeg4ToArgs, vp8ToArgs, theoraToArgs, ffv1ToArgs } from './codecs/video.ts';
 export { aacToArgs, opusToArgs, mp3ToArgs, flacToArgs, ac3ToArgs } from './codecs/audio.ts';
 export { opusToArgs as libOpusToArgs, mp3ToArgs as libMp3LameToArgs } from './codecs/audio.ts';
+export { alacToArgs, eac3ToArgs, truehdToArgs, vorbisToArgs, wavpackToArgs, pcmToArgs, mp2ToArgs } from './codecs/audio.ts';
 export { nvencToArgs, vaapiToArgs, mediacodecToArgs, vulkanToArgs, qsvToArgs } from './codecs/hardware.ts';
+export { mediacodecVideoToArgs, vulkanVideoToArgs } from './codecs/hardware.ts';
 export { isFeatureExpected, availableFeatures, unavailableFeatures, FEATURE_GATES } from './compat/features.ts';
 
 // Phase 3 — Filter System
@@ -68,8 +71,11 @@ export type { FFmpegEvents } from './process/events.ts';
 export type { SpawnOptions, FFmpegProcess } from './process/spawn.ts';
 export type { PixelFormat, SampleFormat, ChannelLayout, CodecFlags, CodecInfo, FilterInfo, FormatInfo } from './types/codecs.ts';
 export type { X264Options, X265Options, SvtAv1Options, Vp9Options } from './codecs/video.ts';
+export type { ProResOptions, DnxhdOptions, MjpegOptions, Mpeg2Options, Mpeg4Options, Vp8Options, TheoraOptions, Ffv1Options } from './codecs/video.ts';
 export type { AacOptions, LibOpusOptions, LibMp3LameOptions, LibVorbisOptions, FlacOptions, Ac3Options } from './codecs/audio.ts';
+export type { AlacOptions, Eac3Options, TruehdOptions, VorbisOptions, WavpackOptions, PcmOptions, PcmFormat, Mp2Options } from './codecs/audio.ts';
 export type { NvencOptions, NvencVideoCodec, VaapiOptions, VaapiVideoCodec, VaapiDeviceOptions, MediaCodecOptions, MediaCodecCodec, MediaCodecVideoCodec, MediaCodecAudioCodec, VulkanOptions, VulkanVideoCodec, QsvOptions, QsvVideoCodec } from './codecs/hardware.ts';
+export type { MediaCodecVideoOptions, VulkanVideoOptions } from './codecs/hardware.ts';
 export type { FeatureGate } from './compat/features.ts';
 
 // Screenshots & frame extraction

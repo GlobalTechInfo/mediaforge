@@ -1,5 +1,5 @@
-import type { Buffer } from 'node:buffer';
 import { execFileSync, spawn } from 'node:child_process';
+import type { Buffer } from 'node:buffer';
 import { resolveProbe } from '../utils/binary.ts';
 import type {
   ProbeResult,
@@ -139,9 +139,11 @@ export class ProbeError extends Error {
 // ─── Derived helpers ──────────────────────────────────────────────────────────
 
 /**
- * Parse an ffprobe fractional frame rate string into a numeric value.
+ * Parse an ffprobe fractional frame rate string.
  * e.g. "30000/1001" → { num:30000, den:1001, value:29.97 }
- * e.g. "25/1" → { num:25, den:1, value:25 }
+ * e.g. "25/1"       → { num:25,    den:1,    value:25 }
+ *
+ * @returns ParsedFrameRate object, or null if the string is absent/invalid.
  */
 export function parseFrameRate(frStr: string | undefined): ParsedFrameRate | null {
   if (frStr === undefined || frStr === '' || frStr === '0/0') return null;

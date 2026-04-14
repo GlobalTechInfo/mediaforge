@@ -71,8 +71,9 @@ Requires `ffmpeg` (and `ffprobe`) to be installed and on `PATH`, or set `FFMPEG_
 
 | Runtime | Supported | Notes |
 |---------|-----------|-------|
-| Node 20+ | ✅ | Recommended |
-| Deno 2.x | ✅ | Full support |
+| Node.js 18+ | ✅ | Full support |
+| Node.js 20+ | ✅ | Recommended |
+| Deno 2.x | ✅ | Via `node:` compat layer — requires `--allow-env` and `--allow-run` |
 | Bun | ✅ | Full support |
 | npm | ✅ | Full support |
 | pnpm | ✅ | Full support |
@@ -83,7 +84,7 @@ Requires `ffmpeg` (and `ffprobe`) to be installed and on `PATH`, or set `FFMPEG_
 > `--allow-run` (for spawning the `ffmpeg`/`ffprobe` binaries) when running your script:
 >
 > ```bash
-> deno run --allow-run --allow-write --allow-read my-script.ts
+> deno run --allow-env --allow-run my-script.ts
 > ```
 
 ---
@@ -100,6 +101,7 @@ Requires `ffmpeg` (and `ffprobe`) to be installed and on `PATH`, or set `FFMPEG_
 - [Subtitles](#subtitles)
 - [Metadata](#metadata)
 - [Waveform & Spectrum](#waveform-spectrum)
+- [Codec Serializers](#codec-serializers)
 - [Named Presets](#named-presets)
 - [HLS & DASH Packaging](#hls-dash-packaging)
 - [Two-Pass Encoding](#two-pass-encoding)
@@ -393,7 +395,7 @@ await addWatermark({
 await addTextWatermark({
   input: 'video.mp4',
   output: 'watermarked.mp4',
-  text: '© MyCompany 2026',
+  text: '© MyCompany 2025',
   position: 'bottom-right',
   fontSize: 24,
   fontColor: 'white@0.8',
@@ -440,7 +442,7 @@ import { writeMetadata, stripMetadata } from 'mediaforge';
 await writeMetadata({
   input: 'video.mp4',
   output: 'tagged.mp4',
-  metadata: { title: 'My Film', artist: 'Director', year: '2026', comment: 'Draft' },
+  metadata: { title: 'My Film', artist: 'Director', year: '2025', comment: 'Draft' },
   streamMetadata: {
     'a:0': { language: 'eng', title: 'English Audio' },
     's:0': { language: 'fra' },
@@ -494,11 +496,126 @@ await generateSpectrum({
 
 ---
 
+<a name="codec-serializers"></a>
+
+## Codec Serializers
+
+Typed helpers that build the exact FFmpeg argument arrays for each encoder.
+Every helper is verified against both **FFmpeg v7** (Ubuntu/Linux) and **FFmpeg v8** (Android Termux).
+
+### Video
+
+```ts
+import {
+  x264ToArgs, x265ToArgs, svtav1ToArgs, vp9ToArgs,
+  proResToArgs, dnxhdToArgs, mjpegToArgs, mpeg2ToArgs,
+  mpeg4ToArgs, vp8ToArgs, theoraToArgs, ffv1ToArgs,
+} from 'mediaforge';
+
+// H.264 — libx264
+await ffmpeg('in.mp4').output('out.mp4').addOutputOption(...x264ToArgs({ crf: 22, preset: 'slow' })).run();
+
+// Apple ProRes HQ — prores_ks
+await ffmpeg('in.mp4').output('out.mov').addOutputOption(...proResToArgs({ profile: 3 })).run();
+
+// Avid DNxHD
+await ffmpeg('in.mp4').output('out.mxf').addOutputOption(...dnxhdToArgs({ bitrate: 145, pixFmt: 'yuv422p10le' })).run();
+
+// Motion JPEG
+await ffmpeg('in.mp4').output('out.avi').addOutputOption(...mjpegToArgs({ qscale: 3 })).run();
+
+// MPEG-2 (broadcast / DVD)
+await ffmpeg('in.mp4').output('out.mpg').addOutputOption(...mpeg2ToArgs({ bitrate: 8000, interlaced: true })).run();
+
+// VP8 (WebM)
+await ffmpeg('in.mp4').output('out.webm').addOutputOption(...vp8ToArgs({ bitrate: 800, cpuUsed: 4 })).run();
+
+// FFV1 lossless archival
+await ffmpeg('in.mp4').output('out.mkv').addOutputOption(...ffv1ToArgs({ version: 3, slices: 16, sliceCrc: true })).run();
+```
+
+| Helper | Encoder | Available |
+|--------|---------|-----------|
+| `x264ToArgs(opts)` | `libx264` | v6+ |
+| `x265ToArgs(opts)` | `libx265` | v6+ |
+| `svtav1ToArgs(opts)` | `libsvtav1` | v6+ |
+| `vp9ToArgs(opts)` | `libvpx-vp9` | v6+ |
+| `proResToArgs(opts?, enc?)` | `prores_ks` / `prores_aw` / `prores` | v6+ |
+| `dnxhdToArgs(opts?)` | `dnxhd` | v6+ |
+| `mjpegToArgs(opts?)` | `mjpeg` | v6+ |
+| `mpeg2ToArgs(opts?)` | `mpeg2video` | v6+ |
+| `mpeg4ToArgs(opts?, enc?)` | `mpeg4` / `libxvid` | v6+ |
+| `vp8ToArgs(opts?)` | `libvpx` | v6+ |
+| `theoraToArgs(opts?)` | `libtheora` | v6+ |
+| `ffv1ToArgs(opts?)` | `ffv1` | v6+ |
+
+### Audio
+
+```ts
+import {
+  aacToArgs, mp3ToArgs, opusToArgs, flacToArgs, ac3ToArgs,
+  alacToArgs, eac3ToArgs, vorbisToArgs, pcmToArgs, mp2ToArgs,
+} from 'mediaforge';
+
+// Apple Lossless
+await ffmpeg('in.flac').output('out.m4a').addOutputOption(...alacToArgs()).run();
+
+// Dolby Digital Plus (streaming platforms)
+await ffmpeg('in.mp4').output('out.mp4').addOutputOption(...eac3ToArgs({ bitrate: 640, dialNorm: -24 })).run();
+
+// PCM master (WAV)
+await ffmpeg('in.mp4').output('out.wav').addOutputOption(...pcmToArgs('pcm_s24le', { sampleRate: 48000 })).run();
+
+// MP2 broadcast
+await ffmpeg('in.mp4').output('out.mpg').addOutputOption(...mp2ToArgs({ bitrate: 192, sampleRate: 48000 })).run();
+```
+
+| Helper | Encoder | Use case |
+|--------|---------|----------|
+| `aacToArgs(opts)` | `aac` | Universal streaming |
+| `mp3ToArgs(opts)` | `libmp3lame` | Consumer/podcasting |
+| `opusToArgs(opts)` | `libopus` | WebRTC, Discord |
+| `flacToArgs(opts?)` | `flac` | Lossless |
+| `ac3ToArgs(opts?)` | `ac3` | Dolby Digital |
+| `alacToArgs(opts?)` | `alac` | Apple Lossless |
+| `eac3ToArgs(opts?)` | `eac3` | Dolby Digital Plus (Netflix/Amazon) |
+| `truehdToArgs(opts?)` | `truehd` | Dolby TrueHD (Blu-ray) |
+| `vorbisToArgs(opts?)` | `libvorbis` | Ogg Vorbis |
+| `wavpackToArgs(opts?)` | `wavpack` | Hybrid lossless |
+| `pcmToArgs(format, opts?)` | `pcm_s16le`, `pcm_s24le`, `pcm_f32le`, … | Raw PCM masters |
+| `mp2ToArgs(opts?)` | `mp2` | DVB/ATSC broadcast |
+
+### Hardware Acceleration
+
+```ts
+import { nvencToArgs, vaapiToArgs, qsvToArgs, mediacodecVideoToArgs, vulkanVideoToArgs } from 'mediaforge';
+
+// NVIDIA NVENC (Linux)
+await ffmpeg('in.mp4').output('out.mp4').addOutputOption(...nvencToArgs({ preset: 'p4', cq: 23 }, 'h264_nvenc')).run();
+
+// Android MediaCodec (FFmpeg v8 / Termux)
+await ffmpeg('in.mp4').output('out.mp4').addOutputOption(...mediacodecVideoToArgs({ bitrate: 4000 }, 'h264_mediacodec')).run();
+
+// Vulkan GPU (Linux + Android)
+await ffmpeg('in.mp4').output('out.mp4').addOutputOption(...vulkanVideoToArgs({ crf: 22 }, 'h264_vulkan')).run();
+```
+
+| Helper | Codecs | Platform |
+|--------|--------|----------|
+| `nvencToArgs(opts, codec?)` | `h264_nvenc`, `hevc_nvenc`, `av1_nvenc` | NVIDIA GPU (Linux) |
+| `vaapiToArgs(opts, codec?)` | `h264_vaapi`, `hevc_vaapi`, `vp8_vaapi`, … | Intel/AMD (Linux) |
+| `qsvToArgs(opts, codec?)` | `h264_qsv`, `hevc_qsv` | Intel Quick Sync |
+| `mediacodecVideoToArgs(opts, codec?)` | `h264_mediacodec`, `hevc_mediacodec`, `av1_mediacodec`, … | Android (FFmpeg v8) |
+| `vulkanVideoToArgs(opts, codec?)` | `h264_vulkan`, `hevc_vulkan`, `av1_vulkan`, `ffv1_vulkan` | Vulkan GPU |
+
+---
+
 <a name="named-presets"></a>
 
 ## Named Presets
 
 Production-ready codec configurations, ready to apply:
+
 
 ```ts
 import { getPreset, applyPreset, listPresets } from 'mediaforge';
@@ -660,6 +777,25 @@ if (bestHw) builder.hwAccel(bestHw);
 <a name="filter-system"></a>
 
 ## Filter System
+
+All filter functions work in two modes — chained (with a `FilterChain` first arg) or **standalone** (returning a serialized string directly):
+
+```ts
+import { scale, loudnorm } from 'mediaforge';
+
+// Standalone — returns a filter string
+const s = scale({ w: 320, h: 180 });          // 'scale=320:180'
+const n = loudnorm({ i: -16, lra: 11 });      // 'loudnorm=i=-16:lra=11:...'
+
+// Pass directly to .videoFilter() / .audioFilter()
+await ffmpeg('input.mp4')
+  .output('output.mp4')
+  .videoFilter(scale({ w: 1280, h: 720 }))
+  .audioFilter(loudnorm({ i: -23, lra: 7, tp: -2 }))
+  .run();
+```
+
+`ScaleOptions` and `CropOptions` accept `w`/`h` shorthand for `width`/`height`.
 
 ```ts
 import { scale, crop, overlay, drawtext, fade } from 'mediaforge';
@@ -884,7 +1020,7 @@ const codec = await builder.selectVideoCodec([
 | v6.x | ✅ Full |
 | v5.x and below | ⚠️ Partial |
 
-Tested with Node.js 20, 22.
+Tested with Node.js 18, 20, 22.
 
 ---
 

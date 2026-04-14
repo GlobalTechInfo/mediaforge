@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import { createWriteStream, unlinkSync } from 'fs';
 import type { Readable, Writable } from 'stream';
 import { PassThrough } from 'stream';
 import { FFmpegEmitter } from '../process/events.js';
@@ -85,7 +86,9 @@ export function pipeThrough(opts: PipeOptions): PipeProcess {
   const pipedInputNeedsProbe =
     inputFormat === 'mp4' || inputFormat === 'mov' || inputFormat === 'm4v';
   if (pipedInputNeedsProbe) {
+    // Large probe window + genpts for recovery when moov atom is at end of file
     args.push('-analyzeduration', '100M', '-probesize', '100M');
+    args.push('-fflags', '+genpts');
   }
 
   if (inputFormat) args.push('-f', inputFormat);
@@ -227,18 +230,56 @@ export function streamToFile(opts: StreamToFileOptions): Promise<void> {
     binary = resolveBinary(),
   } = opts;
 
+  // Non-seekable pipes fail for MP4/MOV because the moov atom is at the file end.
+  // Buffer the entire stream to a temp file first, then run FFmpeg on that file.
+  const needsTempFile = inputFormat === 'mp4' || inputFormat === 'mov' || inputFormat === 'm4v';
+
+  if (needsTempFile) {
+    const tmpPath = `${output}.tmp_${Date.now()}.${inputFormat ?? 'tmp'}`;
+    return new Promise((resolve, reject) => {
+      const ws = createWriteStream(tmpPath);
+      stream.pipe(ws);
+      stream.on('error', reject);
+      ws.on('error', reject);
+      ws.on('close', () => {
+        const args: string[] = ['-y'];
+        if (inputFormat) args.push('-f', inputFormat);
+        args.push('-i', tmpPath, ...outputArgs, output);
+        const child = spawn(binary, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+        const stderrLines: string[] = [];
+        if (child.stderr) {
+          const rl = createInterface({ input: child.stderr, crlfDelay: Infinity });
+          rl.on('line', (line: string) => stderrLines.push(line));
+        }
+        child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
+          try { unlinkSync(tmpPath); } catch { /**/ }
+          if (code === 0 || (code === null && signal === null)) resolve();
+          else reject(new FFmpegSpawnError(code, signal, stderrLines.join('\n')));
+        });
+        child.on('error', (err: Error) => { try { unlinkSync(tmpPath); } catch { /**/ } reject(err); });
+      });
+    });
+  }
+
+  // All other formats: pipe directly to stdin
   return new Promise((resolve, reject) => {
-    const pipeOpts: PipeOptions = {
-      inputStream: stream,
-      outputArgs: [...outputArgs, output],
-      binary,
-    };
-    if (inputFormat !== undefined) pipeOpts.inputFormat = inputFormat;
-    const proc = pipeThrough(pipeOpts);
-    proc.emitter.on('end', resolve);
-    proc.emitter.on('error', reject);
-    // stdout not used — output goes to file
-    proc.stdout.resume();
+    const args: string[] = ['-y'];
+    if (inputFormat) args.push('-f', inputFormat);
+    args.push('-i', 'pipe:0', ...outputArgs, output);
+    const child = spawn(binary, args, { stdio: ['pipe', 'ignore', 'pipe'] });
+    const _emitter = new FFmpegEmitter();
+    const stderrLines: string[] = [];
+    if (child.stderr) {
+      const rl = createInterface({ input: child.stderr, crlfDelay: Infinity });
+      rl.on('line', (line: string) => stderrLines.push(line));
+    }
+    stream.pipe(child.stdin!);
+    stream.on('error', (err: Error) => child.stdin?.destroy(err));
+    child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
+      if (code === 0 || (code === null && signal === null)) resolve();
+      else reject(new FFmpegSpawnError(code, signal, stderrLines.join('\n')));
+    });
+    child.on('error', reject);
   });
 }
 
@@ -255,7 +296,9 @@ export function buildPipeThroughArgs(
   const pipedInputNeedsProbe =
     inputFormat === 'mp4' || inputFormat === 'mov' || inputFormat === 'm4v';
   if (pipedInputNeedsProbe) {
+    // Large probe window + genpts for recovery when moov atom is at end of file
     args.push('-analyzeduration', '100M', '-probesize', '100M');
+    args.push('-fflags', '+genpts');
   }
 
   if (inputFormat) args.push('-f', inputFormat);

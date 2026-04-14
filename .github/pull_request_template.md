@@ -21,10 +21,13 @@
 
 - [ ] `npm run typecheck` passes
 - [ ] `npm run lint` passes
+- [ ] `npm run build` passes
 - [ ] `npm run test` passes
+- [ ] `npm run battle` passes
 - [ ] `deno lint` passes
 - [ ] `deno task check` passes
 - [ ] `deno task test` passes
+- [ ] `deno task battle` passes
 - [ ] Tested against FFmpeg 7.x
 - [ ] Tested against FFmpeg 8.x
 

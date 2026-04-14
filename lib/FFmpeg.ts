@@ -25,6 +25,7 @@ import {
 import type { VersionInfo } from './types/version.ts';
 import type { GlobalOptions, InputOptions, OutputOptions } from './types/options.ts';
 import type { LogLevel } from './types/options.ts';
+import type { FilterChain } from './types/filters.ts';
 
 interface InputEntry {
   path: string;
@@ -268,9 +269,9 @@ export class FFmpegBuilder {
     return this;
   }
 
-  /** Set video filter chain (-vf) */
-  videoFilter(filter: string): this {
-    this.ensureOutput().filterArgs.push('-vf', filter);
+  /** Set video filter chain (-vf). Accepts a filter string or a FilterChain / serialized filter function result. */
+  videoFilter(filter: string | FilterChain | { toString(): string }): this {
+    this.ensureOutput().filterArgs.push('-vf', String(filter));
     return this;
   }
 
@@ -318,9 +319,9 @@ export class FFmpegBuilder {
     return this;
   }
 
-  /** Set audio filter chain (-af) */
-  audioFilter(filter: string): this {
-    this.ensureOutput().filterArgs.push('-af', filter);
+  /** Set audio filter chain (-af). Accepts a filter string or a FilterChain / serialized filter function result. */
+  audioFilter(filter: string | FilterChain | { toString(): string }): this {
+    this.ensureOutput().filterArgs.push('-af', String(filter));
     return this;
   }
 

@@ -173,12 +173,13 @@ export interface ProbeResult {
 // ─── Derived/helper types ─────────────────────────────────────────────────────
 
 /** Parsed, numeric frame rate derived from avg_frame_rate fraction */
+/** Parsed frame rate from an ffprobe fraction string. */
 export interface ParsedFrameRate {
   /** Numerator */
   num: number;
   /** Denominator */
   den: number;
-  /** Floating-point value */
+  /** Floating-point value: num/den */
   value: number;
 }
 

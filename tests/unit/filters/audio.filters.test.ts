@@ -335,3 +335,66 @@ describe('atrim — end_pts', () => {
     expect(s).toContain('end_pts=90000');
   });
 });
+
+// ─── Standalone overloads ─────────────────────────────────────────────────────
+
+describe('volume — standalone', () => {
+  it('volume({volume}) returns string', () => {
+    const s = volume({ volume: '0.5' });
+    expect(typeof s).toBe('string');
+    expect(s).toContain('volume=');
+    expect(s).toContain('0.5');
+  });
+  it('volume(number) standalone', () => {
+    expect(volume(2.0)).toContain('volume=2');
+  });
+  it('volume(string) standalone', () => {
+    expect(volume('6dB')).toContain('6dB');
+  });
+  it('volume with replaygain standalone', () => {
+    expect(volume({ volume: 1, replaygain: 'track' })).toContain('replaygain=track');
+  });
+});
+
+describe('loudnorm — standalone', () => {
+  it('loudnorm({i, lra, tp}) returns string', () => {
+    const s = loudnorm({ i: -16, lra: 11, tp: -1.5 });
+    expect(typeof s).toBe('string');
+    expect(s).toContain('loudnorm=');
+    expect(s).toContain('i=-16');
+    expect(s).toContain('lra=11');
+  });
+  it('loudnorm() with no args returns string', () => {
+    const s = loudnorm();
+    expect(typeof s).toBe('string');
+    expect(s).toContain('loudnorm');
+  });
+  it('loudnorm with linear standalone', () => {
+    expect(loudnorm({ linear: true })).toContain('linear=true');
+  });
+});
+
+describe('equalizer — standalone', () => {
+  it('equalizer({frequency, width, gain}) returns string', () => {
+    const s = equalizer({ frequency: 1000, width: 1.0, gain: 6 });
+    expect(typeof s).toBe('string');
+    expect(s).toContain('equalizer=');
+    expect(s).toContain('f=1000');
+    expect(s).toContain('g=6');
+  });
+  it('equalizer with channels standalone', () => {
+    expect(equalizer({ frequency: 200, width: 1, gain: 3, channels: 'FL+FR' })).toContain('c=FL+FR');
+  });
+});
+
+describe('atempo — standalone', () => {
+  it('atempo({tempo}) returns string', () => {
+    const s = atempo({ tempo: 1.5 });
+    expect(typeof s).toBe('string');
+    expect(s).toContain('atempo=');
+    expect(s).toContain('1.5');
+  });
+  it('atempo(number) standalone', () => {
+    expect(atempo(0.75)).toContain('0.75');
+  });
+});

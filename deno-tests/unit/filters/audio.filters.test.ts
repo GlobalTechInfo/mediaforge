@@ -335,3 +335,48 @@ describe('atrim — end_pts', () => {
     expect(s).toContain('end_pts=90000');
   });
 });
+
+// ─── Standalone overloads ─────────────────────────────────────────────────────
+
+describe('volume — standalone', () => {
+  it('volume({volume}) returns string', () => {
+    const s = volume({ volume: '0.5' });
+    expect(typeof s).toBe('string');
+    expect(s).toContain('volume=0.5');
+  });
+  it('volume(number) standalone', () => {
+    expect(volume(2.0)).toContain('2');
+  });
+});
+
+describe('loudnorm — standalone', () => {
+  it('loudnorm({i,lra,tp}) returns string', () => {
+    const s = loudnorm({ i: -16, lra: 11, tp: -1.5 });
+    expect(typeof s).toBe('string');
+    expect(s).toContain('loudnorm=');
+    expect(s).toContain('i=-16');
+  });
+  it('loudnorm() no args', () => {
+    expect(loudnorm()).toContain('loudnorm');
+  });
+});
+
+describe('equalizer — standalone', () => {
+  it('equalizer returns string with f/g keys', () => {
+    const s = equalizer({ frequency: 1000, width: 1.0, gain: 6 });
+    expect(typeof s).toBe('string');
+    expect(s).toContain('f=1000');
+    expect(s).toContain('g=6');
+  });
+});
+
+describe('atempo — standalone', () => {
+  it('atempo({tempo}) returns string', () => {
+    const s = atempo({ tempo: 1.5 });
+    expect(typeof s).toBe('string');
+    expect(s).toContain('atempo=1.5');
+  });
+  it('atempo(number) standalone', () => {
+    expect(atempo(0.75)).toContain('0.75');
+  });
+});

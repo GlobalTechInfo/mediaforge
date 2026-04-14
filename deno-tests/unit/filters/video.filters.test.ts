@@ -492,3 +492,50 @@ describe('hflip', () => {
     expect(hflip(chain()).toString()).toBe('hflip');
   });
 });
+
+// ─── Standalone overloads ─────────────────────────────────────────────────────
+
+describe('scale — standalone', () => {
+  it('scale({w, h}) returns string', () => {
+    const s = scale({ w: 640, h: 360 });
+    expect(typeof s).toBe('string');
+    expect(s).toContain('scale=');
+  });
+  it('scale({width, height}) also works', () => {
+    expect(scale({ width: 1280, height: 720 })).toContain('1280');
+  });
+  it('scale with flags', () => {
+    expect(scale({ w: 320, h: 180, flags: 'lanczos' })).toContain('flags=lanczos');
+  });
+});
+
+describe('crop — standalone', () => {
+  it('crop({w, h, x, y}) returns string', () => {
+    expect(typeof crop({ w: 320, h: 180, x: 10, y: 10 })).toBe('string');
+    expect(crop({ w: 320, h: 180, x: 0, y: 0 })).toContain('crop=');
+  });
+});
+
+describe('overlay — standalone', () => {
+  it('overlay({x, y}) returns string', () => {
+    const s = overlay({ x: 10, y: 20 });
+    expect(typeof s).toBe('string');
+    expect(s).toContain('overlay=');
+  });
+});
+
+describe('drawtext — standalone', () => {
+  it('drawtext({text}) returns string', () => {
+    const s = drawtext({ text: 'hello', x: 10, y: 10 });
+    expect(typeof s).toBe('string');
+    expect(s).toContain('drawtext=');
+  });
+});
+
+describe('fade — standalone', () => {
+  it('fade({type, duration}) returns string', () => {
+    const s = fade({ type: 'in', start_time: 0, duration: 1 });
+    expect(typeof s).toBe('string');
+    expect(s).toContain('type=in');
+  });
+});

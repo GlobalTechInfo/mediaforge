@@ -12,6 +12,7 @@ export class CapabilityRegistry {
   private _filters: Map<string, FilterInfo> | null = null;
   private _formats: Map<string, FormatInfo> | null = null;
   private _hwaccels: Set<string> | null = null;
+  private _encoders: Set<string> | null = null;
 
   constructor(binary: string) {
     this.binary = binary;
@@ -27,11 +28,22 @@ export class CapabilityRegistry {
   }
 
   hasCodec(name: string): boolean {
-    return this.codecs.has(name);
+    // Check codec family names (e.g. 'h264') AND individual encoder/decoder names (e.g. 'libx264')
+    return this.codecs.has(name) || this.encoders.has(name);
+  }
+
+  get encoders(): Set<string> {
+    // Encoder names are populated when codecs are probed (from "(encoders: ...)" parentheticals).
+    // Trigger codec probe if not yet done — this also fills _encoders.
+    if (this._encoders === null) {
+      void this.codecs; // triggers _probeCodecs which sets this._encoders
+    }
+    return this._encoders ?? new Set<string>();
   }
 
   canEncode(codec: string): boolean {
-    return this.codecs.get(codec)?.flags.encode ?? false;
+    // Check codec-level encode flag (e.g. 'h264') AND individual encoder name (e.g. 'libx264')
+    return (this.codecs.get(codec)?.flags.encode ?? false) || this.encoders.has(codec);
   }
 
   canDecode(codec: string): boolean {
@@ -88,11 +100,14 @@ export class CapabilityRegistry {
 
   /**
    * Parse `ffmpeg -codecs` output.
-   * Each codec line format: " DEV.LS name   description"
-   * Flags: D=decode, E=encode, V/A/S/D/T=type, I=intraOnly, L=lossy, S=lossless
+   * Each codec line: " DEV.LS name  description (encoders: libx264 h264_nvenc ...) (decoders: ...)"
+   * Also populates the _encoders set from the "(encoders: ...)" parenthetical,
+   * mapping individual encoder names (libx264, h264_nvenc) to the codec family (h264).
    */
   private _probeCodecs(): Map<string, CodecInfo> {
     const map = new Map<string, CodecInfo>();
+    // Reset encoder names so they are rebuilt alongside the codec map
+    this._encoders = new Set<string>();
     let output: string;
     try {
       output = this._exec(['-codecs', '-hide_banner']);
@@ -101,7 +116,6 @@ export class CapabilityRegistry {
     }
 
     const lines = output.split('\n');
-    // Skip header lines until we hit the "-------" separator
     let pastHeader = false;
     for (const line of lines) {
       if (!pastHeader) {
@@ -110,7 +124,6 @@ export class CapabilityRegistry {
       }
 
       // Format: " DEV.LS codec_name   description"
-      // Flags column is 6 chars wide: positions 1-6
       const match = /^ ([D.])([E.])([VASDT])([I.])([L.])([S.])\s+(\S+)\s+(.*)$/.exec(line);
       if (match === null) continue;
 
@@ -134,9 +147,20 @@ export class CapabilityRegistry {
           lossless: s === 'S',
         },
       });
+
+      // Extract individual encoder names from "(encoders: libx264 h264_nvenc ...)"
+      // These are distinct from the codec family name and are what users pass to -c:v
+      const encMatch = /\(encoders?:([^)]+)\)/.exec(description);
+      if (encMatch?.[1]) {
+        for (const enc of encMatch[1].trim().split(/\s+/)) {
+          if (enc) this._encoders!.add(enc);
+        }
+      }
     }
     return map;
   }
+
+
 
   /**
    * Parse `ffmpeg -filters` output.
