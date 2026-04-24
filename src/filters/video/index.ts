@@ -245,6 +245,132 @@ export function setpts(chain: FilterChain, expr: string): FilterChain {
   return chain.add({ name: 'setpts', positional: [expr], named: {} });
 }
 
+// ─── Drawbox ───────────────────────────────────────────────────────────────────
+
+export interface DrawboxOptions {
+  /** Box width in pixels */
+  width?: number;
+  /** Box height in pixels */
+  height?: number;
+  /** X position */
+  x?: number | string;
+  y?: number | string;
+  /** Box color (name or hex) */
+  color?: string;
+  /** Box thickness */
+  thickness?: number;
+  /** Corner radius */
+  radius?: number;
+  /** Replace mode: 'replace', 'add', 'sub', 'mul', 'ref', 'and', 'or', 'xor' */
+  replace?: string;
+}
+
+export function drawbox(chain: FilterChain, opts: DrawboxOptions): FilterChain;
+export function drawbox(opts: DrawboxOptions): string;
+export function drawbox(chainOrOpts: FilterChain | DrawboxOptions, opts?: DrawboxOptions): FilterChain | string {
+  const isStandalone = !(chainOrOpts instanceof FilterChain);
+  const o = isStandalone ? (chainOrOpts as DrawboxOptions) : opts!;
+  const named: Record<string, string | number> = {};
+  if (o.width !== undefined) named['w'] = o.width;
+  if (o.height !== undefined) named['h'] = o.height;
+  if (o.x !== undefined) named['x'] = o.x;
+  if (o.y !== undefined) named['y'] = o.y;
+  if (o.color !== undefined) named['color'] = o.color;
+  if (o.thickness !== undefined) named['t'] = o.thickness;
+  if (o.radius !== undefined) named['r'] = o.radius;
+  if (o.replace !== undefined) named['replace'] = o.replace;
+  const node = { name: 'drawbox', positional: [], named };
+  if (isStandalone) return serializeNode(node);
+  return (chainOrOpts as FilterChain).add(node);
+}
+
+// ─── Drawgrid ─────────────────────────────────────────────────────────────────
+
+export interface DrawgridOptions {
+  /** Grid width */
+  width?: number;
+  height?: number;
+  /** X position */
+  x?: number | string;
+  y?: number | string;
+  /** Grid color */
+  color?: string;
+  /** Line thickness */
+  thickness?: number;
+  /** Replace mode */
+  replace?: string;
+}
+
+export function drawgrid(chain: FilterChain, opts: DrawgridOptions): FilterChain;
+export function drawgrid(opts: DrawgridOptions): string;
+export function drawgrid(chainOrOpts: FilterChain | DrawgridOptions, opts?: DrawgridOptions): FilterChain | string {
+  const isStandalone = !(chainOrOpts instanceof FilterChain);
+  const o = isStandalone ? (chainOrOpts as DrawgridOptions) : opts!;
+  const named: Record<string, string | number> = {};
+  if (o.width !== undefined) named['w'] = o.width;
+  if (o.height !== undefined) named['h'] = o.height;
+  if (o.x !== undefined) named['x'] = o.x;
+  if (o.y !== undefined) named['y'] = o.y;
+  if (o.color !== undefined) named['color'] = o.color;
+  if (o.thickness !== undefined) named['t'] = o.thickness;
+  if (o.replace !== undefined) named['replace'] = o.replace;
+  const node = { name: 'drawgrid', positional: [], named };
+  if (isStandalone) return serializeNode(node);
+  return (chainOrOpts as FilterChain).add(node);
+}
+
+// ─── Vignette ────────────────────────────────────────────────────────────────
+
+export interface VignetteOptions {
+  /** Angle in radians. 0 = no effect, PI/2 = full circle */
+  angle?: number | string;
+  /** Mode: 'forward' or 'backward' */
+  mode?: string;
+  /** X center position */
+  x0?: number | string;
+  y0?: number | string;
+}
+
+export function vignette(chain: FilterChain, opts: VignetteOptions): FilterChain;
+export function vignette(opts: VignetteOptions): string;
+export function vignette(chainOrOpts: FilterChain | VignetteOptions, opts?: VignetteOptions): FilterChain | string {
+  const isStandalone = !(chainOrOpts instanceof FilterChain);
+  const o = isStandalone ? (chainOrOpts as VignetteOptions) : opts!;
+  const named: Record<string, string | number> = {};
+  if (o.angle !== undefined) named['angle'] = o.angle;
+  if (o.mode !== undefined) named['mode'] = o.mode;
+  if (o.x0 !== undefined) named['x0'] = o.x0;
+  if (o.y0 !== undefined) named['y0'] = o.y0;
+  const node = { name: 'vignette', positional: [], named };
+  if (isStandalone) return serializeNode(node);
+  return (chainOrOpts as FilterChain).add(node);
+}
+
+// ─── Vagnuedenoiser ───────────────────────────────────────────────────────
+
+export interface VaguedenoiserOptions {
+  /** Threshold. Lower = stronger denoising. Default: 2 */
+  threshold?: number;
+  /** Number of frames to use. Odd number. Default: 9 */
+  frames?: number;
+  /** Denoise algorithm: 'hard', 'soft', 'label'. Default: 'hard' */
+  algorithm?: string;
+}
+
+export function vaguedenoiser(chain: FilterChain, opts: VaguedenoiserOptions): FilterChain;
+export function vaguedenoiser(opts: VaguedenoiserOptions): string;
+export function vaguedenoiser(chainOrOpts: FilterChain | VaguedenoiserOptions, opts?: VaguedenoiserOptions): FilterChain | string {
+  const isStandalone = !(chainOrOpts instanceof FilterChain);
+  const o = isStandalone ? (chainOrOpts as VaguedenoiserOptions) : opts!;
+  const named: Record<string, string | number> = {};
+  if (o.threshold !== undefined) named['threshold'] = o.threshold;
+  if (o.frames !== undefined) named['frames'] = o.frames;
+  if (o.algorithm !== undefined) named['algorithm'] = o.algorithm;
+  const node = { name: 'vaguedenoiser', positional: [], named };
+  if (isStandalone) return serializeNode(node);
+  return (chainOrOpts as FilterChain).add(node);
+}
+
 // ─── Trim ─────────────────────────────────────────────────────────────────────
 
 export interface TrimOptions {
@@ -758,4 +884,135 @@ export function zoompan(chain: FilterChain, opts: ZoompanOptions = {}): FilterCh
   if (opts.s !== undefined) named['s'] = opts.s;
   if (opts.fps !== undefined) named['fps'] = opts.fps;
   return chain.add({ name: 'zoompan', positional: [], named });
+}
+
+// ─── Color Grading ────────────────────────────────────────────────────────────
+
+export interface CurvesOptions {
+  /** Preset curve name */
+  preset?: 'none' | 'color_negative' | 'cross_process' | 'darker' | 'increase_contrast' |
+           'lighter' | 'linear_contrast' | 'medium_contrast' | 'negative' | 'strong_contrast' | 'vintage';
+  /** Master curve points as 'x0/y0 x1/y1 ...' */
+  master?: string;
+  r?: string;
+  g?: string;
+  b?: string;
+}
+
+/** Apply tone curves adjustment (standalone or chain) */
+export function curves(opts: CurvesOptions): string;
+export function curves(chain: FilterChain, opts: CurvesOptions): FilterChain;
+export function curves(chainOrOpts: FilterChain | CurvesOptions, opts?: CurvesOptions): FilterChain | string {
+  const isStandalone = !(chainOrOpts instanceof FilterChain);
+  const o = isStandalone ? (chainOrOpts as CurvesOptions) : opts!;
+  const named: Record<string, string | number | boolean> = {};
+  if (o.preset !== undefined) named['preset'] = o.preset;
+  if (o.master !== undefined) named['master'] = o.master;
+  if (o.r !== undefined) named['r'] = o.r;
+  if (o.g !== undefined) named['g'] = o.g;
+  if (o.b !== undefined) named['b'] = o.b;
+  const node = { name: 'curves', positional: [] as (string | number)[], named };
+  if (isStandalone) return serializeNode(node);
+  return (chainOrOpts as FilterChain).add(node);
+}
+
+export interface LevelsOptions {
+  /** Input black level 0–255. Default: 0 */
+  inBlack?: number;
+  /** Input white level 0–255. Default: 255 */
+  inWhite?: number;
+  /** Output black level 0–255. Default: 0 */
+  outBlack?: number;
+  /** Output white level 0–255. Default: 255 */
+  outWhite?: number;
+  /** Gamma correction. Default: 1.0 */
+  gamma?: number;
+  /** Channel: 'r'|'g'|'b'|'a'|'all'. Default: 'all' */
+  channel?: 'r' | 'g' | 'b' | 'a' | 'all';
+}
+
+/** Adjust levels (input/output range + gamma) */
+export function levels(opts?: LevelsOptions): string;
+export function levels(chain: FilterChain, opts?: LevelsOptions): FilterChain;
+export function levels(chainOrOpts?: FilterChain | LevelsOptions, opts?: LevelsOptions): FilterChain | string {
+  const isStandalone = !(chainOrOpts instanceof FilterChain);
+  const o = (isStandalone ? chainOrOpts : opts) ?? {};
+  // Implement using the 'levels' filter (FFmpeg 7+)
+  const named: Record<string, string | number | boolean> = {};
+  if ((o as LevelsOptions).inBlack !== undefined) named['irange_min'] = (o as LevelsOptions).inBlack! / 255;
+  if ((o as LevelsOptions).inWhite !== undefined) named['irange_max'] = (o as LevelsOptions).inWhite! / 255;
+  if ((o as LevelsOptions).outBlack !== undefined) named['orange_min'] = (o as LevelsOptions).outBlack! / 255;
+  if ((o as LevelsOptions).outWhite !== undefined) named['orange_max'] = (o as LevelsOptions).outWhite! / 255;
+  if ((o as LevelsOptions).gamma !== undefined) named['gamma'] = (o as LevelsOptions).gamma!;
+  const node = { name: 'levels', positional: [] as (string | number)[], named };
+  if (isStandalone) return serializeNode(node);
+  return (chainOrOpts as FilterChain).add(node);
+}
+
+// ─── Visual Correction ────────────────────────────────────────────────────────
+
+/** Remove banding artifacts from flat regions */
+export function deband(chain: FilterChain, opts: { range?: number; direction?: number } = {}): FilterChain {
+  const named: Record<string, string | number | boolean> = {};
+  if (opts.range !== undefined) named['range'] = opts.range;
+  if (opts.direction !== undefined) named['direction'] = opts.direction;
+  return chain.add({ name: 'deband', positional: [], named });
+}
+
+/** Camera shake stabilization without vidstab library */
+export function deshake(chain: FilterChain, opts: { rx?: number; ry?: number } = {}): FilterChain {
+  const named: Record<string, string | number | boolean> = {};
+  if (opts.rx !== undefined) named['rx'] = opts.rx;
+  if (opts.ry !== undefined) named['ry'] = opts.ry;
+  return chain.add({ name: 'deshake', positional: [], named });
+}
+
+/** Reduce temporal flicker (great for time-lapses) */
+export function deflicker(chain: FilterChain, opts: { size?: number; mode?: 'am' | 'gm' | 'hm' | 'qm' | 'cm' | 'pm' | 'median' } = {}): FilterChain {
+  const named: Record<string, string | number | boolean> = {};
+  if (opts.size !== undefined) named['size'] = opts.size;
+  if (opts.mode !== undefined) named['mode'] = opts.mode;
+  return chain.add({ name: 'deflicker', positional: [], named });
+}
+
+/** Edge-preserving smoothing blur */
+export function smartblur(chain: FilterChain, opts: { luma_radius?: number; luma_strength?: number; chroma_radius?: number; chroma_strength?: number } = {}): FilterChain {
+  const named: Record<string, string | number | boolean> = {};
+  if (opts.luma_radius !== undefined) named['lr'] = opts.luma_radius;
+  if (opts.luma_strength !== undefined) named['ls'] = opts.luma_strength;
+  if (opts.chroma_radius !== undefined) named['cr'] = opts.chroma_radius;
+  if (opts.chroma_strength !== undefined) named['cs'] = opts.chroma_strength;
+  return chain.add({ name: 'smartblur', positional: [], named });
+}
+
+// ─── Layout ───────────────────────────────────────────────────────────────────
+
+/** Stack videos horizontally */
+export function hstack(chain: FilterChain, inputs = 2): FilterChain {
+  return chain.add({ name: 'hstack', positional: [], named: { inputs } });
+}
+
+/** Stack videos vertically */
+export function vstack(chain: FilterChain, inputs = 2): FilterChain {
+  return chain.add({ name: 'vstack', positional: [], named: { inputs } });
+}
+
+export interface XstackOptions {
+  inputs: number;
+  /** Layout string, e.g. '0_0|w0_0|0_h0|w0_h0' */
+  layout: string;
+}
+
+/** Arrange multiple videos in a grid */
+export function xstack(chain: FilterChain, opts: XstackOptions): FilterChain {
+  return chain.add({ name: 'xstack', positional: [], named: { inputs: opts.inputs, layout: opts.layout } });
+}
+
+/** Solid colour source frame (use with drawtext overlays) */
+export function colorSource(chain: FilterChain, opts: { color?: string; size?: string; rate?: number } = {}): FilterChain {
+  const named: Record<string, string | number | boolean> = {};
+  if (opts.color !== undefined) named['color'] = opts.color;
+  if (opts.size !== undefined) named['size'] = opts.size;
+  if (opts.rate !== undefined) named['rate'] = opts.rate;
+  return chain.add({ name: 'color', positional: [], named });
 }

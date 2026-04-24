@@ -1,12 +1,20 @@
 name: Publish to npm
 
+# Triggered automatically when Build & Release completes successfully on a tag.
+# workflow_run is used because GitHub blocks release events created by GITHUB_TOKEN
+# from triggering other workflows.
 on:
-  release:
-    types: [created]
+  workflow_run:
+    workflows: ["Build & Release"]
+    types: [completed]
   workflow_dispatch:
 
 jobs:
   publish:
+    # Only run when upstream succeeded (or when triggered manually)
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -15,16 +23,17 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Setup Node.js 20
         uses: actions/setup-node@v5
         with:
           node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
       - name: Upgrade NPM
         run: npm install -g npm@latest
-
-      - name: Install FFmpeg
-        run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
 
       - name: Install dependencies
         run: npm ci

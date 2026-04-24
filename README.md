@@ -71,7 +71,6 @@ Requires `ffmpeg` (and `ffprobe`) to be installed and on `PATH`, or set `FFMPEG_
 
 | Runtime | Supported | Notes |
 |---------|-----------|-------|
-| Node.js 18+ | ✅ | Full support |
 | Node.js 20+ | ✅ | Recommended |
 | Deno 2.x | ✅ | Via `node:` compat layer — requires `--allow-env` and `--allow-run` |
 | Bun | ✅ | Full support |
@@ -102,6 +101,9 @@ Requires `ffmpeg` (and `ffprobe`) to be installed and on `PATH`, or set `FFMPEG_
 - [Metadata](#metadata)
 - [Waveform & Spectrum](#waveform-spectrum)
 - [Codec Serializers](#codec-serializers)
+- [Color Grading & Visual Filters](#color-grading-filters)
+- [Hardware Codec Helpers (v0.3.0)](#hardware-codecs-v3)
+- [Edit Helpers (v0.3.0)](#edit-helpers)
 - [Named Presets](#named-presets)
 - [HLS & DASH Packaging](#hls-dash-packaging)
 - [Two-Pass Encoding](#two-pass-encoding)
@@ -190,6 +192,22 @@ await ffmpeg('input.mp4')
 | `.hwAccel(name, opts?)` | Enable hardware acceleration |
 | `.spawn(opts?)` | Start process, return `FFmpegProcess` |
 | `.run(opts?)` | Start process, return `Promise<void>` |
+| `.dry()` | Return CLI args without executing |
+
+---
+
+### Low-level process API
+
+```ts
+import { spawnFFmpeg, runFFmpeg, FFmpegSpawnError } from 'mediaforge';
+
+// spawnFFmpeg — returns FFmpegProcess with .emitter for streaming events
+const proc = spawnFFmpeg({ binary: 'ffmpeg', args: ['-i', 'in.mp4', 'out.mp4'] });
+proc.emitter.on('end', () => console.log('done'));
+
+// runFFmpeg — awaitable, throws FFmpegSpawnError on non-zero exit
+await runFFmpeg({ binary: 'ffmpeg', args: ['-i', 'in.mp4', 'out.mp4'] });
+```
 
 ---
 
@@ -225,6 +243,16 @@ const buf = await frameToBuffer({
   size: '1280x720',
 });
 fs.writeFileSync('frame.png', buf);
+
+// Export ALL frames as individual images with fps control
+await extractFrames({
+  input: 'video.mp4',
+  folder: './frames',
+  fps: 30,           // Extract at 30 fps (every frame)
+  pattern: 'frame_%06d.png',
+  size: '1920x1080',
+  quality: 95,
+});
 ```
 
 ---
@@ -316,6 +344,14 @@ await new Promise((res, rej) => {
   proc.emitter.on('end', res);
   proc.emitter.on('error', rej);
 });
+
+// Concat with crossfade transitions between clips
+await concatWithTransitions({
+  inputs: ['intro.mp4', 'segment1.mp4', 'segment2.mp4', 'outro.mp4'],
+  output: 'seamless.mp4',
+  transition: 'crossfade',
+  duration: 1,        // 1 second transition between each clip
+});
 ```
 
 ---
@@ -368,6 +404,23 @@ await normalizeAudio({ input: 'episode.mp3', output: 'episode-norm.mp3', targetI
 // Simple volume adjust
 await adjustVolume({ input: 'in.mp4', output: 'out.mp4', volume: '0.5' });   // half
 await adjustVolume({ input: 'in.mp4', output: 'out.mp4', volume: '6dB' });   // +6dB
+
+// Detect silence and get timestamp ranges
+const silence = await detectSilence({
+  input: 'audio.wav',
+  noiseLevel: -40,      // dB threshold (default: -60dB)
+  duration: 2,       // minimum silence duration in seconds
+  silenceOnly: true,    // return only silence ranges (false = include speech)
+});
+console.log(silence.startTimes);   // [0.5, 45.2, 120.8]
+console.log(silence.endTimes);    // [2.1, 47.0, 122.5]
+
+// Parse loudnorm output for EBU R128 analysis
+const loudness = await parseLoudnorm({
+  input: 'audio.mp3',
+  measures: ['I', 'LRA', 'TP'],   // what to measure
+});
+console.log(loudness.normalized);  // { I: -23.1, LRA: 6.2, TP: -1.8 }
 ```
 
 ---
@@ -395,7 +448,7 @@ await addWatermark({
 await addTextWatermark({
   input: 'video.mp4',
   output: 'watermarked.mp4',
-  text: '© MyCompany 2025',
+  text: '© MyCompany 2026',
   position: 'bottom-right',
   fontSize: 24,
   fontColor: 'white@0.8',
@@ -455,6 +508,18 @@ await writeMetadata({
 
 // Strip all metadata (privacy-safe export)
 await stripMetadata({ input: 'original.mp4', output: 'clean.mp4' });
+
+// Add chapter markers (convenience wrapper)
+await addChapters({
+  input: 'movie.mp4',
+  output: 'chapters.mp4',
+  chapters: [
+    { title: 'Introduction', startSec: 0 },
+    { title: 'Chapter 1: Setup', startSec: 120 },
+    { title: 'Chapter 2: Action', startSec: 600, endSec: 1200 },
+    { title: 'Conclusion', startSec: 1800 },
+  ],
+});
 ```
 
 ---
@@ -539,7 +604,7 @@ await ffmpeg('in.mp4').output('out.mkv').addOutputOption(...ffv1ToArgs({ version
 | `x264ToArgs(opts)` | `libx264` | v6+ |
 | `x265ToArgs(opts)` | `libx265` | v6+ |
 | `svtav1ToArgs(opts)` | `libsvtav1` | v6+ |
-| `vp9ToArgs(opts)` | `libvpx-vp9` | v6+ |
+| `vp9ToArgs(opts)` | `libvpx-vp9` | v6+ | `crf`, `bitrate`, `quality`, `cpuUsed`, `tileColumns`, `rowMt`, `deadline` |
 | `proResToArgs(opts?, enc?)` | `prores_ks` / `prores_aw` / `prores` | v6+ |
 | `dnxhdToArgs(opts?)` | `dnxhd` | v6+ |
 | `mjpegToArgs(opts?)` | `mjpeg` | v6+ |
@@ -572,7 +637,7 @@ await ffmpeg('in.mp4').output('out.mpg').addOutputOption(...mp2ToArgs({ bitrate:
 
 | Helper | Encoder | Use case |
 |--------|---------|----------|
-| `aacToArgs(opts)` | `aac` | Universal streaming |
+| `aacToArgs(opts)` | `aac` | Universal streaming | `bitrate`, `vbr`, `profile` (`aac_low`, `aac_he`, `aac_he_v2`), `sampleRate`, `channels` |
 | `mp3ToArgs(opts)` | `libmp3lame` | Consumer/podcasting |
 | `opusToArgs(opts)` | `libopus` | WebRTC, Discord |
 | `flacToArgs(opts?)` | `flac` | Lossless |
@@ -605,8 +670,278 @@ await ffmpeg('in.mp4').output('out.mp4').addOutputOption(...vulkanVideoToArgs({ 
 | `nvencToArgs(opts, codec?)` | `h264_nvenc`, `hevc_nvenc`, `av1_nvenc` | NVIDIA GPU (Linux) |
 | `vaapiToArgs(opts, codec?)` | `h264_vaapi`, `hevc_vaapi`, `vp8_vaapi`, … | Intel/AMD (Linux) |
 | `qsvToArgs(opts, codec?)` | `h264_qsv`, `hevc_qsv` | Intel Quick Sync |
+| `mediacodecToArgs(opts, codec?)` | `h264_mediacodec`, `hevc_mediacodec` | Android MediaCodec (generic) |
 | `mediacodecVideoToArgs(opts, codec?)` | `h264_mediacodec`, `hevc_mediacodec`, `av1_mediacodec`, … | Android (FFmpeg v8) |
+| `vulkanToArgs(opts, codec?)` | `h264_vulkan`, `hevc_vulkan` | Vulkan GPU (generic) |
 | `vulkanVideoToArgs(opts, codec?)` | `h264_vulkan`, `hevc_vulkan`, `av1_vulkan`, `ffv1_vulkan` | Vulkan GPU |
+
+---
+
+<a name="edit-helpers"></a>
+
+## Edit Helpers (v0.3.0)
+
+### `trimVideo` — cut by time range
+
+```ts
+import { trimVideo } from 'mediaforge';
+
+// Instant stream copy (frame-approximate, no quality loss)
+await trimVideo({ input: 'in.mp4', output: 'out.mp4', start: 10, end: 40 });
+
+// Frame-accurate re-encode
+await trimVideo({ input: 'in.mp4', output: 'out.mp4', start: '00:00:10', duration: 30, copy: false });
+```
+
+### `changeSpeed` — video + audio tempo
+
+```ts
+import { changeSpeed } from 'mediaforge';
+
+await changeSpeed({ input: 'in.mp4', output: 'fast.mp4', speed: 2.0 });   // 2× faster
+await changeSpeed({ input: 'in.mp4', output: 'slow.mp4', speed: 0.25 });  // 4× slow-mo
+// Chains multiple atempo filters automatically for speeds outside 0.5–2.0
+```
+
+### `extractAudio` / `replaceAudio` / `mixAudio`
+
+```ts
+import { extractAudio, replaceAudio, mixAudio } from 'mediaforge';
+
+// Extract audio — codec auto-detected from extension
+await extractAudio({ input: 'video.mp4', output: 'audio.mp3' });
+await extractAudio({ input: 'video.mp4', output: 'master.wav', sampleRate: 48000 });
+
+// Replace audio track
+await replaceAudio({ video: 'video.mp4', audio: 'music.mp3', output: 'out.mp4' });
+
+// Mix multiple audio files
+await mixAudio({ inputs: ['voice.mp3', 'bg.mp3'], output: 'mixed.mp3', weights: [1.0, 0.3] });
+```
+
+### `stackVideos` — hstack / vstack / xstack
+
+```ts
+import { stackVideos } from 'mediaforge';
+
+// Side by side
+await stackVideos({ inputs: ['a.mp4', 'b.mp4'], output: 'side.mp4', direction: 'hstack' });
+
+// 2×2 grid
+await stackVideos({ inputs: ['a.mp4','b.mp4','c.mp4','d.mp4'], output: 'grid.mp4', direction: 'xstack', columns: 2 });
+```
+
+### `cropToRatio` — smart center crop
+
+```ts
+import { cropToRatio } from 'mediaforge';
+
+await cropToRatio({ input: 'wide.mp4', output: 'square.mp4', ratio: '1:1' });
+await cropToRatio({ input: 'landscape.mp4', output: 'portrait.mp4', ratio: '9:16' });
+```
+
+### `generateSprite` — thumbnail sprite sheet
+
+```ts
+import { generateSprite } from 'mediaforge';
+
+const info = await generateSprite({ input: 'video.mp4', output: 'sprites.jpg', columns: 5, count: 25 });
+// info.columns, info.rows, info.thumbWidth — use to build a VTT seek-preview file
+```
+
+### `buildAtempoChain` — exported utility
+
+```ts
+import { buildAtempoChain } from 'mediaforge';
+
+buildAtempoChain(2.0);   // → 'atempo=2.000000'
+buildAtempoChain(4.0);   // → 'atempo=2.0,atempo=2.000000'  (chained for >2x)
+buildAtempoChain(0.25);  // → 'atempo=0.5,atempo=0.500000'  (chained for <0.5x)
+```
+
+### `loopVideo` / `deinterlace` / `applyLUT` / `stabilizeVideo` / `streamToUrl`
+
+```ts
+import { loopVideo, deinterlace, applyLUT, stabilizeVideo, streamToUrl } from 'mediaforge';
+
+await loopVideo({ input: 'clip.mp4', output: 'looped.mp4', loops: 2, duration: 10 }); // loop 2x, trim to 10s total
+await deinterlace({ input: 'broadcast.ts', output: 'progressive.mp4' });
+await applyLUT({ input: 'raw.mp4', output: 'graded.mp4', lut: 'film.cube' });
+await stabilizeVideo({ input: 'shaky.mp4', output: 'stable.mp4', smoothing: 15 });
+// Requires FFmpeg compiled with --enable-libvidstab
+await streamToUrl({ input: 'video.mp4', url: 'rtmp://live.twitch.tv/app/STREAM_KEY', format: 'flv' }); // format required
+```
+
+---
+
+<a name="color-grading-filters"></a>
+
+## Color Grading & Visual Filters (v0.3.0)
+
+```ts
+import { curves, levels, deband, deshake, deflicker, smartblur } from 'mediaforge';
+import { FilterChain } from 'mediaforge';
+
+// Standalone (returns filter string for .videoFilter())
+await ffmpeg('in.mp4').output('out.mp4').videoFilter(curves({ preset: 'vintage' })).videoCodec('libx264').run();
+await ffmpeg('in.mp4').output('out.mp4').videoFilter(levels({ inBlack: 10, inWhite: 240 })).videoCodec('libx264').run();
+
+// Chained (attach to a FilterChain)
+const chain = new FilterChain();
+deband(chain);
+deshake(chain, { rx: 16, ry: 16 });
+await ffmpeg('in.mp4').output('out.mp4').videoFilter(chain.toString()).run();
+```
+
+| Filter | Standalone | Description |
+|--------|-----------|-------------|
+| `curves(opts)` | ✅ | Tone curves — named presets (`vintage`, `cross_process`, …) or custom R/G/B points |
+| `levels(opts?)` | ✅ | Input/output range + gamma adjustment (FFmpeg 7+; not in FFmpeg 6) |
+| `deband(chain, opts?)` | ❌ | Remove banding from flat regions |
+| `deshake(chain, opts?)` | ❌ | Camera shake stabilisation (no external lib) |
+| `deflicker(chain, opts?)` | ❌ | Reduce temporal flicker (time-lapses) |
+| `smartblur(chain, opts?)` | ❌ | Edge-preserving smoothing |
+| `hstack(chain, n)` | ❌ | Stack N videos horizontally (use `stackVideos` for high-level) |
+| `vstack(chain, n)` | ❌ | Stack N videos vertically |
+| `xstack(chain, opts)` | ❌ | Arrange N videos in a custom grid |
+| `colorSource(chain, opts?)` | ❌ | Solid colour source frame (for overlays) |
+| `drawbox(opts?)` | ✅ | Draw colored boxes/frames on video |
+| `drawgrid(opts?)` | ✅ | Draw a grid overlay |
+| `vignette(opts?)` | ✅ | Apply vignette effect |
+| `vaguedenoiser(opts?)` | ✅ | Wavelet-based denoising |
+
+## Analysis Helpers (v0.4.0)
+
+```ts
+import { detectSilence, detectScenes, cropDetect, burnTimecode, parseLoudnorm } from 'mediaforge';
+
+// Detect silence segments (returns Array<{ start, end, duration }>)
+const silences = await detectSilence({
+  input: 'podcast.mp3',
+  threshold: -40,    // dB (default: -50)
+  duration: 0.5,     // minimum silence length in seconds (default: 0.5)
+});
+silences.forEach(s => console.log(`Silence: ${s.start.toFixed(2)}s – ${s.end.toFixed(2)}s`));
+
+// Two-pass EBU R128 loudness measurement (non-destructive)
+const loudness = await parseLoudnorm({ input: 'audio.mp3' });
+console.log(loudness); // { input_i, input_lra, input_tp, input_thresh, ... }
+```
+
+```ts
+import { detectSilence, detectScenes, cropDetect, burnTimecode } from 'mediaforge';
+
+// Detect scene changes in video
+const scenes = await detectScenes({
+  input: 'video.mp4',
+  threshold: 0.4,   // scene change sensitivity (default: 0.4, lower = more sensitive)
+});
+// Returns: Array of { timestamp: number, sceneNumber: number }
+scenes.forEach(s => console.log(`Scene ${s.sceneNumber} at ${s.timestamp}s`));
+
+// Detect letterbox/pillarbox (black bars)
+const crop = await cropDetect({
+  input: 'video.mp4',
+  limit: 100,  // max frames to scan (default: 100)
+  skip: 5,     // skip first N seconds (default: 5)
+});
+if (crop) console.log(crop);  // { width: 1920, height: 800, x: 0, y: 140 } or null
+
+// Burn timecode into video
+// position: 'tl', 'tr', 'bl', 'br', 'center' (default: 'bl')
+await burnTimecode({
+  input: 'video.mp4',
+  output: 'timecoded.mp4',
+  fontsize: 24,
+  fontcolor: 'white',
+  position: 'bl',
+});
+```
+
+---
+
+<a name="hardware-codecs-v3"></a>
+
+## Hardware Codec Helpers (v0.3.0 additions)
+
+```ts
+import { amfToArgs, videotoolboxToArgs } from 'mediaforge';
+
+// AMD AMF (Windows/Linux with AMD GPU)
+await ffmpeg('in.mp4').output('out.mp4').addOutputOption(...amfToArgs({ bitrate: 8000, quality: 'balanced' }, 'hevc_amf')).run();
+
+// Apple VideoToolbox (macOS/iOS)
+await ffmpeg('in.mp4').output('out.mp4').addOutputOption(...videotoolboxToArgs({ bitrate: 6000 }, 'hevc_videotoolbox')).run();
+```
+
+| Helper | Codecs | Platform |
+|--------|--------|----------|
+| `amfToArgs(opts, codec?)` | `h264_amf`, `hevc_amf`, `av1_amf` | AMD GPU (Windows / Linux libamf) |
+| `videotoolboxToArgs(opts, codec?)` | `h264_videotoolbox`, `hevc_videotoolbox` | Apple macOS / iOS |
+
+## Audio Filters
+
+mediaforge exports 26 audio filters. All support two overload styles — standalone (returns filter string) or chained (appends to `FilterChain`).
+
+```ts
+import {
+  volume, loudnorm, equalizer, bass, treble, atempo,
+  aecho, afade, highpass, lowpass, dynaudnorm, compand,
+  aresample, amerge, amix, pan, channelmap, channelsplit,
+  asplit, silencedetect, rubberband, agate, asetpts, atrim,
+  headphones, sofalizer,
+} from 'mediaforge';
+
+// Standalone — returns filter string for .audioFilter()
+await ffmpeg('in.mp4').output('out.mp4')
+  .audioFilter([
+    bass({ gain: 4 }),                          // boost bass +4dB
+    treble({ gain: -2 }),                       // cut highs -2dB
+    highpass({ frequency: 80 }),                // remove sub-80Hz rumble
+    equalizer({ frequency: 3000, width_type: 'o', width: 1, gain: 3 }),
+    dynaudnorm(),                               // dynamic normalisation
+    compand(),                                  // dynamic range compression
+  ].join(','))
+  .audioCodec('aac').run();
+
+// Tempo / pitch
+await ffmpeg('in.mp4').output('out.mp4')
+  .audioFilter(atempo({ tempo: 1.5 }))         // 1.5× speed (audio only)
+  .audioFilter(rubberband({ pitch: 1.5 }))     // pitch-shift up
+  .audioCodec('aac').run();
+
+// Spatial audio
+await ffmpeg('in.mp4').output('out.mp4')
+  .audioFilter(aecho(new FilterChain(), { delays: 500, decays: 0.5 }))
+  .audioFilter(headphones({ map: 'stereo' }))
+  .audioFilter(sofalizer({ sofa: 'HRTF_44100.sofa', gain: 3.0 }))
+  .audioCodec('aac').run();
+
+// Channel manipulation
+await ffmpeg('stereo.mp3').output('mono.mp3')
+  .audioFilter(pan(new FilterChain(), 'mono|c0=0.5*c0+0.5*c1'))
+  .audioFilter(aresample(new FilterChain(), 44100))
+  .audioCodec('libmp3lame').run();
+
+// Silence / gating
+await ffmpeg('podcast.mp3').output('gated.mp3')
+  .audioFilter(agate(new FilterChain(), { threshold: 0.02 }))
+  .audioFilter(highpass(new FilterChain(), 80))
+  .audioFilter(lowpass(new FilterChain(), 16000))
+  .audioCodec('libmp3lame').run();
+
+import { headphones, sofalizer } from 'mediaforge';
+
+// Virtual surround sound from stereo headphones
+await ffmpeg('in.mp4').output('out.mp4')
+  .audioFilter(headphones({ map: 'stereo' }))
+  .run();
+
+// SOFA file-based 3D audio virtualization
+await ffmpeg('in.mp4').output('out.mp4')
+  .audioFilter(sofalizer({ sofa: 'HRTF_44100.sofa', gain: 3.0 }))
+  .run();
+```
 
 ---
 
@@ -728,17 +1063,99 @@ const { pass1, pass2 } = buildTwoPassArgs({
 
 ---
 
+
+---
+
+<a name="arg-builders"></a>
+
+## Arg-Builder Functions
+
+Low-level helpers that return raw `string[]` arrays, useful when you need direct control over FFmpeg arguments. Each one corresponds to a high-level helper but exposes the underlying argument array.
+
+```ts
+import {
+  buildScreenshotArgs, buildFrameBufferArgs, buildExtractFramesArgs, buildTimestampFilename,
+  buildConcatList, buildConcatTransitionArgs,
+  buildHlsArgs, buildDashArgs,
+  buildGifArgs, buildGifPalettegenFilter, buildGifPaletteuseFilter,
+  buildMetadataArgs, buildChapterContent,
+  buildPipeThroughArgs, buildStreamOutputArgs,
+  buildWatermarkFilter, buildTextWatermarkFilter,
+  buildBurnSubtitlesFilter, buildBurnTimecodeFilter,
+  buildWaveformFilter, buildSpectrumFilter,
+  buildLoudnormFilter, buildSilenceDetectFilter,
+  buildSceneSelectFilter,
+} from 'mediaforge';
+
+// Screenshot
+const args = buildScreenshotArgs('input.mp4', 'thumb.jpg', 3, '320x180');
+// → ['-y', '-ss', '3', '-i', 'input.mp4', '-s', '320x180', '-vframes', '1', 'thumb.jpg']
+
+// Pipe a frame as raw bytes (e.g. for on-the-fly image processing)
+const args = buildFrameBufferArgs('input.mp4', 5, 'png');
+// → [..., 'pipe:1']  ← reads from pipe, outputs raw PNG bytes
+
+// GIF two-pass (palettegen + paletteuse)
+const { pass1, pass2 } = buildGifArgs('input.mp4', 'palette.png', 'out.gif', 10, 320, 'bayer');
+
+// Loudnorm filter string
+const filter = buildLoudnormFilter(-23, 7, -2);
+// → 'loudnorm=I=-23:LRA=7:tp=-2'
+
+// Silence detect filter string
+const filter = buildSilenceDetectFilter(-40, 1.0);
+// → 'silencedetect=noise=-40dB:d=1'
+
+// FFMETADATA chapter file content
+const meta = buildChapterContent([
+  { title: 'Intro', startSec: 0, endSec: 30 },
+  { title: 'Main',  startSec: 30, endSec: 180 },
+]);
+```
+
+---
+
 <a name="stream-mapping-dsl"></a>
 
 ## Stream Mapping DSL
 
 ```ts
-import { mapStream, mapAVS, copyStream, setMetadata, ss } from 'mediaforge';
+import {
+  mapStream, mapAll, mapAllVideo, mapAllAudio, mapAllSubtitles,
+  mapVideo, mapAudio, mapSubtitle, mapLabel, mapAVS,
+  negateMap, setStreamMetadata, setMetadata, setDisposition,
+  streamCodec, copyStream, remuxAll, mapDefaultStreams, copyAudioAndSubs,
+  serializeSpecifier, ss,
+} from 'mediaforge';
 
-// Convenience helpers for complex mappings
-const mapping = mapAVS(0);   // maps 0:v, 0:a, 0:s
+// Map all streams from input 0
+await ffmpeg('input.mkv').output('out.mkv').addOutputOption(...mapAll(0)).run();
 
-// Language-aware mapping
+// Map specific stream types
+await ffmpeg('input.mp4').output('out.mp4')
+  .map(mapVideo(0, 0)[1])    // first video stream
+  .map(mapAudio(0, 1)[1])    // second audio stream
+  .videoCodec('copy').audioCodec('copy').run();
+
+// Negate a mapping (exclude subtitle streams)
+await ffmpeg('input.mkv').output('out.mp4')
+  .map('0').addOutputOption(...negateMap('0:s'))
+  .videoCodec('copy').audioCodec('copy').run();
+
+// Remux all streams (copy everything)
+await ffmpeg('input.mkv').output('out.mp4')
+  .addOutputOption(...remuxAll()).run();
+
+// Set stream metadata
+await ffmpeg('in.mp4').output('out.mp4')
+  .addOutputOption(...setStreamMetadata(0, 'a', 0, 'language', 'eng'))
+  .addOutputOption(...setDisposition(0, 'a', 0, ['default']))
+  .videoCodec('copy').audioCodec('copy').run();
+
+// Map AVS (all three types at once)
+const mapping = mapAVS(0);   // returns ['-map','0:v','-map','0:a','-map','0:s']
+
+// Language-aware specifier
 const eng = ss(0, 'a', 'eng');   // 0:a:language:eng
 ```
 
@@ -770,6 +1187,45 @@ await ffmpeg('input.mp4')
 const builder = new FFmpegBuilder('input.mp4');
 const bestHw = builder.selectHwaccel(['cuda', 'vaapi', 'videotoolbox']);
 if (bestHw) builder.hwAccel(bestHw);
+```
+
+---
+
+
+---
+
+<a name="filter-graph-api"></a>
+
+## Low-level Filter Graph API
+
+For advanced complex filter graphs you can build nodes and links directly:
+
+```ts
+import {
+  filterGraph, videoFilterChain, audioFilterChain,
+  VideoFilterChain, AudioFilterChain, FilterChain, FilterGraph,
+  GraphNode, GraphStream, serializeNode, serializeLink, pad, resetLabelCounter,
+} from 'mediaforge';
+
+// Simple chain — compose video filters step by step
+const chain = videoFilterChain('scale=1280:720');
+// chain.toString() → 'scale=1280:720'
+
+// Filter graph — connect multiple streams with labels
+const fg = filterGraph();
+// Use pad() to create named stream labels
+const inPad  = pad('0:v');   // toString() → '[0:v]'
+const outPad = pad('vout');  // toString() → '[vout]'
+
+// Serialize a graph node
+const node = serializeNode({ name: 'scale', positional: [640, 360], named: {} });
+// → 'scale=640:360'
+
+// Serialize a filter link  → '[0:v]scale=640:360[vout]'
+const link = serializeLink({ inputs: [inPad], filter: { name: 'scale', positional: [640, 360], named: {} }, outputs: [outPad] });
+
+// Reset auto-label counter (labels are auto-generated as [v0], [v1] etc.)
+resetLabelCounter();
 ```
 
 ---
@@ -824,7 +1280,7 @@ await ffmpeg('input.mp4')
   .run();
 ```
 
-**54 built-in filters**: `scale`, `crop`, `pad`, `overlay`, `drawtext`, `fps`, `setpts`, `trim`, `format`, `vflip`, `hflip`, `rotate`, `unsharp`, `gblur`, `eq`, `hue`, `yadif`, `thumbnail`, `select`, `concat`, `split`, `tile`, `colorkey`, `chromakey`, `subtitles`, `fade`, `zoompan`, `volume`, `loudnorm`, `equalizer`, `bass`, `treble`, `afade`, `amerge`, `amix`, `pan`, `aresample`, `dynaudnorm`, `compand`, `aecho`, `highpass`, `lowpass`, `silencedetect`, `rubberband`, `atempo`, `agate`, and more.
+**75 built-in filters**: `scale`, `crop`, `pad`, `overlay`, `drawtext`, `fps`, `setpts`, `trim`, `format`, `vflip`, `hflip`, `rotate`, `unsharp`, `gblur`, `eq`, `hue`, `colorbalance`, `yadif`, `thumbnail`, `select`, `concat`, `split`, `tile`, `colorkey`, `chromakey`, `subtitles`, `fade`, `zoompan`, `volume`, `loudnorm`, `equalizer`, `bass`, `treble`, `afade`, `amerge`, `amix`, `pan`, `aresample`, `dynaudnorm`, `compand`, `aecho`, `highpass`, `lowpass`, `silencedetect`, `rubberband`, `atempo`, `agate`, and more.
 
 ---
 
@@ -842,6 +1298,7 @@ import {
   parseFrameRate, parseDuration, parseBitrate,
   isHdr, isInterlaced, getChapterList,
   findStreamByLanguage, formatDuration,
+  getSubtitleStreams, getStreamLanguage,
 } from 'mediaforge';
 
 // Synchronous probe
@@ -990,20 +1447,50 @@ mediaforge version
 ## Compatibility Guards
 
 ```ts
-import { guardCodec, guardFeatureVersion, selectBestCodec } from 'mediaforge';
-import { FFmpegBuilder } from 'mediaforge';
+import {
+  guardCodec, guardHwaccel, guardFeatureVersion,
+  selectBestCodec, selectBestHwaccel, assertCodec,
+  CapabilityRegistry, getDefaultRegistry,
+} from 'mediaforge';
 
-const builder = new FFmpegBuilder();
+// Check codec / hwaccel availability at runtime
+guardCodec(registry, 'libx264', 'encode');       // → { available: boolean, reason?: string }
+guardHwaccel(registry, 'cuda');                   // → { available: boolean }
+assertCodec(registry, 'libx264', 'encode');       // throws GuardError if unavailable
 
-// Check codec availability
-const result = builder.checkCodec('libx264', 'encode');
-if (!result.available) console.warn(result.reason);
-
-// Auto-select best codec
-const codec = await builder.selectVideoCodec([
+// Auto-select best available codec from priority list
+selectBestCodec(version, registry, [
   { codec: 'h264_nvenc', featureKey: 'nvenc' },
   { codec: 'h264_vaapi' },
-  { codec: 'libx264' },   // fallback
+  { codec: 'libx264' },                           // software fallback
+]);
+
+// Auto-select best hardware accelerator
+selectBestHwaccel(registry, ['cuda', 'vaapi', 'videotoolbox']);
+
+// Access the runtime capability registry directly
+const registry = getDefaultRegistry('ffmpeg');    // or pass explicit path, e.g. '/usr/local/bin/ffmpeg'
+const custom = new CapabilityRegistry('ffmpeg');  // custom binary path
+console.log(registry.hasCodec('libx264'));        // true
+console.log(registry.canEncode('libx264'));       // true
+console.log(registry.hasFilter('scale'));         // true
+console.log(registry.encoders.size);             // 80+ encoders on standard FFmpeg builds
+```
+
+```ts
+import { FFmpegBuilder } from 'mediaforge';
+const builder = new FFmpegBuilder();
+
+// Builders expose selectHwaccel() to pick the best available hardware
+const builder = new FFmpegBuilder('input.mp4');
+const hwaccel = builder.selectHwaccel(['cuda', 'vaapi', 'videotoolbox', 'none']);
+console.log(hwaccel); // 'cuda' | 'vaapi' | null (if none of them available)
+
+// For codec selection use the standalone selectBestCodec()
+const codec = selectBestCodec(liveVersion, registry, [
+  { codec: 'h264_nvenc', featureKey: 'nvenc' },
+  { codec: 'h264_vaapi' },
+  { codec: 'libx264' },   // software fallback
 ]);
 ```
 
@@ -1017,10 +1504,10 @@ const codec = await builder.selectVideoCodec([
 |---------------|---------|
 | v8.x | ✅ Full |
 | v7.x | ✅ Full |
-| v6.x | ✅ Full |
+| v6.x | ✅ Full (note: `levels` filter not available in v6; use `curves` instead) |
 | v5.x and below | ⚠️ Partial |
 
-Tested with Node.js 18, 20, 22.
+Tested with Node.js 20, 22, 24.
 
 ---
 

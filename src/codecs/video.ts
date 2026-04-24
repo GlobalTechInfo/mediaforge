@@ -165,6 +165,8 @@ export interface Vp9Options {
   keyintMax?: number;
   /** Forced pixel format */
   pixFmt?: PixelFormat;
+  /** Encoding deadline/speed: best, good, realtime */
+  deadline?: 'best' | 'good' | 'realtime';
 }
 
 /**
@@ -265,6 +267,7 @@ export function vp9ToArgs(opts: Vp9Options): string[] {
   if (opts.passlogfile !== undefined) args.push('-passlogfile', opts.passlogfile);
   if (opts.keyintMax !== undefined) args.push('-g', String(opts.keyintMax));
   if (opts.pixFmt !== undefined) args.push('-pix_fmt', opts.pixFmt);
+  if (opts.deadline !== undefined) args.push('-deadline', opts.deadline);
   return args;
 }
 

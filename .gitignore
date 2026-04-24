@@ -1,9 +1,12 @@
 node_modules/
 dist/
+coverage/
 *.log
 .DS_Store
 ffmpeg2pass-0.log*
 /tmp/
+tmp/
+.yarn/
 docs/
 *.lock
 *.mp4

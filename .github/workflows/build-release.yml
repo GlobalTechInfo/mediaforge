@@ -44,6 +44,11 @@ jobs:
 
       - name: Build (ESM + CJS)
         run: npm run build
+        
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'dist/'
 
       - name: Package dist archive
         run: |

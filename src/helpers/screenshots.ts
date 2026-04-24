@@ -177,3 +177,163 @@ export function buildTimestampFilename(pattern: string, index: number, ext: stri
   const base = path.basename(pattern, ext);
   return base.replace(/%0?\d*d/, String(index + 1).padStart(4, '0')) + ext;
 }
+
+// ─── extractFrames ─────────────────────────────────────────────────────────────
+
+export interface ExtractFramesOptions {
+  /** Input file path */
+  input: string;
+  /** Output folder for frames */
+  folder: string;
+  /** Frame rate to extract (e.g. '1/1' for 1fps, '30' for 30fps). Default: '1' */
+  fps?: string;
+  /** Start time in seconds or HH:MM:SS */
+  startTime?: number | string;
+  /** End time in seconds or HH:MM:SS */
+  endTime?: number | string;
+  /** Output filename pattern. Default: 'frame_%05d.png' */
+  filename?: string;
+  /** Output size, e.g. '1920x1080' */
+  size?: string;
+  /** Output format. Default: 'png' */
+  format?: 'png' | 'jpg' | 'bmp' | 'tiff';
+  /** ffmpeg binary override */
+  binary?: string;
+}
+
+export interface ExtractFramesResult {
+  /** Absolute paths to created frame files */
+  files: string[];
+  /** First frame path (for convenience) */
+  firstFrame: string;
+  /** Last frame path (for convenience) */
+  lastFrame: string;
+}
+
+function toTimeString(ts: number | string): string {
+  if (typeof ts === 'number') return String(ts);
+  return ts;
+}
+
+/**
+ * Extract all frames from a video as images.
+ *
+ * @example
+ * // Extract 1 frame per second to ./frames folder
+ * const { files } = await extractFrames({
+ *   input: 'video.mp4',
+ *   folder: './frames',
+ *   fps: '1'
+ * });
+ *
+ * @example
+ * // Extract at 30fps, 10 second clip
+ * const { files } = await extractFrames({
+ *   input: 'video.mp4',
+ *   folder: './frames',
+ *   fps: '30',
+ *   startTime: 5,
+ *   endTime: 15
+ * });
+ */
+export async function extractFrames(opts: ExtractFramesOptions): Promise<ExtractFramesResult> {
+  const {
+    input,
+    folder,
+    fps = '1',
+    startTime,
+    endTime,
+    filename = 'frame_%05d.png',
+    size,
+    format = 'png',
+    binary = resolveBinary(),
+  } = opts;
+
+  if (!fs.existsSync(folder)) fs.mkdirSync(folder, { recursive: true });
+
+  const args: string[] = ['-y'];
+
+  if (startTime !== undefined) {
+    args.push('-ss', toTimeString(startTime));
+  }
+
+  args.push('-i', input);
+
+  if (endTime !== undefined) {
+    args.push('-t', String(Number(endTime) - Number(startTime ?? 0)));
+  }
+
+  args.push('-vf', `fps=${fps}`);
+
+  if (size) {
+    args.push('-s', size);
+  }
+
+  const ext = path.extname(filename) || `.${format}`;
+  const base = path.basename(filename, ext);
+  const outputPattern = path.join(folder, base + ext);
+
+  if (format === 'jpg') {
+    args.push('-q:v', '2'); // High quality JPEG
+  }
+
+  args.push(outputPattern);
+
+  await new Promise<void>((resolve, reject) => {
+    const proc = spawnFFmpeg({ binary, args });
+    proc.emitter.on('end', resolve);
+    proc.emitter.on('error', reject);
+  });
+
+  // Find all created frame files
+  const files = fs.readdirSync(folder)
+    .filter(f => f.startsWith(base.replace(/%0?\d*d/, '')) && f.endsWith(ext))
+    .sort()
+    .map(f => path.join(folder, f));
+
+  if (files.length === 0) {
+    throw new Error('No frames were extracted');
+  }
+
+  return {
+    files,
+    firstFrame: files[0]!,
+    lastFrame: files[files.length - 1]!,
+  };
+}
+
+export function buildExtractFramesArgs(
+  input: string,
+  outputPattern: string,
+  fps: string,
+  startTime?: number | string,
+  endTime?: number | string,
+  size?: string,
+  format: string = 'png'
+): string[] {
+  const args: string[] = ['-y'];
+
+  if (startTime !== undefined) {
+    args.push('-ss', toTimeString(startTime));
+  }
+
+  args.push('-i', input);
+
+  if (endTime !== undefined) {
+    args.push('-t', String(Number(endTime) - Number(startTime ?? 0)));
+  }
+
+  args.push('-vf', `fps=${fps}`);
+
+  if (size) {
+    args.push('-s', size);
+  }
+
+  if (format === 'jpg') {
+    args.push('-q:v', '2');
+  }
+
+  args.push(outputPattern);
+
+  return args;
+}

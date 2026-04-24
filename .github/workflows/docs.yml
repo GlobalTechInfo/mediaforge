@@ -1,8 +1,9 @@
 name: Deploy Docs to GitHub Pages
 
 on:
-  release:
-    types: [published]
+  workflow_run:
+    workflows: ["Publish to npm"]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -17,10 +18,15 @@ concurrency:
 jobs:
   build-docs:
     name: Build TypeDoc
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Setup Node.js 20
         uses: actions/setup-node@v5

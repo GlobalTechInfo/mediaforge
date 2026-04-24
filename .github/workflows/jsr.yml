@@ -1,8 +1,9 @@
 name: Publish to JSR
 
 on:
-  release:
-    types: [created]
+  workflow_run:
+    workflows: ["Build & Release"]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -11,11 +12,16 @@ permissions:
 
 jobs:
   publish-jsr:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     name: Publish to JSR
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - uses: denoland/setup-deno@v2
         with:

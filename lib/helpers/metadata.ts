@@ -25,6 +25,71 @@ export interface ChapterMeta {
   endSec: number;
 }
 
+export interface AddChaptersOptions {
+  /** Input file path */
+  input: string;
+  /** Output file path */
+  output: string;
+  /** Chapter definitions with title and start time (in seconds) */
+  chapters: {
+    /** Chapter title */
+    title: string;
+    /** Start time in seconds */
+    start: number;
+  }[];
+  /** ffmpeg binary override */
+  binary?: string;
+}
+
+/**
+ * Convenience wrapper to add chapters from chapter timestamps.
+ * Automatically creates chapter metadata and writes to output file.
+ *
+ * @example
+ * // Add chapters at specific timestamps
+ * await addChapters({
+ *   input: 'video.mp4',
+ *   output: 'chapters.mp4',
+ *   chapters: [
+ *     { title: 'Introduction', start: 0 },
+ *     { title: 'Chapter 1: Getting Started', start: 60 },
+ *     { title: 'Chapter 2: Advanced Topics', start: 300 },
+ *     { title: 'Conclusion', start: 540 },
+ *   ]
+ * });
+ */
+export async function addChapters(opts: AddChaptersOptions): Promise<void> {
+  const {
+    input,
+    output,
+    chapters: chapterDefs,
+    binary = resolveBinary(),
+  } = opts;
+
+  // Convert chapter definitions to ChapterMeta format
+  const chapters: ChapterMeta[] = chapterDefs.map((ch, i) => {
+    const nextChapter = chapterDefs[i + 1];
+    return {
+      title: ch.title,
+      startSec: ch.start,
+      endSec: nextChapter ? nextChapter.start : Number.MAX_SAFE_INTEGER,
+    };
+  });
+
+  // Fix the last chapter end time by probing the file
+  if (chapterDefs.length > 0) {
+    const lastIdx = chapters.length - 1;
+    if (chapters[lastIdx]!.endSec === Number.MAX_SAFE_INTEGER) {
+      const { probe } = await import('../probe/ffprobe.ts');
+      const info = probe(input);
+      const duration = parseFloat(info.format?.duration ?? '0');
+      chapters[lastIdx]!.endSec = duration;
+    }
+  }
+
+  return writeMetadata({ input, output, metadata: {}, chapters, binary });
+}
+
 /**
  * Write metadata tags to a file without re-encoding.
  *

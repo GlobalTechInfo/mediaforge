@@ -669,3 +669,22 @@ describe('vulkanVideoToArgs', () => {
   it('sets crf', () => { expect(vulkanVideoToArgs({ crf: 22 })).toContain('22'); });
   it('accepts av1_vulkan', () => { expect(vulkanVideoToArgs({}, 'av1_vulkan')).toContain('av1_vulkan'); });
 });
+import { amfToArgs, videotoolboxToArgs } from '../../../dist/esm/codecs/hardware.js';
+
+describe('amfToArgs', () => {
+  it('defaults to h264_amf', () => { expect(amfToArgs({})).toContain('h264_amf'); });
+  it('hevc_amf with bitrate', () => {
+    const args = amfToArgs({ bitrate: 8000 }, 'hevc_amf');
+    expect(args).toContain('hevc_amf');
+    expect(args).toContain('8000k');
+  });
+  it('sets quality preset', () => { expect(amfToArgs({ quality: 'balanced' })).toContain('balanced'); });
+  it('av1_amf', () => { expect(amfToArgs({}, 'av1_amf')).toContain('av1_amf'); });
+});
+
+describe('videotoolboxToArgs', () => {
+  it('defaults to h264_videotoolbox', () => { expect(videotoolboxToArgs({})).toContain('h264_videotoolbox'); });
+  it('hevc_videotoolbox', () => { expect(videotoolboxToArgs({}, 'hevc_videotoolbox')).toContain('hevc_videotoolbox'); });
+  it('sets bitrate', () => { expect(videotoolboxToArgs({ bitrate: 4000 })).toContain('4000k'); });
+});
+

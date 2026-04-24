@@ -41,9 +41,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Unit tests with coverage (Node 22 only)
+      - name: Run all tests with coverage (Node 22 only)
         if: matrix.node == '22'
-        run: npm run test:coverage
+        run: npm run coverage
 
       - name: Upload coverage to Codecov (Node 22 only)
         if: matrix.node == '22'
@@ -53,13 +53,13 @@ jobs:
           files: ./lcov.info
           fail_ci_if_error: false
 
-      - name: Unit tests (Node 22 and 24)
-        if: matrix.node != '20'
-        run: npm run test:unit
-
-      - name: Integration tests
-        run: npm run test:integration
-        continue-on-error: true
+      - name: Run all tests (Node 20)
+        if: matrix.node == '20'
+        run: npm run test
+        
+      - name: Run battle test (Node 20)
+        if: matrix.node == '20'
+        run: npm run battle
 
   deno:
     name: Deno — ubuntu-latest
@@ -80,6 +80,9 @@ jobs:
 
       - name: Lint
         run: deno lint
+        
+      - name: Battle test
+        run: deno task battle
 
       - name: Unit tests
         run: deno task test:unit

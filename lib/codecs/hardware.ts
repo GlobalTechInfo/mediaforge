@@ -301,3 +301,68 @@ export function vulkanVideoToArgs(
   if (opts.bitrate !== undefined) args.push('-b:v', `${opts.bitrate}k`);
   return args;
 }
+
+// ─── AMD AMF (Advanced Media Framework) ──────────────────────────────────────
+
+/**
+ * Typed options for AMD AMF encoders (h264_amf, hevc_amf, av1_amf).
+ * Available on Windows and Linux with AMD GPUs via amf-dev.
+ */
+export interface AmfOptions {
+  /** Target bitrate in kbps */
+  bitrate?: number;
+  /** Constant QP value (0–51) */
+  qp?: number;
+  /** Encoding quality preset */
+  quality?: 'speed' | 'balanced' | 'quality';
+  /** VBR/CBR rate control */
+  rateControl?: 'cqp' | 'cbr' | 'vbr_peak' | 'vbr_latency';
+  /** Max bitrate in kbps (VBR mode) */
+  maxrate?: number;
+  /** GOP size */
+  gopSize?: number;
+}
+
+export type AmfVideoCodec = 'h264_amf' | 'hevc_amf' | 'av1_amf';
+
+export function amfToArgs(opts: AmfOptions, codec: AmfVideoCodec = 'h264_amf'): string[] {
+  const args: string[] = ['-c:v', codec];
+  if (opts.bitrate !== undefined) args.push('-b:v', `${opts.bitrate}k`);
+  if (opts.qp !== undefined) args.push('-qp_i', String(opts.qp), '-qp_p', String(opts.qp));
+  if (opts.quality !== undefined) args.push('-quality', opts.quality);
+  if (opts.rateControl !== undefined) args.push('-rc', opts.rateControl);
+  if (opts.maxrate !== undefined) args.push('-maxrate', `${opts.maxrate}k`);
+  if (opts.gopSize !== undefined) args.push('-g', String(opts.gopSize));
+  return args;
+}
+
+// ─── Apple VideoToolbox ───────────────────────────────────────────────────────
+
+/**
+ * Typed options for Apple VideoToolbox hardware encoders.
+ * Available on macOS/iOS: h264_videotoolbox, hevc_videotoolbox.
+ */
+export interface VideoToolboxOptions {
+  /** Constant bit rate in kbps */
+  bitrate?: number;
+  /** VideoToolbox quality 0.0–1.0 (alternative to bitrate) */
+  quality?: number;
+  /** Allow frame reordering */
+  allowFrameReordering?: boolean;
+  /** Enable temporal compression */
+  maxKeyFrameInterval?: number;
+  /** Profile: 'baseline'|'main'|'high' (H.264) or 'main'|'main10' (HEVC) */
+  profile?: string;
+}
+
+export type VideoToolboxCodec = 'h264_videotoolbox' | 'hevc_videotoolbox';
+
+export function videotoolboxToArgs(opts: VideoToolboxOptions, codec: VideoToolboxCodec = 'h264_videotoolbox'): string[] {
+  const args: string[] = ['-c:v', codec];
+  if (opts.bitrate !== undefined) args.push('-b:v', `${opts.bitrate}k`);
+  if (opts.quality !== undefined) args.push('-q:v', String(Math.round(opts.quality * 100)));
+  if (opts.allowFrameReordering !== undefined) args.push('-allow_sw', opts.allowFrameReordering ? '0' : '1');
+  if (opts.maxKeyFrameInterval !== undefined) args.push('-max_ref_frames', String(opts.maxKeyFrameInterval));
+  if (opts.profile !== undefined) args.push('-profile:v', opts.profile);
+  return args;
+}

@@ -561,3 +561,57 @@ describe('fade — standalone', () => {
     expect(fade({ type: 'out', start_time: 5, duration: 2 })).toContain('type=out');
   });
 });
+
+// ─── New filters: color grading ───────────────────────────────────────────────
+
+import { curves, levels, deband, deshake, deflicker, smartblur, hstack, vstack, xstack } from '../../../dist/esm/filters/video/index.js';
+
+describe('curves', () => {
+  it('curves with preset standalone', () => {
+    const s = curves({ preset: 'vintage' });
+    expect(typeof s).toBe('string');
+    expect(s).toContain('curves=');
+    expect(s).toContain('vintage');
+  });
+  it('curves chained', () => {
+    expect(curves(chain(), { preset: 'cross_process' }).toString()).toContain('cross_process');
+  });
+});
+
+describe('levels', () => {
+  it('levels standalone returns string', () => {
+    const s = levels({ inBlack: 10, inWhite: 245, gamma: 1.2 });
+    expect(typeof s).toBe('string');
+    expect(s).toContain('levels=');
+  });
+  it('levels no-args standalone', () => {
+    expect(levels()).toContain('levels');
+  });
+});
+
+describe('deband / deshake / deflicker / smartblur', () => {
+  it('deband produces deband filter', () => {
+    expect(deband(chain()).toString()).toContain('deband');
+  });
+  it('deshake produces deshake filter', () => {
+    expect(deshake(chain(), { rx: 16, ry: 16 }).toString()).toContain('deshake');
+  });
+  it('deflicker produces deflicker filter', () => {
+    expect(deflicker(chain(), { mode: 'am' }).toString()).toContain('deflicker');
+  });
+  it('smartblur produces smartblur filter', () => {
+    expect(smartblur(chain(), { luma_radius: 1.5 }).toString()).toContain('smartblur');
+  });
+});
+
+describe('hstack / vstack / xstack', () => {
+  it('hstack with inputs=2', () => {
+    expect(hstack(chain(), 2).toString()).toContain('hstack=inputs=2');
+  });
+  it('vstack with inputs=3', () => {
+    expect(vstack(chain(), 3).toString()).toContain('vstack=inputs=3');
+  });
+  it('xstack with layout', () => {
+    expect(xstack(chain(), { inputs: 4, layout: '0_0|w0_0|0_h0|w0_h0' }).toString()).toContain('xstack=');
+  });
+});

@@ -2,7 +2,6 @@ import { resolveBinary } from './utils/binary.js';
 import {
   probeVersion,
   satisfiesVersion,
-  formatVersion,
 } from './utils/version.js';
 import {
   buildGlobalArgs,
@@ -468,13 +467,30 @@ export class FFmpegBuilder {
   }
 
   /**
-   * Probe the binary version and return a human-readable string.
-   * Also caches the version for subsequent requireVersion() checks.
+   * Return the CLI arguments without running ffmpeg.
+   * Useful for dry-runs, inspection, or custom piping.
+   *
+   * @example
+   * const args = ffmpeg('input.mp4').videoCodec('libx264').output('out.mp4').dry();
+   * // args: ['-i', 'input.mp4', '-c:v', 'libx264', '-c:a', 'aac', 'out.mp4']
    */
-  async versionString(): Promise<string> {
-    const v = await this.getVersion();
-    return formatVersion(v);
+  dry(): string[] {
+    return this.buildArgs();
   }
+
+  /**
+   * Return a human-readable command line string.
+   * Useful for debugging or logging.
+   */
+  dryCommand(): string {
+    const args = this.dry();
+    return `${this._binary} ${args.join(' ')}`;
+  }
+}
+
+export interface FFmpegBuilderDryOptions {
+  /** Include binary path in output. Default: true */
+  includeBinary?: boolean;
 }
 
 /**

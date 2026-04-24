@@ -19,6 +19,8 @@ export interface AacOptions {
   channelLayout?: ChannelLayout;
   /** Sample format */
   sampleFmt?: SampleFormat;
+  /** AAC profile: aac_low, aac_he, aac_he_v2, aac_ld, aac_eld */
+  profile?: 'aac_low' | 'aac_he' | 'aac_he_v2' | 'aac_ld' | 'aac_eld';
 }
 
 /**
@@ -142,6 +144,7 @@ export function aacToArgs(opts: AacOptions): string[] {
   if (opts.sampleRate !== undefined) args.push('-ar', String(opts.sampleRate));
   if (opts.channels !== undefined) args.push('-ac', String(opts.channels));
   if (opts.channelLayout !== undefined) args.push('-channel_layout', opts.channelLayout);
+  if (opts.profile !== undefined) args.push('-profile:a', opts.profile);
   return args;
 }
 

@@ -185,6 +185,62 @@ export function asetpts(chain: FilterChain, expr: string): FilterChain {
   return chain.add({ name: 'asetpts', positional: [expr], named: {} });
 }
 
+// ─── Headphone Audio Spatial (headphones) ───────────────────────────────
+
+export interface HeadphonesOptions {
+  /** Head-related transfer function (HRTF) file */
+  hrir: string;
+  /** HRTF size: 1024, 2048, 4096, 8192, 16384 */
+  size?: number;
+  /** Normalize HRTF */
+  normalize?: boolean;
+  /** Elevation angle filter order */
+  htf?: number;
+}
+
+export function headphones(chain: FilterChain, opts: HeadphonesOptions): FilterChain;
+export function headphones(opts: HeadphonesOptions): string;
+export function headphones(chainOrOpts: FilterChain | HeadphonesOptions, opts?: HeadphonesOptions): FilterChain | string {
+  const isStandalone = !(chainOrOpts instanceof FilterChain);
+  const o = isStandalone ? (chainOrOpts as HeadphonesOptions) : opts!;
+  const named: Record<string, string | number | boolean> = {};
+  if (o.hrir) named['hrir'] = o.hrir;
+  if (o.size !== undefined) named['size'] = o.size;
+  if (o.normalize !== undefined) named['normalize'] = o.normalize;
+  if (o.htf !== undefined) named['htf'] = o.htf;
+  const node = { name: 'headphones', positional: [], named };
+  if (isStandalone) return serializeNode(node);
+  return (chainOrOpts as FilterChain).add(node);
+}
+
+// ─── SOFAlizer (3D Audio) ────────────────────────────────────────────
+
+export interface SofalizerOptions {
+  /** SOFA file path */
+  sofa: string;
+  /** Target sampling rate. Default: 48000 */
+  samplerate?: number;
+  /** Normalization: 'disabled', 'max', 'flattest' */
+  normalize?: string;
+  /** Interpolation: 'linear', 'trilinear', 'tetra' */
+  interpolation?: string;
+}
+
+export function sofalizer(chain: FilterChain, opts: SofalizerOptions): FilterChain;
+export function sofalizer(opts: SofalizerOptions): string;
+export function sofalizer(chainOrOpts: FilterChain | SofalizerOptions, opts?: SofalizerOptions): FilterChain | string {
+  const isStandalone = !(chainOrOpts instanceof FilterChain);
+  const o = isStandalone ? (chainOrOpts as SofalizerOptions) : opts!;
+  const named: Record<string, string | number | boolean> = {};
+  if (o.sofa) named['sofa'] = o.sofa;
+  if (o.samplerate !== undefined) named['samplerate'] = o.samplerate;
+  if (o.normalize !== undefined) named['normalize'] = o.normalize;
+  if (o.interpolation !== undefined) named['interpolation'] = o.interpolation;
+  const node = { name: 'sofalizer', positional: [], named };
+  if (isStandalone) return serializeNode(node);
+  return (chainOrOpts as FilterChain).add(node);
+}
+
 // ─── Atrim ────────────────────────────────────────────────────────────────────
 
 export interface AtrimOptions {

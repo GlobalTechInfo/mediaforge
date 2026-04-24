@@ -7,7 +7,141 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.2.0] — 2026-04-14
+## [0.3.0] — 2026-04-24
+
+### Added
+
+#### New analysis helpers (`src/helpers/normalize.ts`)
+
+| Helper | Description |
+|--------|-------------|
+| `detectSilence(opts)` | Parse `silencedetect` filter output into structured timestamp arrays |
+| `detectScenes(opts)` | Scene change detection using `select` filter + `showinfo` metadata |
+| `cropDetect(opts)` | Letterbox/pillarbox detection helper; returns crop detection results |
+| `burnTimecode(opts)` | Draw timecode using `drawtext` with timecode expression |
+| `parseLoudnorm(opts)` | Parse EBU R128 loudnorm output with integrated/loudness/dynamic metadata |
+
+#### New export helpers (`src/helpers/screenshots.ts`)
+
+| Helper | Description |
+|--------|-------------|
+| `extractFrames(opts)` | Export all frames as images with fps control and filename templating |
+
+#### New concat features (`src/helpers/concat.ts`)
+
+| Helper | Description |
+|--------|-------------|
+| `concatWithTransitions(opts)` | Concatenate video clips with crossfade/xfade transitions between them |
+
+#### New metadata helpers (`src/helpers/metadata.ts`)
+
+| Helper | Description |
+|--------|-------------|
+| `addChapters(opts)` | Convenience wrapper over `writeMetadata` for chapter timestamps |
+
+#### New video filters (`src/filters/video/index.ts`)
+
+| Filter | FFmpeg filter | Notes |
+|--------|--------------|-------|
+| `drawbox(chain, opts?)` | `drawbox` | Draw colored boxes/frames on video |
+| `drawgrid(chain, opts?)` | `drawgrid` | Draw a grid overlay |
+| `vignette(chain, opts?)` | `vignette` | Apply vignette effect |
+| `vaguedenoiser(chain, opts?)` | `vaguedenoiser` | Wavelet-based denoising |
+
+#### New audio filters (`src/filters/audio/index.ts`)
+
+| Filter | FFmpeg filter | Notes |
+|--------|--------------|-------|
+| `headphones(chain, opts?)` | `headphones` | Virtual headphone Surround sound from stereo |
+| `sofalizer(chain, opts?)` | `sofalizer` | SOFA file-based 3D audio virtualization |
+
+#### FFmpegBuilder improvements
+
+- `FFmpegBuilder.dry()` - Return CLI arguments without executing (for debugging/preview)
+- `FFmpegBuilder.dryCommand()` - Return CLI string without executing
+
+#### Battle test additions
+
+- Section 28: New helpers (extractFrames, concatWithTransitions, detectSilence, detectScenes, cropDetect, burnTimecode, parseLoudnorm)
+- Section 29: New video filters (drawbox, drawgrid, vignette, vaguedenoiser)
+- Section 30: New audio filters (headphones, sofalizer)
+- Section 31: FFmpegBuilder.dry() and dryCommand()
+
+### Not implemented (deferred to future releases)
+
+- **Browser/edge runtime compatibility** — fetch-based ffprobe, no child_process. Requires significant refactoring of process spawning layer.
+- **Plugin/middleware system** — for custom filters. Requires design work for safe extensibility.
+
+### Fixed
+
+- Lint warning: unused `formatVersion` variable in FFmpegBuilder
+- **`cropDetect`** — `cropdetect` filter used invalid option `reset_count` (removed in FFmpeg 7+). Filter is now `cropdetect=limit=24:round=2` which works on FFmpeg 6, 7, and 8.
+- **`concatWithTransitions`** — `scale=iw` is not a valid FFmpeg filter size when no resolution specified. Changed to `scale=iw:ih` (no-op passthrough) when `resolution` option is omitted.
+- **`aacToArgs`** — added missing `profile` option (`-profile:a`) to `AacOptions` interface (`aac_low`, `aac_he`, `aac_he_v2`, `aac_ld`, `aac_eld`).
+- **`vp9ToArgs`** — added missing `deadline` option (`-deadline`) to `Vp9Options` interface (`best`, `good`, `realtime`).
+- **`truehdToArgs`** — `profile` option was incorrectly inserted into `TruehdOptions` (TypeScript error: property does not exist). Removed.
+- **README** — `detectScenes` docs referenced non-existent `minFrames` option and `scenes.timestamps` property. Fixed to match actual API: `SceneChange[]` with `{timestamp, sceneNumber}`.
+- **README** — `detectSilence` docs used `minDuration` which does not exist; correct option is `duration`.
+- **README** — filter count corrected from 54 to 75 (49 video + 26 audio).
+- **README** — `drawbox`, `drawgrid`, `vignette`, `vaguedenoiser` incorrectly documented as chain-only (❌ standalone); all four have standalone overloads (✅).
+- **Battle tests** — comprehensive real-FFmpeg test suite covering all 286 exports (559 Node.js tests, 422 Deno tests). Previous tests only verified exports existed.
+
+---
+
+## [0.3.0-rc.1] — 2026-04-18
+
+### Added
+
+#### High-level edit helpers (`src/helpers/edit.ts`)
+
+13 new production-ready helpers covering the most common post-production tasks:
+
+| Helper | Description |
+|--------|-------------|
+| `trimVideo(opts)` | Cut a video by time range — instant stream copy (default) or frame-accurate re-encode |
+| `changeSpeed(opts)` | Change playback speed with pitch-corrected audio; chains multiple `atempo` filters for values outside 0.5–2.0 |
+| `buildAtempoChain(speed)` | Build a chained atempo filter string for any speed value (exported utility) |
+| `extractAudio(opts)` | Extract audio from any video/audio file; auto-detects codec from output extension |
+| `replaceAudio(opts)` | Swap or add an audio track to a video |
+| `mixAudio(opts)` | Combine multiple audio inputs with per-track volume weights via `amix` |
+| `loopVideo(opts)` | Loop a video N times (`-stream_loop`); supports duration cap and infinite loop |
+| `deinterlace(opts)` | Deinterlace using `yadif` with configurable mode/parity/deint settings |
+| `cropToRatio(opts)` | Center-crop to a target aspect ratio (`16:9`, `1:1`, `9:16`, etc.) without probing |
+| `stackVideos(opts)` | Stack 2+ videos side-by-side (`hstack`), top-to-bottom (`vstack`), or in a grid (`xstack`) |
+| `generateSprite(opts)` | Generate a thumbnail sprite sheet for video-player seek previews |
+| `applyLUT(opts)` | Apply a `.cube` or `.3dl` 3D LUT colour grade via `lut3d` filter |
+| `stabilizeVideo(opts)` | Two-pass video stabilization using `vidstabdetect` + `vidstabtransform` |
+| `streamToUrl(opts)` | Push a file to an RTMP, SRT, UDP, or RTP destination; auto-detects container format |
+
+#### New video filters
+
+| Filter | FFmpeg filter | Notes |
+|--------|--------------|-------|
+| `curves(opts)` | `curves` | Tone curve adjustment; supports named presets and custom R/G/B curves. Standalone + chained |
+| `levels(opts)` | `levels` | Input/output range + gamma adjustment. Standalone + chained |
+| `deband(chain, opts?)` | `deband` | Remove banding artifacts from flat regions |
+| `deshake(chain, opts?)` | `deshake` | Camera shake stabilization (no library required) |
+| `deflicker(chain, opts?)` | `deflicker` | Reduce temporal flicker (time-lapses, broadcast) |
+| `smartblur(chain, opts?)` | `smartblur` | Edge-preserving smoothing |
+| `hstack(chain, n)` | `hstack` | Stack N videos horizontally |
+| `vstack(chain, n)` | `vstack` | Stack N videos vertically |
+| `xstack(chain, opts)` | `xstack` | Arrange N videos in a custom grid layout |
+| `colorSource(chain, opts?)` | `color` | Solid colour source frame |
+
+#### New hardware codec helpers
+
+| Helper | Encoder | Platform |
+|--------|---------|----------|
+| `amfToArgs(opts, codec?)` | `h264_amf`, `hevc_amf`, `av1_amf` | AMD GPUs (Windows/Linux via libamf) |
+| `videotoolboxToArgs(opts, codec?)` | `h264_videotoolbox`, `hevc_videotoolbox` | Apple macOS/iOS hardware encoder |
+
+#### Battle test: sections 25–27 (node) / sections 21–23 (deno)
+
+Node battle test extended with 22 new integration tests (sections 25–27). Deno battle test extended with 34 new integration tests (sections 21–23) importing directly from `lib/`.
+
+---
+
+## [0.2.0] — 2026-04-08
 
 ### Breaking Changes
 
@@ -99,9 +233,56 @@ Unit test coverage added for all 17 new codec serializers in `tests/unit/codecs/
 - **`twoPassEncode`** — pass 1 output changed from `-f null /dev/null` to a temporary MKV file, fixing `ratecontrol_init: can't open stats file` on ARM Linux (both Android Termux FFmpeg 8.x and Ubuntu ARM FFmpeg 7.x)
 - **`dashPackage`** — `min_buffer_time`, `use_template`, `use_timeline` flags removed; all were dropped from the DASH muxer in FFmpeg 8.x
 
+### Complete API surface (v0.2.0)
+
+#### Process & Builder
+`ffmpeg`, `FFmpegBuilder`, `spawnFFmpeg`, `runFFmpeg`, `FFmpegSpawnError`, `FFmpegEmitter`, `ProgressParser`, `parseAllProgress`
+
+#### Binary utilities
+`resolveBinary`, `resolveProbe`, `validateBinary`, `isBinaryAvailable`, `BinaryNotFoundError`, `BinaryNotExecutableError`
+
+#### Version utilities
+`probeVersion`, `parseVersionOutput`, `satisfiesVersion`, `formatVersion`
+
+#### Probe (`ffprobe`)
+`probe`, `probeAsync`, `ProbeError`, `parseFrameRate`, `parseDuration`, `parseBitrate`, `getVideoStreams`, `getAudioStreams`, `getSubtitleStreams`, `getDefaultVideoStream`, `getDefaultAudioStream`, `getMediaDuration`, `durationToMicroseconds`, `summarizeVideoStream`, `summarizeAudioStream`, `getStreamLanguage`, `findStreamByLanguage`, `formatDuration`, `isHdr`, `isInterlaced`, `getChapterList`
+
+#### Capability registry
+`CapabilityRegistry`, `getDefaultRegistry`
+
+#### Compatibility guards
+`guardVersion`, `guardFeatureVersion`, `guardCodec`, `guardFilter`, `guardHwaccel`, `guardCodecFull`, `assertCodec`, `assertHwaccel`, `assertFeatureVersion`, `GuardError`, `selectBestCodec`, `selectBestHwaccel`, `isFeatureExpected`, `availableFeatures`, `unavailableFeatures`, `FEATURE_GATES`
+
+#### Codec serializers — video
+`x264ToArgs`, `x265ToArgs`, `svtav1ToArgs`, `vp9ToArgs`, `proResToArgs`, `dnxhdToArgs`, `mjpegToArgs`, `mpeg2ToArgs`, `mpeg4ToArgs`, `vp8ToArgs`, `theoraToArgs`, `ffv1ToArgs`
+
+#### Codec serializers — audio
+`aacToArgs`, `opusToArgs`, `mp3ToArgs`, `flacToArgs`, `ac3ToArgs`, `alacToArgs`, `eac3ToArgs`, `truehdToArgs`, `vorbisToArgs`, `wavpackToArgs`, `pcmToArgs`, `mp2ToArgs`
+
+#### Hardware codec serializers
+`nvencToArgs`, `vaapiToArgs`, `qsvToArgs`, `mediacodecToArgs`, `mediacodecVideoToArgs`, `vulkanToArgs`, `vulkanVideoToArgs`
+
+#### Filters — video
+`scale`, `crop`, `overlay`, `drawtext`, `fps`, `setpts`, `trim`, `format`, `setsar`, `setdar`, `vflip`, `hflip`, `rotate`, `transpose`, `unsharp`, `gblur`, `boxblur`, `eq`, `hue`, `colorbalance`, `yadif`, `hqdn3d`, `nlmeans`, `thumbnail`, `select`, `concat`, `split`, `tile`, `colorkey`, `chromakey`, `subtitles`, `avgblurVulkan`, `nlmeansVulkan`, `fade`, `zoompan`
+
+#### Filters — audio
+`volume`, `loudnorm`, `equalizer`, `bass`, `treble`, `afade`, `asetpts`, `atrim`, `amerge`, `amix`, `pan`, `channelmap`, `channelsplit`, `aresample`, `dynaudnorm`, `compand`, `aecho`, `highpass`, `lowpass`, `asplit`, `silencedetect`, `rubberband`, `atempo`, `agate`
+
+#### Filter graph (complex filters)
+`FilterChain`, `FilterGraph`, `GraphNode`, `GraphStream`, `VideoFilterChain`, `AudioFilterChain`, `videoFilterChain`, `audioFilterChain`, `filterGraph`, `resetLabelCounter`, `serializeNode`, `serializeLink`, `pad`
+
+#### High-level helpers
+`twoPassEncode`, `buildTwoPassArgs`, `hlsPackage`, `adaptiveHls`, `dashPackage`, `screenshots`, `frameToBuffer`, `mergeToFile`, `concatFiles`, `buildConcatList`, `toGif`, `gifToMp4`, `buildGifArgs`, `buildGifPalettegenFilter`, `buildGifPaletteuseFilter`, `normalizeAudio`, `adjustVolume`, `buildLoudnormFilter`, `addWatermark`, `addTextWatermark`, `buildWatermarkFilter`, `buildTextWatermarkFilter`, `burnSubtitles`, `extractSubtitles`, `buildBurnSubtitlesFilter`, `writeMetadata`, `stripMetadata`, `buildMetadataArgs`, `buildChapterContent`, `generateWaveform`, `generateSpectrum`, `buildWaveformFilter`, `buildSpectrumFilter`, `getPreset`, `listPresets`, `applyPreset`, `pipeThrough`, `streamOutput`, `streamToFile`, `buildPipeThroughArgs`, `buildStreamOutputArgs`
+
+#### Stream mapping
+`mapStream`, `mapAll`, `mapAllVideo`, `mapAllAudio`, `mapAllSubtitles`, `mapVideo`, `mapAudio`, `mapSubtitle`, `mapLabel`, `negateMap`, `setStreamMetadata`, `setMetadata`, `setDisposition`, `streamCodec`, `copyStream`, `remuxAll`, `mapDefaultStreams`, `mapAVS`, `copyAudioAndSubs`, `serializeSpecifier`, `ss`
+
+#### Process management
+`renice`, `autoKillOnExit`, `killAllFFmpeg`
+
 ---
 
-## [0.1.0] — 2026-04-07
+## [0.1.0] — 2026-04-08
 
 ### Fixed
 
@@ -240,7 +421,7 @@ Consider increasing the value for the 'analyzeduration' and 'probesize' options
 
 ---
 
-## [0.0.1] — 2026-03-24
+## [0.0.1] — 2026-03-15
 
 Initial release.
 

@@ -20,6 +20,7 @@
 
 // Primary entry point
 export { ffmpeg, FFmpegBuilder, VersionError } from './FFmpeg.ts';
+export type { FFmpegBuilderDryOptions } from './FFmpeg.ts';
 
 // Process management
 export { spawnFFmpeg, runFFmpeg, FFmpegSpawnError } from './process/spawn.ts';
@@ -40,17 +41,18 @@ export { aacToArgs, opusToArgs, mp3ToArgs, flacToArgs, ac3ToArgs } from './codec
 export { opusToArgs as libOpusToArgs, mp3ToArgs as libMp3LameToArgs } from './codecs/audio.ts';
 export { alacToArgs, eac3ToArgs, truehdToArgs, vorbisToArgs, wavpackToArgs, pcmToArgs, mp2ToArgs } from './codecs/audio.ts';
 export { nvencToArgs, vaapiToArgs, mediacodecToArgs, vulkanToArgs, qsvToArgs } from './codecs/hardware.ts';
-export { mediacodecVideoToArgs, vulkanVideoToArgs } from './codecs/hardware.ts';
+export { mediacodecVideoToArgs, vulkanVideoToArgs, amfToArgs, videotoolboxToArgs } from './codecs/hardware.ts';
 export { isFeatureExpected, availableFeatures, unavailableFeatures, FEATURE_GATES } from './compat/features.ts';
 
 // Phase 3 — Filter System
 export { FilterChain, serializeNode, serializeLink, pad } from './types/filters.ts';
 export { FilterGraph, GraphNode, GraphStream, VideoFilterChain, AudioFilterChain, videoFilterChain, audioFilterChain, filterGraph, resetLabelCounter } from './filters/complex.ts';
 // Video filters
-export { scale, crop, pad as videoPad, overlay, drawtext, fps, setpts, trim, format, setsar, setdar, vflip, hflip, rotate, transpose, unsharp, gblur, boxblur, eq, hue, colorbalance, yadif, hqdn3d, nlmeans, thumbnail, select, concat, split, tile, colorkey, chromakey, subtitles, avgblurVulkan, nlmeansVulkan, fade, zoompan } from './filters/video/index.ts';
+export { scale, crop, pad as videoPad, overlay, drawtext, fps, setpts, trim, format, setsar, setdar, vflip, hflip, rotate, transpose, unsharp, gblur, boxblur, eq, hue, colorbalance, yadif, hqdn3d, nlmeans, thumbnail, select, concat, split, tile, colorkey, chromakey, subtitles, avgblurVulkan, nlmeansVulkan, fade, zoompan, curves, levels, deband, deshake, deflicker, smartblur, hstack, vstack, xstack, colorSource, drawbox, drawgrid, vignette, vaguedenoiser } from './filters/video/index.ts';
 // Audio filters
-export { volume, loudnorm, equalizer, bass, treble, afade, asetpts, atrim, amerge, amix, pan, channelmap, channelsplit, aresample, dynaudnorm, compand, aecho, highpass, lowpass, asplit, silencedetect, rubberband, atempo, agate } from './filters/audio/index.ts';
+export { volume, loudnorm, equalizer, bass, treble, afade, asetpts, atrim, amerge, amix, pan, channelmap, channelsplit, aresample, dynaudnorm, compand, aecho, highpass, lowpass, asplit, silencedetect, rubberband, atempo, agate, headphones, sofalizer } from './filters/audio/index.ts';
 export type { FilterNode, GraphPad, GraphLink } from './types/filters.ts';
+export type { CurvesOptions, LevelsOptions, XstackOptions } from './filters/video/index.ts';
 
 // Phase 4 — Compat & Advanced
 export { probe, probeAsync, ProbeError, parseFrameRate, parseDuration, parseBitrate, getVideoStreams, getAudioStreams, getSubtitleStreams, getDefaultVideoStream, getDefaultAudioStream, getMediaDuration, durationToMicroseconds, summarizeVideoStream, summarizeAudioStream, getStreamLanguage, findStreamByLanguage, formatDuration, isHdr, isInterlaced, getChapterList } from './probe/ffprobe.ts';
@@ -75,16 +77,16 @@ export type { ProResOptions, DnxhdOptions, MjpegOptions, Mpeg2Options, Mpeg4Opti
 export type { AacOptions, LibOpusOptions, LibMp3LameOptions, LibVorbisOptions, FlacOptions, Ac3Options } from './codecs/audio.ts';
 export type { AlacOptions, Eac3Options, TruehdOptions, VorbisOptions, WavpackOptions, PcmOptions, PcmFormat, Mp2Options } from './codecs/audio.ts';
 export type { NvencOptions, NvencVideoCodec, VaapiOptions, VaapiVideoCodec, VaapiDeviceOptions, MediaCodecOptions, MediaCodecCodec, MediaCodecVideoCodec, MediaCodecAudioCodec, VulkanOptions, VulkanVideoCodec, QsvOptions, QsvVideoCodec } from './codecs/hardware.ts';
-export type { MediaCodecVideoOptions, VulkanVideoOptions } from './codecs/hardware.ts';
+export type { MediaCodecVideoOptions, VulkanVideoOptions, AmfOptions, AmfVideoCodec, VideoToolboxOptions, VideoToolboxCodec } from './codecs/hardware.ts';
 export type { FeatureGate } from './compat/features.ts';
 
 // Screenshots & frame extraction
-export { screenshots, frameToBuffer } from './helpers/screenshots.ts';
-export type { ScreenshotOptions, ScreenshotResult, FrameToBufferOptions } from './helpers/screenshots.ts';
+export { screenshots, frameToBuffer, extractFrames } from './helpers/screenshots.ts';
+export type { ScreenshotOptions, ScreenshotResult, FrameToBufferOptions, ExtractFramesOptions, ExtractFramesResult } from './helpers/screenshots.ts';
 
 // Concat / merge
-export { mergeToFile, concatFiles, buildConcatList } from './helpers/concat.ts';
-export type { MergeOptions, ConcatOptions } from './helpers/concat.ts';
+export { mergeToFile, concatFiles, buildConcatList, concatWithTransitions } from './helpers/concat.ts';
+export type { MergeOptions, ConcatOptions, TransitionType, ConcatWithTransitionsOptions } from './helpers/concat.ts';
 
 // Pipe / stream I/O
 export { pipeThrough, streamOutput, streamToFile } from './helpers/streams.ts';
@@ -99,8 +101,8 @@ export { toGif, gifToMp4 } from './helpers/gif.ts';
 export type { GifOptions, GifToMp4Options } from './helpers/gif.ts';
 
 // Audio normalization
-export { normalizeAudio, adjustVolume } from './helpers/normalize.ts';
-export type { NormalizeOptions, NormalizeResult, AdjustVolumeOptions } from './helpers/normalize.ts';
+export { normalizeAudio, adjustVolume, detectSilence, detectScenes, cropDetect, burnTimecode, parseLoudnorm } from './helpers/normalize.ts';
+export type { NormalizeOptions, NormalizeResult, AdjustVolumeOptions, SilenceSegment, DetectSilenceOptions, SceneChange, DetectScenesOptions, CropRegion, CropDetectOptions, BurnTimecodeOptions, EbuR128Result, ParseLoudnormOptions } from './helpers/normalize.ts';
 
 // Watermark
 export { addWatermark, addTextWatermark } from './helpers/watermark.ts';
@@ -108,11 +110,13 @@ export type { WatermarkOptions, WatermarkPosition, TextWatermarkOptions } from '
 
 // Subtitle burn/extract
 export { burnSubtitles, extractSubtitles } from './helpers/subtitles.ts';
+export { trimVideo, changeSpeed, buildAtempoChain, extractAudio, replaceAudio, mixAudio, loopVideo, deinterlace, cropToRatio, stackVideos, generateSprite, applyLUT, stabilizeVideo, streamToUrl } from './helpers/edit.ts';
+export type { TrimOptions, ChangeSpeedOptions, ExtractAudioOptions, ReplaceAudioOptions, MixAudioOptions, LoopVideoOptions, DeinterlaceOptions, CropToRatioOptions, StackVideosOptions, SpriteOptions, ApplyLutOptions, StabilizeOptions, StreamToUrlOptions } from './helpers/edit.ts';
 export type { BurnSubtitlesOptions, ExtractSubtitlesOptions } from './helpers/subtitles.ts';
 
 // Metadata write/strip
-export { writeMetadata, stripMetadata } from './helpers/metadata.ts';
-export type { WriteMetadataOptions, StripMetadataOptions, ChapterMeta } from './helpers/metadata.ts';
+export { writeMetadata, stripMetadata, addChapters } from './helpers/metadata.ts';
+export type { WriteMetadataOptions, StripMetadataOptions, ChapterMeta, AddChaptersOptions } from './helpers/metadata.ts';
 
 // Waveform / spectrum
 export { generateWaveform, generateSpectrum } from './helpers/waveform.ts';
@@ -127,7 +131,8 @@ export { buildWatermarkFilter, buildTextWatermarkFilter } from './helpers/waterm
 export { buildBurnSubtitlesFilter } from './helpers/subtitles.ts';
 export { buildWaveformFilter, buildSpectrumFilter } from './helpers/waveform.ts';
 export { buildMetadataArgs, buildChapterContent } from './helpers/metadata.ts';
-export { buildLoudnormFilter } from './helpers/normalize.ts';
+export { buildLoudnormFilter, buildSilenceDetectFilter, buildSceneSelectFilter, buildBurnTimecodeFilter } from './helpers/normalize.ts';
 export { buildGifArgs, buildGifPalettegenFilter, buildGifPaletteuseFilter } from './helpers/gif.ts';
-export { buildScreenshotArgs, buildFrameBufferArgs, buildTimestampFilename } from './helpers/screenshots.ts';
+export { buildScreenshotArgs, buildFrameBufferArgs, buildTimestampFilename, buildExtractFramesArgs } from './helpers/screenshots.ts';
+export { buildConcatTransitionArgs } from './helpers/concat.ts';
 export { buildPipeThroughArgs, buildStreamOutputArgs } from './helpers/streams.ts';
