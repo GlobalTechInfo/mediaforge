@@ -1,6 +1,6 @@
 {
   "name": "mediaforge",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Fully typed TypeScript wrapper for FFmpeg — fluent API, v6/v7/v8 compatible, zero native bindings",
   "type": "module",
   "author": "Qasim Ali",
