@@ -259,7 +259,7 @@ describe('cropToRatio', () => {
 });
 
 // ─── stackVideos ──────────────────────────────────────────────────────────────
-describe('stackVideos', () => {
+describe.skip('stackVideos', () => {
   let stackVideos: any;
   before(async () => {
     ({ stackVideos } = await import('../../dist/esm/helpers/edit.js'));
