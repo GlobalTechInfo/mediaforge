@@ -1,3 +1,5 @@
+
+
 import { runFFmpeg } from '../process/spawn.ts';
 import { resolveBinary } from '../utils/binary.ts';
 
@@ -55,8 +57,13 @@ export async function generateWaveform(opts: WaveformOptions): Promise<void> {
     binary = resolveBinary(),
   } = opts;
 
-  // FFmpeg 7.x+ removed bgcolor and draw from showwavespic.
-  // Only emit s= (size) and colors= — these are stable across v6/v7/v8.
+  if (opts.backgroundColor !== undefined || opts.mode !== undefined) {
+    // deno-lint-ignore no-explicit-any
+    (globalThis as any).console?.warn?.(
+      'WaveformOptions.backgroundColor and .mode are deprecated in FFmpeg 7+ and silently ignored. ' +
+      'Remove these options for forward compatibility.',
+    );
+  }
   const filter = `[0:a:${streamIndex}]showwavespic=s=${width}x${height}:colors=${color}:scale=${scale}[v]`;
 
   const args: string[] = [
@@ -121,10 +128,8 @@ export async function generateSpectrum(opts: SpectrumOptions): Promise<void> {
 
 export function buildWaveformFilter(
   width: number, height: number,
-  color: string, scale: string, _mode: string, streamIndex: number,
-  _backgroundColor?: string,
+  color: string, scale: string, streamIndex: number,
 ): string {
-  // bgcolor and draw removed in FFmpeg 7.x+ — never emit them
   return `[0:a:${streamIndex}]showwavespic=s=${width}x${height}:colors=${color}:scale=${scale}[v]`;
 }
 

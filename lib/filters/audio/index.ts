@@ -20,7 +20,10 @@ export function volume(
   opts?: VolumeOptions | number | string,
 ): FilterChain | string {
   const isStandalone = !(chainOrOpts instanceof FilterChain);
-  const o = isStandalone ? chainOrOpts as (VolumeOptions | number | string) : opts!;
+  const o: VolumeOptions | number | string = isStandalone
+    ? (chainOrOpts as VolumeOptions | number | string)
+    : opts!;
+  if (o === undefined) throw new Error('volume: opts argument is required');
   let node: { name: string; positional: (string|number)[]; named: Record<string,string|number|boolean> };
   if (typeof o === 'number' || typeof o === 'string') {
     node = { name: 'volume', positional: [String(o)], named: {} };
@@ -133,20 +136,32 @@ export interface BassOptions {
   width_type?: 'o' | 'q' | 'h' | 's';
 }
 
-export function bass(chain: FilterChain, opts: BassOptions): FilterChain {
-  const named: Record<string, string | number | boolean> = { g: opts.gain };
-  if (opts.frequency !== undefined) named['f'] = opts.frequency;
-  if (opts.width !== undefined) named['w'] = opts.width;
-  if (opts.width_type !== undefined) named['t'] = opts.width_type;
-  return chain.add({ name: 'bass', positional: [], named });
+export function bass(chain: FilterChain, opts: BassOptions): FilterChain;
+export function bass(opts: BassOptions): string;
+export function bass(chainOrOpts: FilterChain | BassOptions, opts?: BassOptions): FilterChain | string {
+  const isStandalone = !(chainOrOpts instanceof FilterChain);
+  const o = isStandalone ? (chainOrOpts as BassOptions) : opts!;
+  const named: Record<string, string | number | boolean> = { g: o.gain };
+  if (o.frequency !== undefined) named['f'] = o.frequency;
+  if (o.width !== undefined) named['w'] = o.width;
+  if (o.width_type !== undefined) named['t'] = o.width_type;
+  const node = { name: 'bass', positional: [] as (string|number)[], named };
+  if (isStandalone) return serializeNode(node);
+  return (chainOrOpts as FilterChain).add(node);
 }
 
-export function treble(chain: FilterChain, opts: BassOptions): FilterChain {
-  const named: Record<string, string | number | boolean> = { g: opts.gain };
-  if (opts.frequency !== undefined) named['f'] = opts.frequency;
-  if (opts.width !== undefined) named['w'] = opts.width;
-  if (opts.width_type !== undefined) named['t'] = opts.width_type;
-  return chain.add({ name: 'treble', positional: [], named });
+export function treble(chain: FilterChain, opts: BassOptions): FilterChain;
+export function treble(opts: BassOptions): string;
+export function treble(chainOrOpts: FilterChain | BassOptions, opts?: BassOptions): FilterChain | string {
+  const isStandalone = !(chainOrOpts instanceof FilterChain);
+  const o = isStandalone ? (chainOrOpts as BassOptions) : opts!;
+  const named: Record<string, string | number | boolean> = { g: o.gain };
+  if (o.frequency !== undefined) named['f'] = o.frequency;
+  if (o.width !== undefined) named['w'] = o.width;
+  if (o.width_type !== undefined) named['t'] = o.width_type;
+  const node = { name: 'treble', positional: [] as (string|number)[], named };
+  if (isStandalone) return serializeNode(node);
+  return (chainOrOpts as FilterChain).add(node);
 }
 
 // ─── Afade ────────────────────────────────────────────────────────────────────

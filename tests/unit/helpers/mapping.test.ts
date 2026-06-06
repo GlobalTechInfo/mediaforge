@@ -123,11 +123,11 @@ describe('setMetadata', () => {
 
 describe('setStreamMetadata', () => {
   it('creates per-stream metadata flag', () => {
-    expect(setStreamMetadata(0, 'a', 0, 'language', 'eng')).toEqual(['-metadata:s:a:0', 'language=eng']);
+    expect(setStreamMetadata('a', 0, 'language', 'eng')).toEqual(['-metadata:s:a:0', 'language=eng']);
   });
 
   it('works for subtitle streams', () => {
-    expect(setStreamMetadata(0, 's', 0, 'language', 'fra')).toEqual(['-metadata:s:s:0', 'language=fra']);
+    expect(setStreamMetadata('s', 0, 'language', 'fra')).toEqual(['-metadata:s:s:0', 'language=fra']);
   });
 });
 

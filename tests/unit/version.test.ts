@@ -45,7 +45,7 @@ describe('parseVersionOutput', () => {
     const v = parseVersionOutput(GIT_OUTPUT);
     expect(v.isGit).toBe(true);
     expect(v.raw).toBe('N-116912-gabcdef1234');
-    expect(v.major).toBe(0);
+    expect(v.major).toBe(999);
   });
 
   it('handles unrecognized version format gracefully', () => {

@@ -3,7 +3,7 @@ import { resolveBinary } from '../utils/binary.ts';
 import type { SpawnOptions } from '../process/spawn.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { unlinkSync, existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 
 export interface TwoPassOptions {
   input: string;
@@ -36,17 +36,14 @@ export interface TwoPassOptions {
  * });
  */
 export async function twoPassEncode(opts: TwoPassOptions): Promise<void> {
+  if (opts.binary !== undefined && (typeof opts.binary !== 'string' || opts.binary.trim().length === 0)) {
+    throw new Error('twoPassEncode: binary must be a non-empty string if provided');
+  }
   const binary = resolveBinary(opts.binary);
-  const ts = Date.now();
-  const passlog = opts.passlogfile ?? join(tmpdir(), `mediaforge-passlog-${ts}`);
 
-  // Write pass 1 to a real temp MKV instead of -f null /dev/null.
-  // On ARM Linux (Android Termux FFmpeg 8.x, Ubuntu ARM FFmpeg 7.x) the null
-  // muxer drops frames before they reach the encoder stats writer so the
-  // passlog .log is never created and pass 2 fails with:
-  //   "ratecontrol_init: can't open stats file"
-  // MKV is streamable (no moov-atom seek) so it works on all platforms.
-  const pass1TempOut = join(tmpdir(), `mediaforge-pass1-${ts}.mkv`);
+  let tmpDir: string | undefined;
+  let passlog: string;
+  let pass1TempOut: string;
 
   const inputArgs = ['-i', opts.input, ...(opts.extraInputArgs ?? [])];
   const videoArgs: string[] = [];
@@ -55,6 +52,17 @@ export async function twoPassEncode(opts: TwoPassOptions): Promise<void> {
   const extraOut = opts.extraOutputArgs ?? [];
 
   try {
+    tmpDir = mkdtempSync(join(tmpdir(), 'mediaforge-twopass-'));
+    passlog = opts.passlogfile ?? join(tmpDir, 'passlog');
+
+    // Write pass 1 to a real temp MKV instead of -f null /dev/null.
+    // On ARM Linux (Android Termux FFmpeg 8.x, Ubuntu ARM FFmpeg 7.x) the null
+    // muxer drops frames before they reach the encoder stats writer so the
+    // passlog .log is never created and pass 2 fails with:
+    //   "ratecontrol_init: can't open stats file"
+    // MKV is streamable (no moov-atom seek) so it works on all platforms.
+    pass1TempOut = join(tmpDir, 'pass1.mkv');
+
     // ── Pass 1 ──────────────────────────────────────────────────────────────
     const pass1Args: string[] = [
       '-y',
@@ -96,9 +104,12 @@ export async function twoPassEncode(opts: TwoPassOptions): Promise<void> {
     await runSpawn(binary, pass2Args);
     opts.onPass2Complete?.();
 
+    // Clean up pass log files after successful encode
+    for (const suffix of ['-0.log', '-0.log.mbtree']) {
+      try { rmSync(passlog + suffix, { force: true }); } catch { /* ok */ }
+    }
   } finally {
-    cleanPasslog(passlog);
-    tryUnlink(pass1TempOut);
+    if (tmpDir !== undefined && existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true });
   }
 }
 
@@ -107,30 +118,17 @@ function runSpawn(binary: string, args: string[]): Promise<void> {
   return runFFmpeg(spawnOpts);
 }
 
-function tryUnlink(path: string): void {
-  try {
-    if (existsSync(path)) unlinkSync(path);
-  } catch {
-    // Best effort
-  }
-}
-
-function cleanPasslog(prefix: string): void {
-  for (const suffix of ['-0.log', '-0.log.mbtree', '.log', '.log.mbtree']) {
-    tryUnlink(prefix + suffix);
-  }
-}
-
 /**
  * Build pass 1 and pass 2 argument arrays without running them.
  * Useful for manual orchestration or testing.
  */
 export function buildTwoPassArgs(opts: TwoPassOptions): {
+  binary: string;
   pass1: string[];
   pass2: string[];
   passlog: string;
 } {
-  const binary = opts.binary ?? 'ffmpeg'; void binary;
+  const binary = resolveBinary(opts.binary);
   const passlog = opts.passlogfile ?? join(tmpdir(), `mediaforge-passlog`);
   const pass1TempOut = join(tmpdir(), `mediaforge-pass1.mkv`);
 
@@ -171,5 +169,5 @@ export function buildTwoPassArgs(opts: TwoPassOptions): {
     opts.output,
   ];
 
-  return { pass1, pass2, passlog };
+  return { binary, pass1, pass2, passlog };
 }

@@ -1,14 +1,13 @@
 import { resolveBinary } from './utils/binary.ts';
 import {
   probeVersion,
-  satisfiesVersion,
   formatVersion,
 } from './utils/version.ts';
 import {
   buildGlobalArgs,
   buildInputArgs,
-  buildOutputArgs,
   toBitrate,
+  toDuration,
 } from './utils/args.ts';
 import { spawnFFmpeg, runFFmpeg, type FFmpegProcess } from './process/spawn.ts';
 import { CapabilityRegistry } from './codecs/registry.ts';
@@ -26,6 +25,7 @@ import type { VersionInfo } from './types/version.ts';
 import type { GlobalOptions, InputOptions, OutputOptions } from './types/options.ts';
 import type { LogLevel } from './types/options.ts';
 import type { FilterChain } from './types/filters.ts';
+import type { SpawnOptions } from './process/spawn.ts';
 
 interface InputEntry {
   path: string;
@@ -72,6 +72,7 @@ export class FFmpegBuilder {
   private readonly _inputs: InputEntry[] = [];
   private _currentOutput: OutputEntry | null = null;
   private readonly _outputs: OutputEntry[] = [];
+  private _complexFilter: string | null = null;
 
   constructor(input?: string | string[]) {
     this._binary = resolveBinary();
@@ -87,7 +88,7 @@ export class FFmpegBuilder {
   setBinary(path: string): this {
     this._binary = path;
     this._version = null;
-    this._registry = null; // reset capability cache too
+    this._registry = null;
     return this;
   }
 
@@ -127,9 +128,8 @@ export class FFmpegBuilder {
   /**
    * Check if a feature is available by version gate + capability.
    */
-  async checkFeature(featureKey: string): Promise<GuardResult> {
-    const v = await this.getVersion();
-    return guardFeatureVersion(v, featureKey);
+  checkFeature(featureKey: string): GuardResult {
+    return guardFeatureVersion(this.getVersion(), featureKey);
   }
 
   /**
@@ -137,16 +137,15 @@ export class FFmpegBuilder {
    * Returns null if none are available.
    *
    * @example
-   * const codec = await builder.selectVideoCodec([
+   * const codec = builder.selectVideoCodec([
    *   { codec: 'h264_nvenc', featureKey: 'nvenc' },
    *   { codec: 'h264_vaapi' },
    *   { codec: 'libx264' },
    * ]);
    * builder.videoCodec(codec ?? 'libx264');
    */
-  async selectVideoCodec(candidates: CodecCandidate[]): Promise<string | null> {
-    const v = await this.getVersion();
-    return selectBestCodec(v, this.getRegistry(), candidates);
+  selectVideoCodec(candidates: CodecCandidate[]): string | null {
+    return selectBestCodec(this.getVersion(), this.getRegistry(), candidates);
   }
 
   /**
@@ -156,23 +155,12 @@ export class FFmpegBuilder {
     return selectBestHwaccel(this.getRegistry(), candidates);
   }
 
-  private requireVersion(minMajor: number, feature: string): void {
-    if (this._version === null) return; // version not yet known — defer
-    if (!satisfiesVersion(this._version, minMajor)) {
-      throw new VersionError(feature, minMajor, this._version.major);
-    }
-  }
-
   // ─── Global Options ───────────────────────────────────────────────────────
 
   /** Overwrite output files without asking (default: true) */
   overwrite(yes = true): this {
     this._globalOpts.overwrite = yes;
-    if (!yes) {
-      this._globalOpts.noOverwrite = true;
-    } else {
-      delete this._globalOpts.noOverwrite;
-    }
+    this._globalOpts.noOverwrite = !yes;
     return this;
   }
 
@@ -257,9 +245,19 @@ export class FFmpegBuilder {
     return this;
   }
 
-  /** Set video frame rate */
+  /** Set output frame rate (-r after -i) */
   fps(rate: string | number): this {
     this.ensureOutput().videoArgs.push('-r', String(rate));
+    return this;
+  }
+
+  /** Set input frame rate (-r before -i, for raw inputs) */
+  inputFps(rate: string | number): this {
+    const last = this._inputs[this._inputs.length - 1];
+    if (last !== undefined) {
+      last.opts.extraArgs ??= [];
+      last.opts.extraArgs.push('-r', String(rate));
+    }
     return this;
   }
 
@@ -390,7 +388,7 @@ export class FFmpegBuilder {
 
   // ─── Hardware Acceleration ────────────────────────────────────────────────
 
-  /** Enable hardware acceleration (-hwaccel). Probes version if cached. */
+  /** Enable hardware acceleration (-hwaccel). Does NOT validate availability — use checkHwaccel() first. */
   hwAccel(accel: string, opts?: { device?: string }): this {
     this._globalOpts.extraArgs ??= [];
     this._globalOpts.extraArgs.push('-hwaccel', accel);
@@ -402,10 +400,9 @@ export class FFmpegBuilder {
 
   // ─── Complex Filter ───────────────────────────────────────────────────────
 
-  /** Set -filter_complex string directly (typed DSL coming in Phase 3) */
+  /** Set -filter_complex string directly. Only the last call takes effect. */
   complexFilter(filter: string): this {
-    this._globalOpts.extraArgs ??= [];
-    this._globalOpts.extraArgs.push('-filter_complex', filter);
+    this._complexFilter = filter;
     return this;
   }
 
@@ -424,13 +421,36 @@ export class FFmpegBuilder {
       args.push('-i', path);
     }
 
-    // Outputs
+    // Complex filter: emitted once after all inputs, before any output-specific flags
+    if (this._complexFilter !== null) {
+      args.push('-filter_complex', this._complexFilter);
+    }
+
+    // Outputs — FFmpeg-correct order: seek/time opts → mapping → codec → filters → format → path
     for (const { path, opts, videoArgs, audioArgs, subtitleArgs, filterArgs } of this._outputs) {
+      // 1. Output seek/time options (-ss, -t, -to) — must come first
+      if (opts.seekOutput !== undefined) args.push('-ss', toDuration(opts.seekOutput));
+      if (opts.to !== undefined) args.push('-to', toDuration(opts.to));
+      if (opts.duration !== undefined) args.push('-t', toDuration(opts.duration));
+
+      // 2. -map directives
+      if (opts.map !== undefined) {
+        for (const m of opts.map) args.push('-map', m);
+      }
+
+      // 3. Codec options (-c:v, -c:a, -c:s, -b:v, -b:a, etc.)
       args.push(...videoArgs);
       args.push(...audioArgs);
       args.push(...subtitleArgs);
+
+      // 4. Filter options (-vf, -af)
       args.push(...filterArgs);
-      args.push(...buildOutputArgs(opts));
+
+      // 5. Format and extra args
+      if (opts.format !== undefined) args.push('-f', opts.format);
+      if (opts.extraArgs !== undefined) args.push(...opts.extraArgs);
+
+      // 6. Output path
       args.push(path);
     }
 
@@ -439,18 +459,24 @@ export class FFmpegBuilder {
 
   // ─── Execution ────────────────────────────────────────────────────────────
 
+  private _buildSpawnOpts(opts?: { parseProgress?: boolean; totalDurationUs?: number }): SpawnOptions {
+    const spawnOpts: SpawnOptions = {
+      binary: this._binary,
+      args: this.buildArgs(),
+      parseProgress: opts?.parseProgress ?? this._globalOpts.progress === true,
+    };
+    if (opts?.totalDurationUs !== undefined) {
+      spawnOpts.totalDurationUs = opts.totalDurationUs;
+    }
+    return spawnOpts;
+  }
+
   /**
    * Spawn the process with full event-emitter control.
    * Useful for streaming progress or piping stdout.
    */
   spawn(opts?: { parseProgress?: boolean; totalDurationUs?: number }): FFmpegProcess {
-    const spawnOpts: import('./process/spawn.ts').SpawnOptions = {
-      binary: this._binary,
-      args: this.buildArgs(),
-      parseProgress: opts?.parseProgress ?? this._globalOpts.progress === true,
-    };
-    if (opts?.totalDurationUs !== undefined) spawnOpts.totalDurationUs = opts.totalDurationUs;
-    return spawnFFmpeg(spawnOpts);
+    return spawnFFmpeg(this._buildSpawnOpts(opts));
   }
 
   /**
@@ -458,13 +484,7 @@ export class FFmpegBuilder {
    * Rejects with FFmpegSpawnError on non-zero exit.
    */
   async run(opts?: { parseProgress?: boolean; totalDurationUs?: number }): Promise<void> {
-    const spawnOpts: import('./process/spawn.ts').SpawnOptions = {
-      binary: this._binary,
-      args: this.buildArgs(),
-      parseProgress: opts?.parseProgress ?? this._globalOpts.progress === true,
-    };
-    if (opts?.totalDurationUs !== undefined) spawnOpts.totalDurationUs = opts.totalDurationUs;
-    await runFFmpeg(spawnOpts);
+    await runFFmpeg(this._buildSpawnOpts(opts));
   }
 
   /**
@@ -494,13 +514,9 @@ export class FFmpegBuilder {
    */
   dryCommand(): string {
     const args = this.dry();
-    return `${this._binary} ${args.join(' ')}`;
+    const quoted = args.map(a => /[^\w/.\-@:=_,+~]/.test(a) ? `'${a.replace(/'/g, "'\\''")}'` : a);
+    return `${this._binary} ${quoted.join(' ')}`;
   }
-}
-
-export interface FFmpegBuilderDryOptions {
-  /** Include binary path in output. Default: true */
-  includeBinary?: boolean;
 }
 
 /**

@@ -18,11 +18,17 @@ function parseSpeed(raw: string): number {
 }
 
 function parseSize(raw: string): number {
-  // "4096kB" or "4096KiB" or "1234567"
   if (raw === 'N/A' || raw === '') return 0;
-  const m = /^(\d+(?:\.\d+)?)\s*(kB|KiB|MB|MiB|GB|GiB)?$/i.exec(raw);
+
+  // Try pure integer first (raw byte count, no unit)
+  const trimmed = raw.trim();
+  const pureNum = parseInt(trimmed, 10);
+  if (!isNaN(pureNum) && String(pureNum) === trimmed) return pureNum;
+
+  // Parse with optional unit: "4096kB", "1.23MB", "4096 KiB"
+  const m = /^(\d+(?:\.\d+)?)\s*(kB|KiB|MB|MiB|GB|GiB)?$/i.exec(trimmed);
   if (m === null) {
-    const n = parseInt(raw, 10);
+    const n = parseInt(trimmed.replace(/[^0-9]/g, ''), 10);
     return isNaN(n) ? 0 : n;
   }
   const value = parseFloat(m[1] ?? '0');
@@ -50,7 +56,8 @@ function buildProgress(
   totalDurationUs?: number,
 ): ProgressInfo {
   const outTimeUs = parseInt(block['out_time_us'] ?? block['out_time_ms'] ?? '0', 10);
-  const progress = (block['progress'] ?? 'continue') as 'continue' | 'end';
+  const progressVal = block['progress'] ?? 'continue';
+  const progress: 'continue' | 'end' = progressVal === 'continue' || progressVal === 'end' ? progressVal : 'continue';
 
   const info: ProgressInfo = {
     frame: parseInt(block['frame'] ?? '0', 10),

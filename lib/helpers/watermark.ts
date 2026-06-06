@@ -1,5 +1,6 @@
 import { FFmpegBuilder } from '../FFmpeg.ts';
 import { resolveBinary } from '../utils/binary.ts';
+import { escapeFilterValue } from '../utils/filter.ts';
 
 export type WatermarkPosition =
   | 'top-left' | 'top-right' | 'top-center'
@@ -31,15 +32,33 @@ export interface WatermarkOptions {
 }
 
 function positionToOverlay(pos: WatermarkPosition, margin: number): string {
+  const [x, y] = resolvePositionCoords(pos, margin, 'overlay');
+  return `${x}:${y}`;
+}
+
+function resolvePositionCoords(
+  pos: WatermarkPosition,
+  margin: number,
+  type: 'overlay' | 'drawtext',
+): [string, string] {
+  const w = type === 'overlay' ? 'W' : 'w';
+  const h = type === 'overlay' ? 'H' : 'h';
+  const tw = type === 'overlay' ? 'w' : 'tw';
+  const th = type === 'overlay' ? 'h' : 'th';
   switch (pos) {
-    case 'top-left':      return `${margin}:${margin}`;
-    case 'top-right':     return `W-w-${margin}:${margin}`;
-    case 'top-center':    return `(W-w)/2:${margin}`;
-    case 'bottom-left':   return `${margin}:H-h-${margin}`;
-    case 'bottom-right':  return `W-w-${margin}:H-h-${margin}`;
-    case 'bottom-center': return `(W-w)/2:H-h-${margin}`;
-    case 'center':        return `(W-w)/2:(H-h)/2`;
-    default:              return pos;
+    case 'top-left':      return [`${margin}`, `${margin}`];
+    case 'top-right':     return [`${w}-${tw}-${margin}`, `${margin}`];
+    case 'top-center':    return [`(${w}-${tw})/2`, `${margin}`];
+    case 'bottom-left':   return [`${margin}`, `${h}-${th}-${margin}`];
+    case 'bottom-right':  return [`${w}-${tw}-${margin}`, `${h}-${th}-${margin}`];
+    case 'bottom-center': return [`(${w}-${tw})/2`, `${h}-${th}-${margin}`];
+    case 'center':        return [`(${w}-${tw})/2`, `(${h}-${th})/2`];
+    default: {
+      // Custom overlay expression — split on first colon to get x:y
+      const colon = pos.indexOf(':');
+      if (colon !== -1) return [pos.slice(0, colon), pos.slice(colon + 1)];
+      return [pos, `${h}-${th}-${margin}`];
+    }
   }
 }
 
@@ -136,21 +155,11 @@ export async function addTextWatermark(opts: TextWatermarkOptions): Promise<void
     binary = resolveBinary(),
   } = opts;
 
-  let x: string, y: string;
-  switch (position) {
-    case 'top-left':      x = `${margin}`; y = `${margin}`; break;
-    case 'top-right':     x = `w-tw-${margin}`; y = `${margin}`; break;
-    case 'top-center':    x = `(w-tw)/2`; y = `${margin}`; break;
-    case 'bottom-left':   x = `${margin}`; y = `h-th-${margin}`; break;
-    case 'bottom-right':  x = `w-tw-${margin}`; y = `h-th-${margin}`; break;
-    case 'bottom-center': x = `(w-tw)/2`; y = `h-th-${margin}`; break;
-    case 'center':        x = `(w-tw)/2`; y = `(h-th)/2`; break;
-    default:              x = `${margin}`; y = `h-th-${margin}`; break;
-  }
+  const [x, y] = resolvePositionCoords(position, margin, 'drawtext');
 
-  const escaped = text.replace(/'/g, '\u2019').replace(/:/g, '\\:');
+  const escaped = escapeFilterValue(text);
   let filter = `drawtext=text='${escaped}':fontsize=${fontSize}:fontcolor=${fontColor}:x=${x}:y=${y}`;
-  if (fontFile) filter += `:fontfile='${fontFile}'`;
+  if (fontFile) filter += `:fontfile='${escapeFilterValue(fontFile)}'`;
 
   await new FFmpegBuilder(input)
     .output(output)
@@ -186,19 +195,9 @@ export function buildTextWatermarkFilter(
   fontColor: string,
   fontFile?: string,
 ): string {
-  let x: string, y: string;
-  switch (position) {
-    case 'top-left':      x = `${margin}`; y = `${margin}`; break;
-    case 'top-right':     x = `w-tw-${margin}`; y = `${margin}`; break;
-    case 'top-center':    x = `(w-tw)/2`; y = `${margin}`; break;
-    case 'bottom-left':   x = `${margin}`; y = `h-th-${margin}`; break;
-    case 'bottom-right':  x = `w-tw-${margin}`; y = `h-th-${margin}`; break;
-    case 'bottom-center': x = `(w-tw)/2`; y = `h-th-${margin}`; break;
-    case 'center':        x = `(w-tw)/2`; y = `(h-th)/2`; break;
-    default:              x = `${margin}`; y = `h-th-${margin}`; break;
-  }
-  const escaped = text.replace(/'/g, '\u2019').replace(/:/g, '\\:');
+  const [x, y] = resolvePositionCoords(position, margin, 'drawtext');
+  const escaped = escapeFilterValue(text);
   let filter = `drawtext=text='${escaped}':fontsize=${fontSize}:fontcolor=${fontColor}:x=${x}:y=${y}`;
-  if (fontFile) filter += `:fontfile='${fontFile}'`;
+  if (fontFile) filter += `:fontfile='${escapeFilterValue(fontFile)}'`;
   return filter;
 }

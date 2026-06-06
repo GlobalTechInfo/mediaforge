@@ -22,8 +22,6 @@ export interface HlsOptions {
   segmentFilename?: string;
   /** Number of segments to keep in playlist. 0=all. Default: 0 */
   hlsListSize?: number;
-  /** HLS version. Default: 3 */
-  hlsVersion?: 3 | 4 | 5 | 6 | 7;
   /** Video codec. Default: 'libx264' */
   videoCodec?: string;
   /** Video bitrate. Default: '2M' */
@@ -69,7 +67,6 @@ export function hlsPackage(opts: HlsOptions): FFmpegBuilder {
     segmentDuration = 6,
     segmentFilename = 'segment%03d.ts',
     hlsListSize = 0,
-    hlsVersion: _hlsVersion = 3,
     videoCodec = 'libx264',
     videoBitrate = '2M',
     audioCodec = 'aac',
@@ -135,8 +132,6 @@ export interface AdaptiveHlsOptions {
   variants: HlsVariant[];
   /** Segment duration in seconds. Default: 6 */
   segmentDuration?: number;
-  /** HLS version. Default: 3 */
-  hlsVersion?: 3 | 4 | 5 | 6 | 7;
   /** Video codec. Default: 'libx264' */
   videoCodec?: string;
   /** Audio codec. Default: 'aac' */
@@ -175,7 +170,6 @@ export function adaptiveHls(opts: AdaptiveHlsOptions): FFmpegBuilder {
     outputDir,
     variants,
     segmentDuration = 6,
-    hlsVersion: _hlsVersion = 3,
     videoCodec = 'libx264',
     audioCodec = 'aac',
     variantPlaylist = '%v.m3u8',
@@ -189,7 +183,11 @@ export function adaptiveHls(opts: AdaptiveHlsOptions): FFmpegBuilder {
   const vSplit = `[0:v]split=${variants.length}${variants.map((_, i) => `[v${i}]`).join('')}`;
   const aSplit = `[0:a]asplit=${variants.length}${variants.map((_, i) => `[a${i}]`).join('')}`;
   const scaleFilters = variants.map((v, i) => {
-    const [w, h] = v.resolution.replace('x', ':').split(':');
+    const parts = v.resolution.replace('x', ':').split(':');
+    if (parts.length !== 2 || parts.some(p => isNaN(Number(p)))) {
+      throw new Error(`Invalid resolution for variant "${v.label}": "${v.resolution}"`);
+    }
+    const [w, h] = parts;
     return `[v${i}]scale=${w ?? '-2'}:${h ?? '-2'}[vout${i}]`;
   });
 
@@ -199,15 +197,19 @@ export function adaptiveHls(opts: AdaptiveHlsOptions): FFmpegBuilder {
     .overwrite()
     .complexFilter(filterComplex);
 
+  // Create all required directories up front
+  const dirs = new Set(variants.flatMap(v => [
+    dirname(`${outputDir}/${variantPlaylist.replace('%v', v.label)}`),
+    dirname(`${outputDir}/${segmentPattern.replace('%v', v.label)}`),
+  ]));
+  for (const dir of dirs) mkdirSync(dir, { recursive: true });
+
   // Map each variant stream to an output
   for (let i = 0; i < variants.length; i++) {
     const variant = variants[i];
     if (variant === undefined) continue;
     const outputPlaylist = `${outputDir}/${variantPlaylist.replace('%v', variant.label)}`;
     const segmentFile = `${outputDir}/${segmentPattern.replace('%v', variant.label)}`;
-
-    mkdirSync(dirname(outputPlaylist), { recursive: true });
-    mkdirSync(dirname(segmentFile), { recursive: true });
 
     builder
       .output(outputPlaylist)
@@ -225,7 +227,7 @@ export function adaptiveHls(opts: AdaptiveHlsOptions): FFmpegBuilder {
       .addOutputOption('-hls_time', String(segmentDuration))
       .addOutputOption('-hls_list_size', '0')
       .addOutputOption('-hls_segment_filename', segmentFile)
-      .addOutputOption('-g', String(segmentDuration * 30)) // approximate
+      .addOutputOption('-force_key_frames', `expr:gte(t,n_forced*${segmentDuration})`)
       .addOutputOption('-sc_threshold', '0');
 
     if (hlsFlags !== undefined) builder.addOutputOption('-hls_flags', hlsFlags);
@@ -259,8 +261,6 @@ export interface DashOptions {
   useTemplate?: boolean;
   /** Use timeline in segment template. Default: true */
   useTimeline?: boolean;
-  /** Minimum buffer time in seconds. Default: 1.5 */
-  minBufferTime?: number;
   /** Additional DASH-specific options */
   dashFlags?: string;
   /** Initialization segment filename pattern */
@@ -295,7 +295,6 @@ export function dashPackage(opts: DashOptions): FFmpegBuilder {
     audioBitrate = '128k',
     useTemplate = true,
     useTimeline = true,
-    minBufferTime = 1.5,
     dashFlags,
     initSegmentName,
     mediaSegmentName,
@@ -311,8 +310,9 @@ export function dashPackage(opts: DashOptions): FFmpegBuilder {
     .audioCodec(audioCodec)
     .audioBitrate(audioBitrate)
     .addOutputOption('-seg_duration', String(segmentDuration))
-    .addOutputOption('-window_size', String(windowSize));
-  void minBufferTime; void useTemplate; void useTimeline;
+    .addOutputOption('-window_size', String(windowSize))
+    .addOutputOption('-use_template', useTemplate ? '1' : '0')
+    .addOutputOption('-use_timeline', useTimeline ? '1' : '0');
   if (dashFlags !== undefined)
     builder.addOutputOption('-dash_flags', dashFlags);
   if (initSegmentName !== undefined)
@@ -331,6 +331,7 @@ export function buildHlsArgs(input: string, outputDir: string, opts: HlsOptions)
   const playlistName = opts.playlistName ?? 'playlist.m3u8';
   const args: string[] = ['-y', '-i', input];
   if (opts.videoCodec) args.push('-c:v', opts.videoCodec);
+  if (opts.audioCodec) args.push('-c:a', opts.audioCodec);
   if (opts.audioBitrate) args.push('-b:a', opts.audioBitrate);
   if (opts.videoBitrate) args.push('-b:v', opts.videoBitrate);
   // -f hls MUST appear before any hls_* output-private options

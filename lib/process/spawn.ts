@@ -1,8 +1,9 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
 import { FFmpegEmitter } from './events.ts';
 import { ProgressParser } from './progress.ts';
+import { trackChild } from '../helpers/process.ts';
+import { captureStderr } from '../utils/stderr.ts';
 
 export interface SpawnOptions {
   /** Path to the ffmpeg binary */
@@ -15,6 +16,8 @@ export interface SpawnOptions {
   totalDurationUs?: number;
   /** Working directory for the spawned process */
   cwd?: string;
+  /** Timeout in milliseconds. If exceeded, the process is killed and an error is emitted. */
+  timeout?: number;
 }
 
 export interface FFmpegProcess {
@@ -56,17 +59,33 @@ export class FFmpegSpawnError extends Error {
  * });
  */
 export function spawnFFmpeg(opts: SpawnOptions): FFmpegProcess {
-  const { binary, args, parseProgress = false, totalDurationUs, cwd } = opts;
+  const { binary, args, parseProgress = false, totalDurationUs, cwd, timeout } = opts;
 
-  const child = spawn(binary, args, {
-    stdio: ['pipe', 'pipe', 'pipe'],
-    cwd,
-  });
+  let child: ChildProcess;
+  try {
+    child = spawn(binary, args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      cwd,
+    });
+  } catch (err) {
+    throw new Error(
+      `Failed to spawn ffmpeg: ${(err as Error).message}. Ensure the ffmpeg binary exists and is executable.`,
+    );
+  }
+
+  trackChild(child);
 
   const emitter = new FFmpegEmitter();
-  const stderrLines: string[] = [];
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 
-  // Progress parser (only active if requested)
+  if (timeout !== undefined && timeout > 0) {
+    timeoutHandle = setTimeout(() => {
+      emitter.emit('error', new Error(`ffmpeg timed out after ${timeout}ms`));
+      child.kill('SIGTERM');
+    }, timeout);
+    if (typeof timeoutHandle.unref === 'function') timeoutHandle.unref();
+  }
+
   const progressParser = parseProgress
     ? new ProgressParser(
         (info) => emitter.emit('progress', info),
@@ -76,30 +95,26 @@ export function spawnFFmpeg(opts: SpawnOptions): FFmpegProcess {
 
   emitter.emit('start', args);
 
-  // Wire stderr → line-by-line
+  let closeStderr: (() => void) | undefined;
+
   if (child.stderr !== null) {
-    const rl = createInterface({ input: child.stderr, crlfDelay: Infinity });
-    rl.on('line', (line) => {
-      stderrLines.push(line);
-      emitter.emit('stderr', line);
-      progressParser?.push(line);
-    });
+    const captured = captureStderr(child.stderr, emitter, progressParser);
+    closeStderr = captured.close;
   }
 
-  // Handle process exit
   child.on('close', (code: number | null, signal: string | null) => {
-    if (code === 0 || (code === null && signal === null)) {
+    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+    closeStderr?.();
+    if (code === 0) {
       emitter.emit('end');
     } else {
-      const stderr = stderrLines.join('\n');
-      emitter.emit(
-        'error',
-        new FFmpegSpawnError(code, signal, stderr),
-      );
+      const stderr = ''; // stderr already streamed via emitter
+      emitter.emit('error', new FFmpegSpawnError(code, signal, stderr));
     }
   });
 
   child.on('error', (err: Error) => {
+    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
     emitter.emit('error', err);
   });
 
@@ -109,6 +124,7 @@ export function spawnFFmpeg(opts: SpawnOptions): FFmpegProcess {
     stdin: child.stdin,
     stdout: child.stdout,
     kill(signal: NodeJS.Signals = 'SIGTERM') {
+      if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
       child.kill(signal);
     },
   };

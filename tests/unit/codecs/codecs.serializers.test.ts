@@ -1,8 +1,8 @@
 import { describe, it } from 'node:test';
 import { expect } from '../../lib/expect.js';
-import { x264ToArgs, x265ToArgs, svtAv1ToArgs, vp9ToArgs } from '../../../dist/esm/codecs/video.js';
-import { aacToArgs, libOpusToArgs, libMp3LameToArgs, flacToArgs, ac3ToArgs } from '../../../dist/esm/codecs/audio.js';
-import { nvencToArgs, vaapiToArgs, qsvToArgs } from '../../../dist/esm/codecs/hardware.js';
+import { x264ToArgs, x265ToArgs, svtAv1ToArgs, vp9ToArgs } from '../../../dist/esm/index.js';
+import { aacToArgs, libOpusToArgs, libMp3LameToArgs, flacToArgs, ac3ToArgs } from '../../../dist/esm/index.js';
+import { nvencToArgs, vaapiToArgs, qsvToArgs } from '../../../dist/esm/index.js';
 
 describe('x264ToArgs', () => {
   it('sets codec to libx264', () => {
@@ -500,7 +500,7 @@ describe('nvencToArgs — extended options', () => {
 
   it('includes qpI, bFrames, refs, gopSize', () => {
     const args = nvencToArgs({ qpI: 20, bFrames: 2, refs: 3, gopSize: 250 }, 'h264_nvenc');
-    expect(args).toContain('-qp:v');
+    expect(args).toContain('-qp_i');
     expect(args).toContain('-bf');
     expect(args).toContain('-refs');
     expect(args).toContain('-g');

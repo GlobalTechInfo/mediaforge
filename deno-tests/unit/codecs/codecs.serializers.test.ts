@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import { expect } from '../../lib/expect.ts';
-import { x264ToArgs, x265ToArgs, svtAv1ToArgs, vp9ToArgs } from '../../../lib/codecs/video.ts';
-import { aacToArgs, libOpusToArgs, libMp3LameToArgs, flacToArgs, ac3ToArgs } from '../../../lib/codecs/audio.ts';
+import { x264ToArgs, x265ToArgs, svtav1ToArgs, vp9ToArgs } from '../../../lib/codecs/video.ts';
+import { aacToArgs, opusToArgs, mp3ToArgs, flacToArgs, ac3ToArgs } from '../../../lib/codecs/audio.ts';
 import { nvencToArgs, vaapiToArgs, qsvToArgs } from '../../../lib/codecs/hardware.ts';
 
 describe('x264ToArgs', () => {
@@ -91,24 +91,24 @@ describe('x265ToArgs', () => {
   });
 });
 
-describe('svtAv1ToArgs', () => {
+describe('svtav1ToArgs', () => {
   it('sets codec to libsvtav1', () => {
-    expect(svtAv1ToArgs({})).toContain('libsvtav1');
+    expect(svtav1ToArgs({})).toContain('libsvtav1');
   });
 
   it('includes preset', () => {
-    const args = svtAv1ToArgs({ preset: 8 });
+    const args = svtav1ToArgs({ preset: 8 });
     expect(args).toContain('-preset');
     expect(args).toContain('8');
   });
 
   it('includes crf', () => {
-    const args = svtAv1ToArgs({ crf: 35 });
+    const args = svtav1ToArgs({ crf: 35 });
     expect(args).toContain('-crf');
   });
 
   it('includes svtav1-params', () => {
-    const args = svtAv1ToArgs({ svtav1Params: 'fast-decode=1' });
+    const args = svtav1ToArgs({ svtav1Params: 'fast-decode=1' });
     expect(args).toContain('-svtav1-params');
   });
 });
@@ -163,43 +163,43 @@ describe('aacToArgs', () => {
   });
 });
 
-describe('libOpusToArgs', () => {
+describe('opusToArgs', () => {
   it('sets codec to libopus', () => {
-    expect(libOpusToArgs({})).toContain('libopus');
+    expect(opusToArgs({})).toContain('libopus');
   });
 
   it('includes bitrate', () => {
-    const args = libOpusToArgs({ bitrate: 128 });
+    const args = opusToArgs({ bitrate: 128 });
     expect(args).toContain('-b:a');
     expect(args).toContain('128k');
   });
 
   it('includes vbr mode', () => {
-    const args = libOpusToArgs({ vbr: 'constrained' });
+    const args = opusToArgs({ vbr: 'constrained' });
     expect(args).toContain('-vbr');
     expect(args).toContain('constrained');
   });
 
   it('includes application type', () => {
-    const args = libOpusToArgs({ application: 'audio' });
+    const args = opusToArgs({ application: 'audio' });
     expect(args).toContain('-application');
     expect(args).toContain('audio');
   });
 });
 
-describe('libMp3LameToArgs', () => {
+describe('mp3ToArgs', () => {
   it('sets codec to libmp3lame', () => {
-    expect(libMp3LameToArgs({})).toContain('libmp3lame');
+    expect(mp3ToArgs({})).toContain('libmp3lame');
   });
 
   it('includes quality scale', () => {
-    const args = libMp3LameToArgs({ qscale: 2 });
+    const args = mp3ToArgs({ qscale: 2 });
     expect(args).toContain('-q:a');
     expect(args).toContain('2');
   });
 
   it('includes bitrate', () => {
-    const args = libMp3LameToArgs({ bitrate: 320 });
+    const args = mp3ToArgs({ bitrate: 320 });
     expect(args).toContain('-b:a');
     expect(args).toContain('320k');
   });
@@ -401,22 +401,22 @@ describe('x265ToArgs — extended options', () => {
   });
 });
 
-describe('svtAv1ToArgs — extended options', () => {
+describe('svtav1ToArgs — extended options', () => {
   it('includes bitrate, bFrames, keyintMax', () => {
-    const args = svtAv1ToArgs({ bitrate: 2000, bFrames: 3, keyintMax: 240 });
+    const args = svtav1ToArgs({ bitrate: 2000, bFrames: 3, keyintMax: 240 });
     expect(args).toContain('-b:v');
     expect(args).toContain('-bf');
     expect(args).toContain('-g');
   });
 
   it('includes enableSceneDetect and dolbyVision', () => {
-    const args = svtAv1ToArgs({ enableSceneDetect: true, dolbyVision: true });
+    const args = svtav1ToArgs({ enableSceneDetect: true, dolbyVision: true });
     expect(args).toContain('-svtav1-params');
     expect(args).toContain('-dolbyvision');
   });
 
   it('includes svtav1Params and pixFmt', () => {
-    const args = svtAv1ToArgs({ svtav1Params: 'tune=0', pixFmt: 'yuv420p10le' });
+    const args = svtav1ToArgs({ svtav1Params: 'tune=0', pixFmt: 'yuv420p10le' });
     expect(args).toContain('-svtav1-params');
     expect(args).toContain('-pix_fmt');
   });
@@ -442,15 +442,15 @@ describe('aacToArgs — extended options', () => {
   });
 });
 
-describe('libOpusToArgs — extended options', () => {
+describe('opusToArgs — extended options', () => {
   it('includes vbr and frameDuration', () => {
-    const args = libOpusToArgs({ vbr: 'constrained', frameDuration: 20 });
+    const args = opusToArgs({ vbr: 'constrained', frameDuration: 20 });
     expect(args).toContain('-vbr');
     expect(args).toContain('-frame_duration');
   });
 
   it('includes compressionLevel, packetLoss, fec, dtx', () => {
-    const args = libOpusToArgs({ compressionLevel: 10, packetLoss: 5, fec: true, dtx: false });
+    const args = opusToArgs({ compressionLevel: 10, packetLoss: 5, fec: true, dtx: false });
     expect(args).toContain('-compression_level');
     expect(args).toContain('-packet_loss');
     expect(args).toContain('-fec');
@@ -458,29 +458,29 @@ describe('libOpusToArgs — extended options', () => {
   });
 
   it('includes channels and sampleRate', () => {
-    const args = libOpusToArgs({ channels: 2, sampleRate: 48000 });
+    const args = opusToArgs({ channels: 2, sampleRate: 48000 });
     expect(args).toContain('-ac');
     expect(args).toContain('-ar');
   });
 });
 
-describe('libMp3LameToArgs — extended options', () => {
+describe('mp3ToArgs — extended options', () => {
   it('includes qscale', () => {
-    expect(libMp3LameToArgs({ qscale: 2 })).toContain('-q:a');
+    expect(mp3ToArgs({ qscale: 2 })).toContain('-q:a');
   });
 
   it('includes compressionLevel and jointStereo', () => {
-    const args = libMp3LameToArgs({ compressionLevel: 5, jointStereo: true });
+    const args = mp3ToArgs({ compressionLevel: 5, jointStereo: true });
     expect(args).toContain('-compression_level');
     expect(args).toContain('-joint_stereo');
   });
 
   it('includes abr flag', () => {
-    expect(libMp3LameToArgs({ abr: true })).toContain('-abr');
+    expect(mp3ToArgs({ abr: true })).toContain('-abr');
   });
 
   it('includes sampleRate and channels', () => {
-    const args = libMp3LameToArgs({ sampleRate: 44100, channels: 2 });
+    const args = mp3ToArgs({ sampleRate: 44100, channels: 2 });
     expect(args).toContain('-ar');
     expect(args).toContain('-ac');
   });
@@ -500,7 +500,7 @@ describe('nvencToArgs — extended options', () => {
 
   it('includes qpI, bFrames, refs, gopSize', () => {
     const args = nvencToArgs({ qpI: 20, bFrames: 2, refs: 3, gopSize: 250 }, 'h264_nvenc');
-    expect(args).toContain('-qp:v');
+    expect(args).toContain('-qp_i');
     expect(args).toContain('-bf');
     expect(args).toContain('-refs');
     expect(args).toContain('-g');

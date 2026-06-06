@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import type { VersionInfo } from '../types/version.ts';
 
 /** Matches "ffmpeg version 7.1.1 ...", "ffmpeg version 8.1 ..." and "ffmpeg version N-116912-gabcdef ..." */
@@ -35,8 +35,11 @@ export function parseVersionOutput(output: string): VersionInfo {
     if (gitMatch !== null) {
       raw = gitMatch[1] ?? 'unknown';
       isGit = true;
-      // Git builds don't have a clean major/minor — leave at 0
-      // Caller should treat git builds as "latest known major"
+      // Git/nightly builds have the latest features — set to a high sentinel
+      // so that satisfiesVersion returns true for any reasonable minimum version.
+      major = 999;
+      minor = 999;
+      patch = 999;
     } else {
       raw = firstLine;
     }
@@ -72,6 +75,35 @@ export function probeVersion(binaryPath: string): VersionInfo {
     encoding: 'utf8',
   });
   return parseVersionOutput(output);
+}
+
+/**
+ * Async version of probeVersion — non-blocking, with timeout support.
+ */
+export function probeVersionAsync(binaryPath: string, timeoutMs = 10000): Promise<VersionInfo> {
+  return new Promise<VersionInfo>((resolve, reject) => {
+    const chunks: string[] = [];
+    let settled = false;
+    const child = spawn(binaryPath, ['-version'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    child.stdout?.on('data', (chunk: Buffer) => chunks.push(chunk.toString()));
+    const timer = setTimeout(() => {
+      if (!settled) { settled = true; child.kill(); reject(new Error(`probeVersionAsync timed out for "${binaryPath}" after ${timeoutMs}ms`)); }
+    }, timeoutMs);
+    child.on('error', (err: Error) => {
+      if (!settled) { settled = true; clearTimeout(timer); reject(new Error(`Failed to probe version for "${binaryPath}": ${err.message}`)); }
+    });
+    child.on('close', (code: number | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (code !== 0) {
+        reject(new Error(`probeVersionAsync failed for "${binaryPath}" with exit code ${code}`));
+        return;
+      }
+      resolve(parseVersionOutput(chunks.join('')));
+    });
+    if (typeof child.unref === 'function') child.unref();
+  });
 }
 
 /**

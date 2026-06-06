@@ -103,7 +103,7 @@ describe('FilterChain', () => {
     chain.add({ name: 'vflip', positional: [], named: {} });
     const nodes = chain.getNodes();
     expect(nodes).toHaveLength(1);
-    expect(nodes[0]?.name).toBe('vflip');
+    expect(nodes[0]?.node?.name).toBe('vflip');
   });
 
   it('supports method chaining', () => {

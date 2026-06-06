@@ -1,6 +1,7 @@
 import { FFmpegBuilder } from '../FFmpeg.ts';
 import { runFFmpeg } from '../process/spawn.ts';
 import { resolveBinary } from '../utils/binary.ts';
+import { escapeFilterValue } from '../utils/filter.ts';
 
 export interface BurnSubtitlesOptions {
   /** Input video */
@@ -44,8 +45,7 @@ export async function burnSubtitles(opts: BurnSubtitlesOptions): Promise<void> {
     binary = resolveBinary(),
   } = opts;
 
-  // Build subtitle filter with optional style overrides
-  const escapedPath = subtitleFile.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'");
+  const escapedPath = escapeFilterValue(subtitleFile);
   let filter = `subtitles='${escapedPath}'`;
 
   const styles: string[] = [];
@@ -96,7 +96,7 @@ export function buildBurnSubtitlesFilter(
   fontName?: string,
   primaryColor?: string,
 ): string {
-  const escapedPath = subtitleFile.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'");
+  const escapedPath = escapeFilterValue(subtitleFile);
   let filter = `subtitles='${escapedPath}'`;
   const styles: string[] = [];
   if (fontSize)     styles.push(`FontSize=${fontSize}`);

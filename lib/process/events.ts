@@ -21,6 +21,10 @@ export interface FFmpegEvents {
  * Typed EventEmitter for FFmpeg process events.
  */
 export class FFmpegEmitter extends EventEmitter {
+  constructor() {
+    super({ captureRejections: true });
+  }
+
   override on<K extends keyof FFmpegEvents>(
     event: K,
     listener: (...args: FFmpegEvents[K]) => void,

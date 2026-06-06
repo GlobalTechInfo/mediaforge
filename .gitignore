@@ -12,3 +12,4 @@ docs/
 *.mp4
 *.jpg
 *.png
+.ts2js/

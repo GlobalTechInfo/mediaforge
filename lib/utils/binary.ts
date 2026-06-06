@@ -1,5 +1,6 @@
 import process from 'node:process';
-import { spawnSync } from 'node:child_process';
+import path from 'node:path';
+import { spawnSync, spawn } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
 
 export class BinaryNotFoundError extends Error {
@@ -43,7 +44,7 @@ export function resolveProbe(explicit?: string): string {
 export function validateBinary(binaryPath: string): void {
   // For absolute/relative paths, check directly.
   // For plain names (no path separator), rely on exec to find them on PATH.
-  if (binaryPath.includes('/') || binaryPath.includes('\\')) {
+  if (path.isAbsolute(binaryPath) || binaryPath.includes('/') || binaryPath.includes('\\')) {
     try {
       accessSync(binaryPath, constants.F_OK);
     } catch {
@@ -79,4 +80,32 @@ export function isBinaryAvailable(binaryPath: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Async variant - returns true if the binary can be spawned successfully.
+ * Non-blocking and safe for server environments.
+ */
+export function isBinaryAvailableAsync(binaryPath: string, timeoutMs = 5000): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    let ac: AbortController | null;
+    try {
+      ac = new AbortController();
+    } catch {
+      ac = null;
+    }
+    const opts: Record<string, unknown> = { stdio: 'ignore' };
+    if (ac !== null) opts['signal'] = ac.signal;
+    const child = spawn(binaryPath, ['-version'], opts as import('node:child_process').SpawnOptions);
+    const timer = setTimeout(() => { if (ac !== null) ac.abort(); child.kill(); resolve(false); }, timeoutMs);
+    child.on('error', () => { clearTimeout(timer); resolve(false); });
+    child.on('close', (code) => { clearTimeout(timer); resolve(code === 0); });
+  });
+}
+
+/**
+ * Detect Deno runtime for platform-adaptive behavior.
+ */
+export function isDeno(): boolean {
+  return typeof (globalThis as Record<string, unknown>)['Deno'] !== 'undefined';
 }

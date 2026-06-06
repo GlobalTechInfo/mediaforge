@@ -10,9 +10,6 @@ export type LogLevel =
   | 'debug'
   | 'trace';
 
-/** Seeking mode used with -ss / -to / -t */
-export type SeekMode = 'input' | 'output';
-
 /** Global ffmpeg options applied before any -i */
 export interface GlobalOptions {
   /** Overwrite output without asking (-y) */

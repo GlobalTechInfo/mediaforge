@@ -1,5 +1,6 @@
 import { spawnFFmpeg, runFFmpeg } from '../process/spawn.ts';
 import { resolveBinary } from '../utils/binary.ts';
+import { escapeFilterValue } from '../utils/filter.ts';
 
 // ─── detectSilence ─────────────────────────────────────────────────────
 
@@ -54,24 +55,33 @@ export function detectSilence(opts: DetectSilenceOptions): Promise<SilenceSegmen
     const segments: SilenceSegment[] = [];
     let inSilence = false;
     let silenceStart = 0;
+    let settled = false;
 
-    proc.emitter.on('stderr', (line: string) => {
+    const cleanup = () => { if (!settled) { settled = true; try { proc.kill(); } catch { /* ok */ } } };
+
+    const onStderr = (line: string) => {
+      if (settled) return;
       const startMatch = line.match(/silence_start:\s*([\d.]+)/);
       const endMatch = line.match(/silence_end:\s*([\d.]+)\|duration:\s*([\d.]+)/);
 
-      if (startMatch && !inSilence) {
+      if (startMatch) {
+        const newStart = parseFloat(startMatch[1]!);
+        if (inSilence) {
+          segments.push({ start: silenceStart, end: newStart, duration: newStart - silenceStart });
+        }
         inSilence = true;
-        silenceStart = parseFloat(startMatch[1]!);
+        silenceStart = newStart;
       } else if (endMatch && inSilence) {
         inSilence = false;
         const end = parseFloat(endMatch[1]!);
         const dur = parseFloat(endMatch[2]!);
         segments.push({ start: silenceStart, end, duration: dur });
       }
-    });
+    };
 
-    proc.emitter.on('end', () => resolve(segments));
-    proc.emitter.on('error', reject);
+    proc.emitter.on('stderr', onStderr);
+    proc.emitter.on('end', () => { cleanup(); proc.emitter.off('stderr', onStderr); resolve(segments); });
+    proc.emitter.on('error', (err) => { cleanup(); proc.emitter.off('stderr', onStderr); reject(err); });
   });
 }
 
@@ -131,6 +141,9 @@ export function detectScenes(opts: DetectScenesOptions): Promise<SceneChange[]> 
     const proc = spawnFFmpeg({ binary, args });
     const scenes: SceneChange[] = [];
     let sceneNum = 1;
+    let settled = false;
+
+    const cleanup = () => { if (!settled) { settled = true; try { proc.kill(); } catch { /* ok */ } } };
 
     proc.emitter.on('stderr', (line: string) => {
       const tsMatch = line.match(/pts_time:([\d.]+)/);
@@ -140,8 +153,8 @@ export function detectScenes(opts: DetectScenesOptions): Promise<SceneChange[]> 
       }
     });
 
-    proc.emitter.on('end', () => resolve(scenes));
-    proc.emitter.on('error', reject);
+    proc.emitter.on('end', () => { cleanup(); resolve(scenes); });
+    proc.emitter.on('error', (err) => { cleanup(); reject(err); });
   });
 }
 
@@ -195,6 +208,9 @@ export function cropDetect(opts: CropDetectOptions): Promise<CropRegion | null> 
   return new Promise<CropRegion | null>((resolve, reject) => {
     const proc = spawnFFmpeg({ binary, args });
     let cropLine = '';
+    let settled = false;
+
+    const cleanup = () => { if (!settled) { settled = true; proc.kill(); } };
 
     proc.emitter.on('stderr', (line: string) => {
       if (line.includes('crop')) {
@@ -203,6 +219,7 @@ export function cropDetect(opts: CropDetectOptions): Promise<CropRegion | null> 
     });
 
     proc.emitter.on('end', () => {
+      cleanup();
       // Parse crop=width:height:x:y from output
       const match = cropLine.match(/crop=(\d+):(\d+):(\d+):(\d+)/);
       if (match) {
@@ -216,7 +233,7 @@ export function cropDetect(opts: CropDetectOptions): Promise<CropRegion | null> 
         resolve(null);
       }
     });
-    proc.emitter.on('error', reject);
+    proc.emitter.on('error', (err) => { cleanup(); reject(err); });
   });
 }
 
@@ -271,15 +288,14 @@ export async function burnTimecode(opts: BurnTimecodeOptions): Promise<void> {
 
   // Build drawtext expression for timecode
   const timeExpr = format || '%{pts_hms}';
-  const drawtext = `drawtext=text='${timeExpr}':fontsize=${fontsize}:fontcolor=${fontcolor}`;
+  const drawtext = `drawtext=text='${escapeFilterValue(timeExpr)}':fontsize=${fontsize}:fontcolor=${fontcolor}`;
 
   // Position
   let posX = x ?? '10';
   let posY = y ?? 'h-th-10';
   if (position === 'tl') { posX = '10'; posY = '10'; }
   if (position === 'tr') { posX = 'w-tw-10'; posY = '10'; }
-  if (position === 'br') { posX = '10'; posY = 'h-th-10'; }
-  if (position === 'tr') { posX = 'w-tw-10'; posY = 'h-th-10'; }
+  if (position === 'br') { posX = 'w-tw-10'; posY = 'h-th-10'; }
   if (position === 'center') { posX = '(w-tw)/2'; posY = '(h-th)/2'; }
 
   const filter = `${drawtext}:x=${posX}:y=${posY}${font ? `:fontfile='${font}'` : ''}`;
@@ -347,7 +363,6 @@ export async function parseLoudnorm(opts: ParseLoudnormOptions): Promise<EbuR128
       '-f', 'null', '-',
     ];
 
-    const { spawnFFmpeg } = await import('../process/spawn.ts');
     const proc = spawnFFmpeg({ binary, args });
 
     const chunks: string[] = [];
@@ -361,11 +376,21 @@ export async function parseLoudnorm(opts: ParseLoudnormOptions): Promise<EbuR128
     output = input; // Direct output string
   }
 
-  // Parse JSON from output
-  const iMatch = output.match(/"input_i":\s*([-\d.]+)/);
-  const lraMatch = output.match(/"input_lra":\s*([-\d.]+)/);
-  const tpMatch = output.match(/"input_tp":\s*([-\d.]+)/);
-  const threshMatch = output.match(/"input_thresh":\s*([-\d.]+)/);
+  // Parse JSON from output using brace-depth tracking for robustness
+  const parsedJson = extractJsonBlock(output);
+  if (parsedJson) {
+    return {
+      inputI: typeof parsedJson['input_i'] === 'number' ? parsedJson['input_i'] : parseFloat(String(parsedJson['input_i'] ?? 0)),
+      inputLra: typeof parsedJson['input_lra'] === 'number' ? parsedJson['input_lra'] : parseFloat(String(parsedJson['input_lra'] ?? 0)),
+      inputTp: typeof parsedJson['input_tp'] === 'number' ? parsedJson['input_tp'] : parseFloat(String(parsedJson['input_tp'] ?? 0)),
+      inputThresh: typeof parsedJson['input_thresh'] === 'number' ? parsedJson['input_thresh'] : parseFloat(String(parsedJson['input_thresh'] ?? 0)),
+    };
+  }
+
+  const iMatch = output.match(/"input_i"\s*:\s*([-\d.]+)/);
+  const lraMatch = output.match(/"input_lra"\s*:\s*([-\d.]+)/);
+  const tpMatch = output.match(/"input_tp"\s*:\s*([-\d.]+)/);
+  const threshMatch = output.match(/"input_thresh"\s*:\s*([-\d.]+)/);
 
   return {
     inputI: iMatch ? parseFloat(iMatch[1]!) : 0,
@@ -439,18 +464,15 @@ export async function normalizeAudio(opts: NormalizeOptions): Promise<NormalizeR
 
   let measured: NormalizeResult = { inputI: targetI, inputLra: targetLra, inputTp: targetTp, inputThresh: targetI - 10, targetOffset: 0 };
   const jsonStr = stderrLines.join('\n');
-  const match = jsonStr.match(/\{[\s\S]*?"input_i"[\s\S]*?\}/);
-  if (match) {
-    try {
-      const j = JSON.parse(match[0]);
-      measured = {
-        inputI: parseFloat(j.input_i),
-        inputLra: parseFloat(j.input_lra),
-        inputTp: parseFloat(j.input_tp),
-        inputThresh: parseFloat(j.input_thresh),
-        targetOffset: parseFloat(j.target_offset),
-      };
-    } catch { /* use defaults */ }
+  const parsedJson = extractJsonBlock(jsonStr);
+  if (parsedJson) {
+    measured = {
+      inputI: typeof parsedJson['input_i'] === 'number' ? parsedJson['input_i'] : parseFloat(String(parsedJson['input_i'] ?? targetI)),
+      inputLra: typeof parsedJson['input_lra'] === 'number' ? parsedJson['input_lra'] : parseFloat(String(parsedJson['input_lra'] ?? targetLra)),
+      inputTp: typeof parsedJson['input_tp'] === 'number' ? parsedJson['input_tp'] : parseFloat(String(parsedJson['input_tp'] ?? targetTp)),
+      inputThresh: typeof parsedJson['input_thresh'] === 'number' ? parsedJson['input_thresh'] : parseFloat(String(parsedJson['input_thresh'] ?? targetI - 10)),
+      targetOffset: typeof parsedJson['target_offset'] === 'number' ? parsedJson['target_offset'] : parseFloat(String(parsedJson['target_offset'] ?? '0')),
+    };
   }
 
   // Pass 2: apply
@@ -483,6 +505,28 @@ export async function adjustVolume(opts: AdjustVolumeOptions): Promise<void> {
     binary,
     args: ['-y', '-i', input, '-c:v', videoCodec, '-af', `volume=${volume}`, output],
   });
+}
+
+/**
+ * Extract a JSON object from a string by tracking brace depth.
+ * This is more robust than regex for parsing nested JSON in stderr output.
+ */
+function extractJsonBlock(text: string): Record<string, unknown> | null {
+  let start = text.indexOf('{');
+  while (start !== -1) {
+    for (let end = start + 1; end <= text.length; end++) {
+      if (text[end - 1] === '}') {
+        try {
+          const parsed = JSON.parse(text.slice(start, end));
+          if (typeof parsed === 'object' && parsed !== null) return parsed as Record<string, unknown>;
+        } catch {
+          continue;
+        }
+      }
+    }
+    start = text.indexOf('{', start + 1);
+  }
+  return null;
 }
 
 // ─── Arg builders ─────────────────────────────────────────────────────────────

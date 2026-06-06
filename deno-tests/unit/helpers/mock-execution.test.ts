@@ -95,7 +95,7 @@ describe('concat edge cases', () => {
 describe('waveform filter defaults', () => {
   it('buildWaveformFilter with all defaults', async () => {
     const { buildWaveformFilter } = await import('../../../lib/helpers/waveform.ts');
-    const f = buildWaveformFilter(1920, 240, '#00ff00', 'lin', 'line', 0);
+    const f = buildWaveformFilter(1920, 240, '#00ff00', 'lin', 0);
     assert.ok(f.includes('showwavespic'));
     assert.ok(f.includes('1920x240'));
   });

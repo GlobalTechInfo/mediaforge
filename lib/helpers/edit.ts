@@ -1,6 +1,13 @@
+import process from 'node:process';
+import * as os from 'node:os';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { FFmpegBuilder } from '../FFmpeg.ts';
 import { runFFmpeg } from '../process/spawn.ts';
 import { resolveBinary } from '../utils/binary.ts';
+import { resolveProbe } from '../utils/binary.ts';
+import { toSeconds } from '../utils/time.ts';
+import { probeAsync, getVideoStreams, getAudioStreams, getDefaultVideoStream } from '../probe/ffprobe.ts';
 
 // ─── trimVideo ────────────────────────────────────────────────────────────────
 
@@ -48,9 +55,8 @@ export async function trimVideo(opts: TrimOptions): Promise<void> {
 
   if (start !== undefined) builder.seekInput(start);
   if (end !== undefined && duration === undefined) {
-    // Calculate duration from start+end
-    const s = typeof start === 'number' ? start : 0;
-    const e = typeof end === 'number' ? end : parseFloat(String(end));
+    const s = start !== undefined ? (toSeconds(start) ?? 0) : 0;
+    const e = toSeconds(end) ?? 0;
     builder.duration(e - s);
   }
   if (duration !== undefined) builder.duration(duration);
@@ -104,11 +110,16 @@ export async function changeSpeed(opts: ChangeSpeedOptions): Promise<void> {
   const vFilter = `setpts=${(1 / speed).toFixed(6)}*PTS`;
   const atempoFilters = buildAtempoChain(speed);
 
+  const info = await probeAsync(input, { binary: resolveProbe() });
+  const hasVideo = getVideoStreams(info).length > 0;
+  const hasAudio = getAudioStreams(info).length > 0;
+
   const builder = new FFmpegBuilder(input).setBinary(binary)
     .overwrite()
-    .output(output)
-    .videoFilter(vFilter)
-    .audioFilter(atempoFilters)
+    .output(output);
+  if (hasVideo) builder.videoFilter(vFilter);
+  if (hasAudio) builder.audioFilter(atempoFilters);
+  builder
     .videoCodec(videoCodec)
     .audioCodec(audioCodec);
   if (outputArgs.length > 0) builder.addOutputOption(...outputArgs);
@@ -179,7 +190,7 @@ export async function extractAudio(opts: ExtractAudioOptions): Promise<void> {
 }
 
 function inferAudioCodec(outputPath: string): string {
-  const ext = outputPath.split('.').pop()?.toLowerCase();
+  const ext = outputPath.split('.').pop()?.toLowerCase() ?? '';
   switch (ext) {
     case 'mp3': return 'libmp3lame';
     case 'aac': case 'm4a': return 'aac';
@@ -275,8 +286,8 @@ export async function mixAudio(opts: MixAudioOptions): Promise<void> {
   if (weights !== undefined) amixFilter += `:weights=${weights.join(' ')}`;
   amixFilter += '[aout]';
 
-  const builder = new FFmpegBuilder(inputs[0]!).setBinary(binary).overwrite();
-  for (let i = 1; i < inputs.length; i++) builder.input(inputs[i]!);
+  const builder = new FFmpegBuilder(inputs[0] as string).setBinary(binary).overwrite();
+  for (let i = 1; i < inputs.length; i++) builder.input(inputs[i] as string);
 
   builder
     .complexFilter(amixFilter)
@@ -447,7 +458,7 @@ export async function stackVideos(opts: StackVideosOptions): Promise<void> {
     inputs, output,
     direction = 'hstack',
     videoCodec = 'libx264',
-    audioCodec = 'copy',
+    audioCodec = 'aac',
     outputArgs = [],
     binary = resolveBinary(),
   } = opts;
@@ -459,30 +470,37 @@ export async function stackVideos(opts: StackVideosOptions): Promise<void> {
   let filter: string;
   if (direction === 'xstack') {
     const cols = opts.columns ?? Math.ceil(Math.sqrt(inputs.length));
+    // Scale all inputs to a common size before xstack
+    const scaleRef = 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2';
+    const scaledInputs = inputs.map((_, i) => `[${i}:v]${scaleRef}[s${i}]`).join(';');
     // Build layout string: '0_0|w0_0|0_h0|w0_h0|...'
     const layout: string[] = [];
     for (let i = 0; i < inputs.length; i++) {
       const col = i % cols;
       const row = Math.floor(i / cols);
-      // x: sum of widths of preceding columns (use input index from row 0 — all inputs are same size)
       const x = col === 0 ? '0' : Array.from({ length: col }, (_, c) => `w${c}`).join('+');
-      // y: sum of heights of preceding rows (use first input of each row)
       const y = row === 0 ? '0' : Array.from({ length: row }, (_, r) => `h${r * cols}`).join('+');
       layout.push(`${x}_${y}`);
     }
-    filter = `${labeled}xstack=inputs=${inputs.length}:layout=${layout.join('|')}[v]`;
+    const xstackInputs = inputs.map((_, i) => `[s${i}]`).join('');
+    filter = `${scaledInputs};${xstackInputs}xstack=inputs=${inputs.length}:layout=${layout.join('|')}[v]`;
   } else {
     filter = `${labeled}${direction}=inputs=${inputs.length}[v]`;
   }
 
-  const builder = new FFmpegBuilder(inputs[0]!).setBinary(binary).overwrite();
-  for (let i = 1; i < inputs.length; i++) builder.input(inputs[i]!);
+  const builder = new FFmpegBuilder(inputs[0] as string).setBinary(binary).overwrite();
+  for (let i = 1; i < inputs.length; i++) builder.input(inputs[i] as string);
+
+  // Mix audio from all inputs with audio present
+  const audioInputs = inputs.map((_, i) => `[${i}:a?]`).join('');
+  const amixFilter = `${audioInputs}amix=inputs=${inputs.length}:duration=first[audio]`;
+  const fullFilter = `${filter};${amixFilter}`;
 
   builder
-    .complexFilter(filter)
+    .complexFilter(fullFilter)
     .output(output)
     .map('[v]')
-    .map('0:a?')
+    .map('[audio]')
     .videoCodec(videoCodec)
     .audioCodec(audioCodec);
 
@@ -514,7 +532,7 @@ export interface SpriteOptions {
  * // info.columns, info.rows, info.thumbWidth, info.thumbHeight
  */
 export async function generateSprite(opts: SpriteOptions): Promise<{
-  columns: number; rows: number; thumbWidth: number; thumbHeight: number;
+  columns: number; rows: number; thumbWidth: number; thumbHeight: number | null;
 }> {
   const {
     input, output,
@@ -525,7 +543,6 @@ export async function generateSprite(opts: SpriteOptions): Promise<{
   } = opts;
 
   const rows = Math.ceil(count / columns);
-  const _fps = `1/${Math.max(1, Math.floor(1))}`;
 
   // Scale each frame to thumbWidth, maintain aspect ratio, then tile
   const filter =
@@ -543,8 +560,18 @@ export async function generateSprite(opts: SpriteOptions): Promise<{
     ],
   });
 
-  // We don't know the actual height without probing — return -1 for height
-  return { columns, rows, thumbWidth, thumbHeight: -1 };
+  let thumbHeight: number | null = null;
+  try {
+    const info = await probeAsync(input, { binary: resolveProbe() });
+    const vs = getDefaultVideoStream(info);
+    if (vs !== null && vs.width !== undefined && vs.height !== undefined && vs.width > 0) {
+      thumbHeight = Math.round(thumbWidth / (vs.width / vs.height));
+    }
+  } catch {
+    // probe failed; thumbHeight remains null
+  }
+
+  return { columns, rows, thumbWidth, thumbHeight };
 }
 
 // ─── applyLUT ─────────────────────────────────────────────────────────────────
@@ -579,7 +606,9 @@ export async function applyLUT(opts: ApplyLutOptions): Promise<void> {
     binary = resolveBinary(),
   } = opts;
 
-  const escapedLut = lut.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'");
+  const isWindows = process.platform === 'win32';
+  const sanitised = isWindows ? lut : lut.replace(/\\/g, '/');
+  const escapedLut = sanitised.replace(/:/g, '\\:').replace(/'/g, "\\'");
   const filter = `lut3d='${escapedLut}':interp=${interp}`;
 
   const builder = new FFmpegBuilder(input).setBinary(binary)
@@ -630,32 +659,34 @@ export async function stabilizeVideo(opts: StabilizeOptions): Promise<void> {
     binary = resolveBinary(),
   } = opts;
 
-  const trfPath = `${output}.vidstab.trf`;
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mediaforge-vidstab-'));
+  const trfPath = path.join(tmpDir, 'transforms.trf');
 
-  // Pass 1: detect motion
-  const detectFilter = `vidstabdetect=stepsize=6:shakiness=8:accuracy=9:result='${trfPath}'`;
-  await runFFmpeg({
-    binary,
-    args: ['-y', '-i', input, '-vf', detectFilter, '-f', 'null', '-'],
-  });
+  try {
+    // Pass 1: detect motion
+    const detectFilter = `vidstabdetect=stepsize=6:shakiness=8:accuracy=9:result='${trfPath}'`;
+    await runFFmpeg({
+      binary,
+      args: ['-y', '-i', input, '-vf', detectFilter, '-f', 'null', '-'],
+    });
 
-  // Pass 2: apply transforms
-  const transformParts = [`vidstabtransform=input='${trfPath}':smoothing=${smoothing}`];
-  if (maxShift >= 0) transformParts.push(`maxshift=${maxShift}`);
-  if (maxAngle >= 0) transformParts.push(`maxangle=${maxAngle}`);
-  transformParts.push(`crop=${crop === 1 ? 'black' : 'keep'}`);
-  const transformFilter = transformParts.join(':');
+    // Pass 2: apply transforms
+    const transformParts = [`vidstabtransform=input='${trfPath}':smoothing=${smoothing}`];
+    if (maxShift >= 0) transformParts.push(`maxshift=${maxShift}`);
+    if (maxAngle >= 0) transformParts.push(`maxangle=${maxAngle}`);
+    transformParts.push(`crop=${crop === 1 ? 'black' : 'keep'}`);
+    const transformFilter = transformParts.join(':');
 
-  await new FFmpegBuilder(input).setBinary(binary)
-    .overwrite()
-    .output(output)
-    .videoFilter(transformFilter)
-    .videoCodec(videoCodec)
-    .audioCodec(audioCodec)
-    .run();
-
-  // Clean up temp file
-  try { const { unlinkSync } = await import('node:fs'); unlinkSync(trfPath); } catch { /* best effort */ }
+    await new FFmpegBuilder(input).setBinary(binary)
+      .overwrite()
+      .output(output)
+      .videoFilter(transformFilter)
+      .videoCodec(videoCodec)
+      .audioCodec(audioCodec)
+      .run();
+  } finally {
+    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 }
 
 // ─── streamToUrl ──────────────────────────────────────────────────────────────

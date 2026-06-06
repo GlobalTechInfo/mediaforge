@@ -3,6 +3,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { spawnFFmpeg } from '../process/spawn.ts';
 import { resolveBinary } from '../utils/binary.ts';
+import { probeAsync } from '../probe/ffprobe.ts';
+import { toSecondsStrict as toSeconds } from '../utils/time.ts';
 
 export interface ScreenshotOptions {
   /** Input file path */
@@ -26,14 +28,6 @@ export interface ScreenshotResult {
   files: string[];
 }
 
-function toSeconds(ts: string | number): number {
-  if (typeof ts === 'number') return ts;
-  const parts = ts.split(':').map(Number);
-  if (parts.length === 3) return parts[0]! * 3600 + parts[1]! * 60 + parts[2]!;
-  if (parts.length === 2) return parts[0]! * 60 + parts[1]!;
-  return Number(ts);
-}
-
 /**
  * Extract screenshots from a video file.
  *
@@ -48,50 +42,52 @@ function toSeconds(ts: string | number): number {
  *   timestamps: ['00:00:05', '00:00:30', 90],
  * });
  */
-export async function screenshots(opts: ScreenshotOptions): Promise<ScreenshotResult> {
+async function executeTimestamps(opts: ScreenshotOptions, timestamps: (string | number)[]): Promise<ScreenshotResult> {
   const {
     input,
     folder,
-    count,
-    timestamps,
     filename = 'screenshot_%04d.png',
     size,
     binary = resolveBinary(),
   } = opts;
 
+  const files: string[] = [];
+  for (let i = 0; i < timestamps.length; i++) {
+    const ts = timestamps[i]!;
+    const ext = path.extname(filename) || '.png';
+    const base = path.basename(filename, ext);
+    const outName = base.replace(/%\d*\.?\d*[diouxX]/g, String(i + 1).padStart(4, '0')) + ext;
+    const outPath = path.join(folder, outName);
+
+    const args: string[] = ['-y', '-ss', String(toSeconds(ts)), '-i', input, '-vframes', '1'];
+    if (size) args.push('-s', size);
+    args.push(outPath);
+
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawnFFmpeg({ binary, args });
+      proc.emitter.on('end', resolve);
+      proc.emitter.on('error', reject);
+    });
+
+    files.push(outPath);
+  }
+  return { files };
+}
+
+export async function screenshots(opts: ScreenshotOptions): Promise<ScreenshotResult> {
+  const { input, folder, count, timestamps } = opts;
+
   if (!fs.existsSync(folder)) fs.mkdirSync(folder, { recursive: true });
 
   if (timestamps && timestamps.length > 0) {
-    // Per-timestamp mode: one ffmpeg call per timestamp
-    const files: string[] = [];
-    for (let i = 0; i < timestamps.length; i++) {
-      const ts = timestamps[i]!;
-      const ext = path.extname(filename) || '.png';
-      const base = path.basename(filename, ext);
-      // Replace %04d style format with index
-      const outName = base.replace(/%0?\d*d/, String(i + 1).padStart(4, '0')) + ext;
-      const outPath = path.join(folder, outName);
-
-      const args: string[] = ['-y', '-ss', String(toSeconds(ts)), '-i', input, '-vframes', '1'];
-      if (size) args.push('-s', size);
-      args.push(outPath);
-
-      await new Promise<void>((resolve, reject) => {
-        const proc = spawnFFmpeg({ binary, args });
-        proc.emitter.on('end', resolve);
-        proc.emitter.on('error', reject);
-      });
-
-      files.push(outPath);
-    }
-    return { files };
+    return executeTimestamps(opts, timestamps);
   }
 
-  if (count && count > 0) {
-    // Count mode: use fps filter to extract N evenly-spaced frames
-    // Get duration first via ffprobe
-    const { probe } = await import('../probe/ffprobe.ts');
-    const info = probe(input);
+  if (count !== undefined) {
+    if (count <= 0) {
+      throw new Error(`Count must be a positive number, got ${count}`);
+    }
+    const info = await probeAsync(input);
     const duration = info.format?.duration ? parseFloat(info.format.duration) : null;
 
     if (duration === null || duration <= 0) {
@@ -100,13 +96,11 @@ export async function screenshots(opts: ScreenshotOptions): Promise<ScreenshotRe
 
     const interval = duration / (count + 1);
     const times = Array.from({ length: count }, (_, i) => interval * (i + 1));
-    const { count: _count, ...restOpts } = opts;
-    return screenshots({ ...restOpts, timestamps: times });
+    return executeTimestamps(opts, times);
   }
 
-  // Fallback: single screenshot at 0
-  const { count: _count2, ...restOpts2 } = opts;
-  return screenshots({ ...restOpts2, timestamps: [0] });
+  // Default: single screenshot at time 0
+  return executeTimestamps(opts, [0]);
 }
 
 /**
@@ -260,8 +254,10 @@ export async function extractFrames(opts: ExtractFramesOptions): Promise<Extract
 
   args.push('-i', input);
 
-  if (endTime !== undefined) {
-    args.push('-t', String(Number(endTime) - Number(startTime ?? 0)));
+  if (endTime !== undefined && startTime !== undefined) {
+    const end = typeof endTime === 'number' ? endTime : toSeconds(endTime);
+    const start = typeof startTime === 'number' ? startTime : toSeconds(startTime);
+    if (end > start) args.push('-t', String(end - start));
   }
 
   args.push('-vf', `fps=${fps}`);
@@ -298,7 +294,7 @@ export async function extractFrames(opts: ExtractFramesOptions): Promise<Extract
 
   return {
     files,
-    firstFrame: files[0]!,
+    firstFrame: files[0] as string,
     lastFrame: files[files.length - 1]!,
   };
 }
@@ -320,8 +316,10 @@ export function buildExtractFramesArgs(
 
   args.push('-i', input);
 
-  if (endTime !== undefined) {
-    args.push('-t', String(Number(endTime) - Number(startTime ?? 0)));
+  if (endTime !== undefined && startTime !== undefined) {
+    const end = typeof endTime === 'number' ? endTime : toSeconds(endTime);
+    const start = typeof startTime === 'number' ? startTime : toSeconds(startTime);
+    if (end > start) args.push('-t', String(end - start));
   }
 
   args.push('-vf', `fps=${fps}`);

@@ -1,7 +1,7 @@
 {
   "$schema": "https://typedoc.app/schema.json",
   "entryPointStrategy": "expand",
-  "entryPoints": ["src"],
+  "entryPoints": ["lib"],
   "out": "docs",
   "name": "mediaforge",
   "includeVersion": true,

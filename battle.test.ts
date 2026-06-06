@@ -12,6 +12,7 @@ import { execSync } from 'node:child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TMP = path.join(__dirname, 'tmp');
+fs.rmSync(TMP, { recursive: true, force: true });
 fs.mkdirSync(TMP, { recursive: true });
 
 // ─── helpers ───────────────────────────────────────────────────────────────
@@ -145,7 +146,7 @@ const {
   getMediaDuration, durationToMicroseconds, summarizeVideoStream, summarizeAudioStream,
   parseFrameRate, parseDuration, parseBitrate, isHdr, isInterlaced, getChapterList,
   findStreamByLanguage, formatDuration, renice, autoKillOnExit, killAllFFmpeg,
-} = await import('./dist/esm/index.js');
+} = await import('./lib/index.js');
 
 await run('all exports load without error', () => {
   if (typeof ffmpeg !== 'function') throw new Error('ffmpeg not a function');
@@ -935,13 +936,13 @@ await run('atempo() audio filter', () => {
 });
 
 await run('filterGraph() factory', async () => {
-  const { filterGraph: _fg } = await import('./dist/esm/index.js');
+  const { filterGraph: _fg } = await import('./lib/index.js');
   const fg = _fg();
   if (fg == null) throw new Error('null return');
 });
 
 await run('videoFilterChain', async () => {
-  const { videoFilterChain: _vfc } = await import('./dist/esm/index.js');
+  const { videoFilterChain: _vfc } = await import('./lib/index.js');
   const result = _vfc('scale=640:360');
   if (result == null) throw new Error('null return');
 });
@@ -1183,17 +1184,17 @@ await run('FFmpegBuilder.selectVideoCodec — falls back to libx264', async () =
 });
 
 await run('guardCodec is exported', async () => {
-  const { guardCodec: _gc } = await import('./dist/esm/index.js');
+  const { guardCodec: _gc } = await import('./lib/index.js');
   if (typeof _gc !== 'function') throw new Error('guardCodec not a function');
 });
 
 await run('guardFeatureVersion is exported', async () => {
-  const { guardFeatureVersion: _gfv, FEATURE_GATES: _fg } = await import('./dist/esm/index.js');
+  const { guardFeatureVersion: _gfv, FEATURE_GATES: _fg } = await import('./lib/index.js');
   if (typeof _gfv !== 'function') throw new Error('guardFeatureVersion not a function');
 });
 
 await run('selectBestCodec is exported', async () => {
-  const { selectBestCodec: _sbc } = await import('./dist/esm/index.js');
+  const { selectBestCodec: _sbc } = await import('./lib/index.js');
   if (typeof _sbc !== 'function') throw new Error('selectBestCodec not a function');
 });
 
@@ -1242,7 +1243,7 @@ section('22 — NEW VIDEO CODEC SERIALIZERS');
 let proResToArgs, dnxhdToArgs, mjpegToArgs, mpeg2ToArgs, mpeg4ToArgs, vp8ToArgs, theoraToArgs, ffv1ToArgs;
 
 await run('import new video codec helpers', async () => {
-  const mod = await import('./dist/esm/index.js');
+  const mod = await import('./lib/index.js');
   proResToArgs = mod.proResToArgs;
   dnxhdToArgs = mod.dnxhdToArgs;
   mjpegToArgs = mod.mjpegToArgs;
@@ -1304,7 +1305,7 @@ section('23 — NEW AUDIO CODEC SERIALIZERS');
 let alacToArgs, eac3ToArgs, truehdToArgs, vorbisToArgs, wavpackToArgs, pcmToArgs, mp2ToArgs;
 
 await run('import new audio codec helpers', async () => {
-  const mod = await import('./dist/esm/index.js');
+  const mod = await import('./lib/index.js');
   alacToArgs = mod.alacToArgs;
   eac3ToArgs = mod.eac3ToArgs;
   truehdToArgs = mod.truehdToArgs;
@@ -1349,7 +1350,7 @@ section('24 — NEW HARDWARE CODEC HELPERS (args inspection)');
 let mediacodecVideoToArgs, vulkanVideoToArgs;
 
 await run('import new hardware codec helpers', async () => {
-  const mod = await import('./dist/esm/index.js');
+  const mod = await import('./lib/index.js');
   mediacodecVideoToArgs = mod.mediacodecVideoToArgs;
   vulkanVideoToArgs = mod.vulkanVideoToArgs;
   if (!mediacodecVideoToArgs || !vulkanVideoToArgs) throw new Error('new hw helpers not exported');
@@ -1382,7 +1383,7 @@ let trimVideo, changeSpeed, buildAtempoChain2, extractAudio, replaceAudio2, mixA
 let loopVideo, deinterlace2, cropToRatio2, stackVideos2, generateSprite2, applyLUT2;
 
 await run('import edit helpers', async () => {
-  const mod = await import('./dist/esm/index.js');
+  const mod = await import('./lib/index.js');
   trimVideo = mod.trimVideo; changeSpeed = mod.changeSpeed; buildAtempoChain2 = mod.buildAtempoChain;
   extractAudio = mod.extractAudio; replaceAudio2 = mod.replaceAudio; mixAudio2 = mod.mixAudio;
   loopVideo = mod.loopVideo; deinterlace2 = mod.deinterlace; cropToRatio2 = mod.cropToRatio;
@@ -1439,7 +1440,7 @@ section('26 — NEW VIDEO FILTERS (v0.3.0)');
 let curvesF, levelsF, debandF, deshakeF, deflickerF, smartblurF, hstackF, vstackF;
 
 await run('import new video filters', async () => {
-  const mod = await import('./dist/esm/index.js');
+  const mod = await import('./lib/index.js');
   curvesF = mod.curves; levelsF = mod.levels; debandF = mod.deband;
   deshakeF = mod.deshake; deflickerF = mod.deflicker; smartblurF = mod.smartblur;
   hstackF = mod.hstack; vstackF = mod.vstack;
@@ -1454,7 +1455,7 @@ await run('levels standalone', () => {
   if (!s.includes('levels=')) throw new Error(`bad: ${s}`);
 });
 await run('deband/deshake/deflicker/smartblur chainable', async () => {
-  const { FilterChain } = await import('./dist/esm/types/filters.js');
+  const { FilterChain } = await import('./lib/types/filters.js');
   const fc = new FilterChain();
   const debandResult = debandF(fc);
   if (!debandResult.toString().includes('deband')) throw new Error(`deband: ${debandResult}`);
@@ -1474,7 +1475,7 @@ section('27 — NEW HARDWARE CODECS (v0.3.0)');
 
 let amfToArgs2, videotoolboxToArgs2;
 await run('import AMF + VideoToolbox', async () => {
-  const mod = await import('./dist/esm/index.js');
+  const mod = await import('./lib/index.js');
   amfToArgs2 = mod.amfToArgs; videotoolboxToArgs2 = mod.videotoolboxToArgs;
   if (!amfToArgs2 || !videotoolboxToArgs2) throw new Error('not exported');
 });
@@ -1551,11 +1552,11 @@ const {
   burnTimecode, detectSilence, detectScenes, cropDetect,
   extractFrames, stabilizeVideo, concatWithTransitions, addChapters,
   streamToUrl,
-} = await import('./dist/esm/index.js');
+} = await import('./lib/index.js');
 
-const { FilterChain: FC } = await import('./dist/esm/types/filters.js');
-const vf = await import('./dist/esm/filters/video/index.js');
-const af = await import('./dist/esm/filters/audio/index.js');
+const { FilterChain: FC } = await import('./lib/types/filters.js');
+const vf = await import('./lib/filters/video/index.js');
+const af = await import('./lib/filters/audio/index.js');
 
 const BIN = resolveBinary();
 const liveReg = getDefaultRegistry(BIN);
@@ -2034,8 +2035,9 @@ await run('filterGraph() factory → FilterGraph', () => {
   const fg = filterGraphFn();
   if (!fg) throw new Error('null');
 });
-await run('GraphNode: new GraphNode("scale",{w:640}) → non-null', () => {
-  const gn = new GraphNode('scale', { w: 640, h: 360 });
+await run('GraphNode: new GraphNode(graph, inputs) → non-null', () => {
+  const fg = filterGraphFn();
+  const gn = new GraphNode(fg, [new GraphStream('0:v', 'video')]);
   if (!gn) throw new Error('null');
 });
 await run('GraphStream: new GraphStream("label") → non-null', () => {
@@ -2844,7 +2846,7 @@ section('39 — PROBE HELPERS (remaining functions)');
 
 const {
   getSubtitleStreams, getStreamLanguage, parseLoudnorm,
-} = await import('./dist/esm/index.js');
+} = await import('./lib/index.js');
 
 await run('getSubtitleStreams(info) → array', () => {
   const info = probe(p('with_subs.mkv'));
@@ -2881,7 +2883,7 @@ const {
   cropDetect: crpDet, extractFrames: exFrm, stabilizeVideo: stabVid,
   concatWithTransitions: concatTrans, addChapters: addCh,
   streamToUrl: strToUrl,
-} = await import('./dist/esm/index.js');
+} = await import('./lib/index.js');
 
 await run('burnTimecode({input,output}) → output file created with timecode overlay', async () => {
   await burnTC({ input: p('short.mp4'), output: p('tc_default.mp4') });

@@ -205,30 +205,30 @@ describe('subtitle builders', () => {
 describe('waveform builders', () => {
 
   it('buildWaveformFilter includes dimensions', () => {
-    const f = buildWaveformFilter(1920, 240, '#00ff00', 'lin', 'line', 0);
+    const f = buildWaveformFilter(1920, 240, '#00ff00', 'lin', 0);
     assert.ok(f.includes('1920x240'));
     assert.ok(f.includes('showwavespic'));
   });
 
   it('buildWaveformFilter includes color', () => {
-    const f = buildWaveformFilter(1920, 240, '#ff0000', 'lin', 'line', 0);
+    const f = buildWaveformFilter(1920, 240, '#ff0000', 'lin', 0);
     assert.ok(f.includes('#ff0000'));
   });
 
   it('buildWaveformFilter includes scale', () => {
-    const f = buildWaveformFilter(1920, 240, '#00ff00', 'log', 'line', 0);
+    const f = buildWaveformFilter(1920, 240, '#00ff00', 'log', 0);
     assert.ok(f.includes('scale=log'));
   });
 
   it('buildWaveformFilter ignores draw mode (removed in FFmpeg 7.x+)', () => {
-    const f = buildWaveformFilter(1920, 240, '#00ff00', 'lin', 'p2p', 0);
+    const f = buildWaveformFilter(1920, 240, '#00ff00', 'lin', 0);
     // draw= was removed from showwavespic in FFmpeg 7.x — never emitted
     assert.ok(!f.includes('draw='), 'draw= must not appear in filter string');
     assert.ok(f.includes('showwavespic'), 'showwavespic must still be present');
   });
 
   it('buildWaveformFilter stream index non-zero', () => {
-    const f = buildWaveformFilter(1920, 240, '#00ff00', 'lin', 'line', 2);
+    const f = buildWaveformFilter(1920, 240, '#00ff00', 'lin', 2);
     assert.ok(f.includes('[0:a:2]'));
   });
 

@@ -128,14 +128,14 @@ describe('concat helpers', () => {
 describe('process helpers', () => {
 
   it('autoKillOnExit returns unregister function', () => {
-    const child = { pid: 99999, kill: () => {} } as any;
+    const child = { pid: 99999, kill: () => {}, once: () => {} } as any;
     const unreg = autoKillOnExit(child);
     assert.ok(typeof unreg === 'function');
     unreg();
   });
 
   it('calling unregister twice does not throw', () => {
-    const child = { pid: 99999, kill: () => {} } as any;
+    const child = { pid: 99999, kill: () => {}, once: () => {} } as any;
     const unreg = autoKillOnExit(child);
     unreg();
     assert.doesNotThrow(() => unreg());

@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { runFFmpeg } from '../process/spawn.ts';
 import { resolveBinary } from '../utils/binary.ts';
 
@@ -45,7 +46,8 @@ export async function toGif(opts: GifOptions): Promise<void> {
     binary = resolveBinary(),
   } = opts;
 
-  const palettePath = path.join(os.tmpdir(), `palette-${Date.now()}.png`);
+  const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'mediaforge-gif-'));
+  const palettePath = path.join(tmpDir, 'palette.png');
   const scale = `fps=${fps},scale=${width}:-1:flags=lanczos`;
 
   try {
@@ -72,7 +74,7 @@ export async function toGif(opts: GifOptions): Promise<void> {
     );
     await runFFmpeg({ binary, args: pass2Args });
   } finally {
-    if (fs.existsSync(palettePath)) fs.unlinkSync(palettePath);
+    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 }
 
@@ -96,8 +98,12 @@ export async function gifToMp4(opts: GifToMp4Options): Promise<void> {
 
   const args: string[] = ['-y', '-i', input];
 
-  const filters: string[] = ['scale=trunc(iw/2)*2:trunc(ih/2)*2'];
-  if (width) filters.unshift(`scale=${width}:-2:flags=lanczos`);
+  const filters: string[] = [];
+  if (width) {
+    filters.push(`scale=${width}:-2:flags=lanczos`);
+  } else {
+    filters.push('scale=trunc(iw/2)*2:trunc(ih/2)*2');
+  }
 
   args.push(
     '-vf', filters.join(','),
@@ -126,12 +132,13 @@ export function buildGifArgs(
   input: string, palettePath: string, output: string,
   fps: number, width: number, dither: string,
   startTime?: string | number, duration?: string | number,
+  colors: number = 256,
 ): { pass1: string[]; pass2: string[] } {
   const pass1: string[] = ['-y'];
   if (startTime !== undefined) pass1.push('-ss', String(startTime));
   if (duration !== undefined) pass1.push('-t', String(duration));
   const scale = `fps=${fps},scale=${width}:-1:flags=lanczos`;
-  pass1.push('-i', input, '-vf', `${scale},palettegen`, palettePath);
+  pass1.push('-i', input, '-vf', `${scale},palettegen=max_colors=${colors}`, palettePath);
 
   const pass2: string[] = ['-y'];
   if (startTime !== undefined) pass2.push('-ss', String(startTime));

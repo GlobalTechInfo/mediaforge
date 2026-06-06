@@ -22,9 +22,9 @@ export class CapabilityRegistry {
 
   get codecs(): Map<string, CodecInfo> {
     if (this._codecs === null) {
-      this._codecs = this._probeCodecs();
+      this._ensureInitialised();
     }
-    return this._codecs;
+    return this._codecs!;
   }
 
   hasCodec(name: string): boolean {
@@ -32,11 +32,13 @@ export class CapabilityRegistry {
     return this.codecs.has(name) || this.encoders.has(name);
   }
 
+  private _ensureInitialised(): void {
+    if (this._codecs === null) this._codecs = this._probeCodecs();
+  }
+
   get encoders(): Set<string> {
-    // Encoder names are populated when codecs are probed (from "(encoders: ...)" parentheticals).
-    // Trigger codec probe if not yet done — this also fills _encoders.
     if (this._encoders === null) {
-      void this.codecs; // triggers _probeCodecs which sets this._encoders
+      this._ensureInitialised();
     }
     return this._encoders ?? new Set<string>();
   }
@@ -96,7 +98,7 @@ export class CapabilityRegistry {
       stdio: ['ignore', 'pipe', 'pipe'],
       encoding: 'utf8',
     });
-    if (result.error) throw result.error;
+    if (result.error) throw new Error(result.error.message);
     // ffmpeg exits non-zero for informational flags like -codecs; use stdout regardless
     return result.stdout ?? '';
   }
@@ -127,11 +129,36 @@ export class CapabilityRegistry {
       }
 
       // Format: " DEV.LS codec_name   description"
-      const match = /^ ([D.])([E.])([VASDT])([I.])([L.])([S.])\s+(\S+)\s+(.*)$/.exec(line);
-      if (match === null) continue;
-
-      const [, d, e, t, i, l, s, name, description] = match;
+      const primaryMatch = /^ ([D.])([E.])([VASDT])([I.])([L.])([S.])\s+(\S+)\s+(.*)$/.exec(line);
+      let d: string, e: string, t: string, i: string, l: string, s: string;
+      let name: string;
+      let description: string;
+      if (primaryMatch !== null) {
+        const raw = [...primaryMatch];
+        d = (raw[1] ?? '.') as string;
+        e = (raw[2] ?? '.') as string;
+        t = (raw[3] ?? '.') as string;
+        i = (raw[4] ?? '.') as string;
+        l = (raw[5] ?? '.') as string;
+        s = (raw[6] ?? '.') as string;
+        name = (raw[7] ?? '') as string;
+        description = (raw[8] ?? '') as string;
+      } else {
+        // Fallback: parse flags as raw string for FFmpeg 8.x with variable spacing
+        const fallbackMatch = /^ (.{6})\s+(\S+)\s+(.*)$/.exec(line);
+        if (fallbackMatch === null) continue;
+        const rawFlags = fallbackMatch[1]!;
+        name = fallbackMatch[2]!;
+        description = fallbackMatch[3]!;
+        d = rawFlags[0] ?? '.';
+        e = rawFlags[1] ?? '.';
+        t = rawFlags[2] ?? '.';
+        i = rawFlags[3] ?? '.';
+        l = rawFlags[4] ?? '.';
+        s = rawFlags[5] ?? '.';
+      }
       if (name === undefined || description === undefined) continue;
+
 
       const typeChar = t ?? '.';
       const typeMap: Record<string, CodecInfo['flags']['type']> = {
@@ -179,16 +206,15 @@ export class CapabilityRegistry {
     }
 
     for (const line of output.split('\n')) {
-      // v7: "T.S name  desc", v8: "TS name  desc" (2-char flags)
-      const match = /^ [T.][S.][C.]?\s+(\S+)\s+(.+)$/.exec(line);
+      const match = /^ ([T.])([S.])([C.]?)\s+(\S+)\s+(.+)$/.exec(line);
       if (match === null) continue;
-      const [, name, description] = match;
+      const [, timeline, sliceBased, , name, description] = match;
       if (name === undefined || description === undefined) continue;
       map.set(name, {
         name,
         description: description.trim(),
-        timeline: false,
-        sliceBased: false,
+        timeline: timeline === 'T',
+        sliceBased: sliceBased === 'S',
       });
     }
     return map;
@@ -227,8 +253,14 @@ export class CapabilityRegistry {
         });
       }
     }
+    // Validate that at least some codecs were found
+    if (map.size === 0 && output.trim().length > 0) {
+      // deno-lint-ignore no-explicit-any
+      (globalThis as any).console?.warn?.('Failed to parse ffmpeg -formats output. Regex may need updating for newer FFmpeg versions.');
+    }
     return map;
   }
+
 
   /**
    * Parse `ffmpeg -hwaccels` output.

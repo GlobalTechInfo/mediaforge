@@ -42,10 +42,12 @@ export function toBitrate(value: string | number): string {
 /**
  * Build the global option args that appear before any -i.
  */
+import type { LogLevel } from '../types/options.ts';
+
 export function buildGlobalArgs(opts: {
   overwrite?: boolean;
   noOverwrite?: boolean;
-  logLevel?: string;
+  logLevel?: LogLevel;
   progress?: boolean;
   statsInterval?: number;
   extraArgs?: string[];
@@ -93,6 +95,8 @@ export function buildInputArgs(opts: {
 
 /**
  * Build the args for output options (before the output path).
+ * NOTE: This is a standalone utility that may not match FFmpegBuilder.buildArgs()
+ * exactly. For builder integration, use the builder's own buildArgs() method.
  */
 export function buildOutputArgs(opts: {
   seekOutput?: string | number;

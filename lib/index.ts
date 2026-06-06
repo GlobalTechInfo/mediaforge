@@ -20,7 +20,7 @@
 
 // Primary entry point
 export { ffmpeg, FFmpegBuilder, VersionError } from './FFmpeg.ts';
-export type { FFmpegBuilderDryOptions } from './FFmpeg.ts';
+
 
 // Process management
 export { spawnFFmpeg, runFFmpeg, FFmpegSpawnError } from './process/spawn.ts';
@@ -28,9 +28,11 @@ export { FFmpegEmitter } from './process/events.ts';
 export { ProgressParser, parseAllProgress } from './process/progress.ts';
 
 // Utilities
-export { resolveBinary, resolveProbe, validateBinary, isBinaryAvailable, BinaryNotFoundError, BinaryNotExecutableError } from './utils/binary.ts';
+export { resolveBinary, resolveProbe, validateBinary, isBinaryAvailable, isBinaryAvailableAsync, isDeno, BinaryNotFoundError, BinaryNotExecutableError } from './utils/binary.ts';
 export { probeVersion, parseVersionOutput, satisfiesVersion, formatVersion } from './utils/version.ts';
 export { flattenArgs, buildGlobalArgs, buildInputArgs, buildOutputArgs, toDuration, toBitrate } from './utils/args.ts';
+export { escapeFilterValue } from './utils/filter.ts';
+export { captureStderr } from './utils/stderr.ts';
 
 // Phase 2 — Codec & Format Layer
 export { CapabilityRegistry, getDefaultRegistry } from './codecs/registry.ts';
@@ -68,7 +70,7 @@ export type { GuardResult, CodecCandidate } from './compat/guards.ts';
 
 export type { VersionInfo, VersionRequirement } from './types/version.ts';
 export type { ProgressInfo } from './types/progress.ts';
-export type { GlobalOptions, InputOptions, OutputOptions, LogLevel, SeekMode } from './types/options.ts';
+export type { GlobalOptions, InputOptions, OutputOptions, LogLevel } from './types/options.ts';
 export type { FFmpegEvents } from './process/events.ts';
 export type { SpawnOptions, FFmpegProcess } from './process/spawn.ts';
 export type { PixelFormat, SampleFormat, ChannelLayout, CodecFlags, CodecInfo, FilterInfo, FormatInfo } from './types/codecs.ts';

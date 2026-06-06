@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 import process from 'node:process';
 /**
  * mediaforge CLI
@@ -15,8 +16,8 @@ import process from 'node:process';
 
 import { parseVersionOutput } from '../utils/version.ts';
 import { CapabilityRegistry } from '../codecs/registry.ts';
-import { resolveBinary } from '../utils/binary.ts';
-import { FFmpegBuilder } from '../FFmpeg.ts';
+import { resolveBinary, resolveProbe } from '../utils/binary.ts';
+
 import { execFileSync } from 'node:child_process';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -201,8 +202,14 @@ function cmdCaps(binary: string, flags: {
 
 // ─── Subcommand: probe ────────────────────────────────────────────────────────
 
-function cmdProbe(binary: string, file: string): void {
-  const probeBin = process.env['FFPROBE_PATH'] ?? binary.replace('ffmpeg', 'ffprobe');
+function cmdProbe(binary: string, file: string, ffprobeOverride?: string): void {
+  let probeBin = ffprobeOverride;
+  if (probeBin === undefined) {
+    probeBin = resolveProbe();
+    if (!probeBin) {
+      probeBin = binary.replace('ffmpeg', 'ffprobe');
+    }
+  }
   let output: string;
   try {
     output = execFileSync(probeBin, [
@@ -217,6 +224,7 @@ function cmdProbe(binary: string, file: string): void {
     });
   } catch (err) {
     console.error(`Error probing "${file}": ${(err as Error).message}`);
+    console.error(`Hint: Use --ffprobe <path> to specify the ffprobe binary if the auto-detected path "${probeBin}" is incorrect.`);
     process.exit(1);
   }
   console.log(output);
@@ -241,17 +249,21 @@ async function main(): Promise<void> {
   while (i < argv.length) {
     const arg = argv[i];
     if (arg === '--ffmpeg') {
-      binary = argv[++i] ?? binary;
+      if (++i >= argv.length) {
+        console.error('Error: --ffmpeg requires a value');
+        process.exit(1);
+      }
+      binary = argv[i]!;
     } else if (arg === '--ffprobe') {
-      ffprobeOverride = argv[++i];
+      if (++i >= argv.length) {
+        console.error('Error: --ffprobe requires a value');
+        process.exit(1);
+      }
+      ffprobeOverride = argv[i]!;
     } else {
       rest.push(arg ?? '');
     }
     i++;
-  }
-
-  if (ffprobeOverride !== undefined) {
-    process.env['FFPROBE_PATH'] = ffprobeOverride;
   }
 
   const subcommand = rest[0];
@@ -268,7 +280,7 @@ async function main(): Promise<void> {
       console.error('Error: probe requires a file argument. Usage: mediaforge probe <file>');
       process.exit(1);
     }
-    cmdProbe(binary, file);
+    cmdProbe(binary, file, ffprobeOverride);
     return;
   }
 
@@ -287,14 +299,6 @@ async function main(): Promise<void> {
     return;
   }
 
-  // ── FFmpeg passthrough mode ────────────────────────────────────────────────
-  // Parse rest[] into an FFmpegBuilder and run it.
-  // This lets users drive the full API from the CLI with typed validation.
-
-  const builder = new FFmpegBuilder();
-  builder.setBinary(binary);
-  void builder; // builder available for future typed subcommand parsing
-
   const ffmpegArgs: string[] = [];
 
   // Inject -y by default unless -n is present
@@ -307,9 +311,17 @@ async function main(): Promise<void> {
   while (k < rest.length) {
     const a = rest[k] ?? '';
     if (a === '--hwaccel') {
-      ffmpegArgs.push('-hwaccel', rest[++k] ?? '');
+      if (k + 1 >= rest.length) {
+        console.error('Error: --hwaccel requires a value');
+        process.exit(1);
+      }
+      ffmpegArgs.push('-hwaccel', rest[++k]!);
     } else if (a === '--hwaccel-device') {
-      ffmpegArgs.push('-hwaccel_device', rest[++k] ?? '');
+      if (k + 1 >= rest.length) {
+        console.error('Error: --hwaccel-device requires a value');
+        process.exit(1);
+      }
+      ffmpegArgs.push('-hwaccel_device', rest[++k]!);
     } else if (a === '--progress') {
       ffmpegArgs.push('-progress', 'pipe:2');
     } else {

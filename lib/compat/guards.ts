@@ -17,7 +17,7 @@ export interface GuardResult {
   /** Human-readable reason if not available */
   reason?: string;
   /** Suggested alternative if one exists */
-  alternative?: string;
+  alternative?: string | undefined;
 }
 
 // ─── Version-based guards ─────────────────────────────────────────────────────
@@ -76,7 +76,7 @@ export function guardCodec(
     return {
       available: false,
       reason: `Codec "${codec}" is not available in the installed ffmpeg binary`,
-      ...(alt !== undefined ? { alternative: alt } : {}),
+      alternative: alt,
     };
   }
   const canDo = direction === 'encode'
@@ -103,7 +103,7 @@ export function guardFilter(
     return {
       available: false,
       reason: `Filter "${filterName}" is not available in the installed ffmpeg binary`,
-      ...(alt !== undefined ? { alternative: alt } : {}),
+      alternative: alt,
     };
   }
   return { available: true };
@@ -121,7 +121,7 @@ export function guardHwaccel(
     return {
       available: false,
       reason: `Hardware accelerator "${accelName}" is not available in the installed ffmpeg binary`,
-      ...(alt !== undefined ? { alternative: alt } : {}),
+      alternative: alt,
     };
   }
   return { available: true };
@@ -274,22 +274,11 @@ export function selectBestCodec(
   registry: CapabilityRegistry,
   candidates: CodecCandidate[],
 ): string | null {
-  let lastAvailableSoftwareFallback: string | null = null;
   for (const candidate of candidates) {
     const result = guardCodecFull(version, registry, candidate.codec, 'encode', candidate.featureKey);
-    if (result.available) {
-      // Track the last available candidate without a feature gate as a fallback
-      // in case subsequent hardware-accelerated candidates all fail.
-      if (candidate.featureKey === undefined) {
-        lastAvailableSoftwareFallback = candidate.codec;
-      }
-      // Prefer the first passing candidate (hardware-first priority)
-      return candidate.codec;
-    }
+    if (result.available) return candidate.codec;
   }
-  // No candidate passed — return the last software codec that was actually
-  // available in the registry (null if everything in the list is fake/missing).
-  return lastAvailableSoftwareFallback;
+  return null;
 }
 
 /**

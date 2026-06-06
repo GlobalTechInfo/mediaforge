@@ -68,7 +68,8 @@ export function nvencToArgs(opts: NvencOptions, codec = 'h264_nvenc'): string[] 
   if (opts.maxrate !== undefined) args.push('-maxrate', `${opts.maxrate}k`);
   if (opts.bufsize !== undefined) args.push('-bufsize', `${opts.bufsize}k`);
   if (opts.cq !== undefined) args.push('-cq', String(opts.cq));
-  if (opts.qpI !== undefined) args.push('-qp:v', String(opts.qpI));
+  if (opts.qpI !== undefined) args.push('-qp_i', String(opts.qpI));
+  if (opts.qpB !== undefined) args.push('-qp_b', String(opts.qpB));
   if (opts.bFrames !== undefined) args.push('-bf', String(opts.bFrames));
   if (opts.refs !== undefined) args.push('-refs', String(opts.refs));
   if (opts.gopSize !== undefined) args.push('-g', String(opts.gopSize));
@@ -168,7 +169,7 @@ export function mediacodecToArgs(opts: MediaCodecOptions, codec = 'h264_mediacod
   const args: string[] = ['-c:v', codec];
   if (opts.ndkCodec === true) args.push('-ndk_codec', '1');
   if (opts.bitrate !== undefined) args.push('-b:v', `${opts.bitrate}k`);
-  if (opts.iFrameInterval !== undefined) args.push('-i_qfactor', String(opts.iFrameInterval));
+  if (opts.iFrameInterval !== undefined) args.push('-g', String(opts.iFrameInterval));
   if (opts.level !== undefined) args.push('-level', String(opts.level));
   return args;
 }
@@ -361,8 +362,8 @@ export function videotoolboxToArgs(opts: VideoToolboxOptions, codec: VideoToolbo
   const args: string[] = ['-c:v', codec];
   if (opts.bitrate !== undefined) args.push('-b:v', `${opts.bitrate}k`);
   if (opts.quality !== undefined) args.push('-q:v', String(Math.round(opts.quality * 100)));
-  if (opts.allowFrameReordering !== undefined) args.push('-allow_sw', opts.allowFrameReordering ? '0' : '1');
-  if (opts.maxKeyFrameInterval !== undefined) args.push('-max_ref_frames', String(opts.maxKeyFrameInterval));
+  if (opts.allowFrameReordering !== undefined) args.push('-realtime', opts.allowFrameReordering ? '1' : '0');
+  if (opts.maxKeyFrameInterval !== undefined) args.push('-g', String(opts.maxKeyFrameInterval));
   if (opts.profile !== undefined) args.push('-profile:v', opts.profile);
   return args;
 }

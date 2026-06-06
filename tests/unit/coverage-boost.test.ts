@@ -1175,7 +1175,7 @@ describe('autoKillOnExit + renice + killAllFFmpeg coverage', () => {
 
   it('autoKillOnExit: returns unregister function and adds listeners', () => {
     const killed: string[] = [];
-    const fake: any = { pid: 99999, kill: (sig: string) => killed.push(sig) };
+    const fake: any = { pid: 99999, kill: (sig: string) => killed.push(sig), once: () => {} };
     const exitBefore = process.listenerCount('exit');
     const unregister = autoKillOnExit(fake, 'SIGTERM');
     assert.strictEqual(typeof unregister, 'function');

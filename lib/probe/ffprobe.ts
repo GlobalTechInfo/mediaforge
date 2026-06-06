@@ -45,7 +45,8 @@ export function probe(filePath: string, opts: ProbeOptions = {}): ProbeResult {
       timeout: opts.timeout ?? 30000,
     });
   } catch (err: unknown) {
-    const msg = (err as Error).message ?? String(err);
+    let msg = (err as Error).message ?? String(err);
+    msg = msg.replace(/\/[^\s:]+/g, '<path>');
     throw new ProbeError(filePath, msg);
   }
 
@@ -62,27 +63,51 @@ export function probeAsync(
   return new Promise((resolve, reject) => {
     const binary = resolveProbe(opts.binary);
     const args = buildProbeArgs(filePath, opts);
+    const timeout = opts.timeout ?? 30000;
     const child = spawn(binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
     let stdout = '';
     let stderr = '';
+    let settled = false;
+
+    const done = (err?: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.kill();
+      if (err !== undefined) {
+        reject(err instanceof ProbeError ? err : new ProbeError(filePath, String(err)));
+      }
+    };
+
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      done(new ProbeError(filePath, `ffprobe timed out after ${timeout}ms`));
+    }, timeout);
+    if (typeof timer.unref === 'function') timer.unref();
 
     child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
-    child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+      if (stderr.length > 10000) stderr = stderr.slice(-5000);
+    });
 
     child.on('close', (code) => {
+      if (settled) return;
+      if (timedOut) return;
       if (code !== 0) {
-        reject(new ProbeError(filePath, stderr.slice(-1000)));
+        done(new ProbeError(filePath, stderr.slice(-1000)));
         return;
       }
       try {
         resolve(parseProbeOutput(stdout, filePath));
       } catch (e) {
-        reject(e);
+        done(e);
       }
     });
 
-    child.on('error', (err) => reject(new ProbeError(filePath, err.message)));
+    child.on('error', (err) => done(new ProbeError(filePath, err.message)));
   });
 }
 
@@ -101,6 +126,28 @@ function buildProbeArgs(filePath: string, opts: ProbeOptions): string[] {
   ];
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isStreamArray(value: unknown): value is ProbeStream[] {
+  if (!Array.isArray(value)) return false;
+  return value.every(
+    (item) => isRecord(item) && typeof item['index'] === 'number',
+  );
+}
+
+function isProbeFormat(value: unknown): value is ProbeFormat {
+  return isRecord(value);
+}
+
+function isChapterArray(value: unknown): value is ProbeChapter[] {
+  if (!Array.isArray(value)) return false;
+  return value.every(
+    (item) => isRecord(item) && (item['id'] === undefined || typeof item['id'] === 'number'),
+  );
+}
+
 function parseProbeOutput(output: string, filePath: string): ProbeResult {
   let parsed: unknown;
   try {
@@ -109,18 +156,36 @@ function parseProbeOutput(output: string, filePath: string): ProbeResult {
     throw new ProbeError(filePath, `Failed to parse ffprobe JSON output: ${output.slice(0, 200)}`);
   }
 
-  if (parsed === null || typeof parsed !== 'object') {
+  if (!isRecord(parsed)) {
     throw new ProbeError(filePath, 'ffprobe returned non-object JSON');
   }
 
-  const obj = parsed as Record<string, unknown>;
+  const streams = parsed['streams'];
+  const format = parsed['format'];
+  const chapters = parsed['chapters'];
+
+  if (!isStreamArray(streams)) {
+    throw new ProbeError(filePath, 'ffprobe returned invalid streams array');
+  }
+
   const result: ProbeResult = {
-    streams: (obj['streams'] as ProbeStream[] | undefined) ?? [],
+    streams,
   };
-  const fmt = obj['format'] as ProbeFormat | undefined;
-  if (fmt !== undefined) result.format = fmt;
-  const chs = obj['chapters'] as ProbeChapter[] | undefined;
-  if (chs !== undefined) result.chapters = chs;
+
+  if (format !== undefined) {
+    if (!isProbeFormat(format)) {
+      throw new ProbeError(filePath, 'ffprobe returned invalid format object');
+    }
+    result.format = format;
+  }
+
+  if (chapters !== undefined) {
+    if (!isChapterArray(chapters)) {
+      throw new ProbeError(filePath, 'ffprobe returned invalid chapters array');
+    }
+    result.chapters = chapters;
+  }
+
   return result;
 }
 

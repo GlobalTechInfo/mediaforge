@@ -171,7 +171,6 @@ export function negateMap(spec: StreamSpecifier | string): ['-map', string] {
  * @example setStreamMetadata(0, 'a', 0, 'language', 'eng') → ['-metadata:s:a:0', 'language=eng']
  */
 export function setStreamMetadata(
-  _fileIndex: number,
   type: MediaTypeChar,
   streamIndex: number,
   key: string,

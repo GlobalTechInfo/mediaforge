@@ -1,12 +1,15 @@
 import { spawn } from 'node:child_process';
-import { createWriteStream, unlinkSync } from 'node:fs';
+import { createWriteStream, mkdtempSync, rmSync } from 'node:fs';
 import type { Readable, Writable } from 'node:stream';
 import { PassThrough } from 'node:stream';
 import { FFmpegEmitter } from '../process/events.ts';
 import { ProgressParser } from '../process/progress.ts';
 import { FFmpegSpawnError } from '../process/spawn.ts';
 import { resolveBinary } from '../utils/binary.ts';
-import { createInterface } from 'node:readline';
+import { trackChild } from './process.ts';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { captureStderr } from '../utils/stderr.ts';
 
 export interface PipeOptions {
   /** Input readable stream (replaces file input) */
@@ -72,7 +75,7 @@ export function pipeThrough(opts: PipeOptions): PipeProcess {
   // Only injected when the user has not already supplied -movflags themselves.
   const pipedContainerNeedsFragmentation =
     outputFormat === 'mp4' || outputFormat === 'mov';
-  const userAlreadySetMovflags = outputArgs.includes('-movflags');
+  const userAlreadySetMovflags = outputArgs.some((a, i) => a === '-movflags' && i + 1 < outputArgs.length);
   if (pipedContainerNeedsFragmentation && !userAlreadySetMovflags) {
     outputArgs = [...outputArgs, '-movflags', 'frag_keyframe+empty_moov+default_base_moof'];
   }
@@ -100,8 +103,8 @@ export function pipeThrough(opts: PipeOptions): PipeProcess {
   args.push('pipe:1');
 
   const child = spawn(binary, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+  trackChild(child);
   const emitter = new FFmpegEmitter();
-  const stderrLines: string[] = [];
 
   const progressParser = parseProgress
     ? new ProgressParser(info => emitter.emit('progress', info))
@@ -109,17 +112,17 @@ export function pipeThrough(opts: PipeOptions): PipeProcess {
 
   emitter.emit('start', args);
 
+  let stderrLines: string[] = [];
+  let closeStderr: (() => void) | undefined;
   if (child.stderr) {
-    const rl = createInterface({ input: child.stderr, crlfDelay: Infinity });
-    rl.on('line', line => {
-      stderrLines.push(line);
-      emitter.emit('stderr', line);
-      progressParser?.push(line);
-    });
+    const captured = captureStderr(child.stderr, emitter, progressParser);
+    stderrLines = captured.stderrLines;
+    closeStderr = captured.close;
   }
 
   child.on('close', (code, signal) => {
-    if (code === 0 || (code === null && signal === null)) {
+    closeStderr?.();
+    if (code === 0) {
       emitter.emit('end');
     } else {
       emitter.emit('error', new FFmpegSpawnError(code, signal, stderrLines.join('\n')));
@@ -184,6 +187,7 @@ export function streamOutput(opts: StreamOutputOptions): Readable {
   args.push('-f', outputFormat, 'pipe:1');
 
   const child = spawn(binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  trackChild(child);
   const pass = new PassThrough();
 
   child.stdout?.pipe(pass);
@@ -232,31 +236,38 @@ export function streamToFile(opts: StreamToFileOptions): Promise<void> {
 
   // Non-seekable pipes fail for MP4/MOV because the moov atom is at the file end.
   // Buffer the entire stream to a temp file first, then run FFmpeg on that file.
-  const needsTempFile = inputFormat === 'mp4' || inputFormat === 'mov' || inputFormat === 'm4v';
+  // When inputFormat is undefined, we cannot know; always buffer to be safe.
+  const needsTempFile = inputFormat === undefined || inputFormat === 'mp4' || inputFormat === 'mov' || inputFormat === 'm4v';
 
   if (needsTempFile) {
-    const tmpPath = `${output}.tmp_${Date.now()}.${inputFormat ?? 'tmp'}`;
+    const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'mediaforge-stream-'));
+    const tmpPath = path.join(tmpDir, `input.${inputFormat ?? 'tmp'}`);
     return new Promise((resolve, reject) => {
-      const ws = createWriteStream(tmpPath);
+      const ws = createWriteStream(tmpPath, { flags: 'wx' });
       stream.pipe(ws);
-      stream.on('error', reject);
-      ws.on('error', reject);
+      stream.on('error', (err) => { try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* cleanup */ } reject(err); });
+      ws.on('error', (err) => { try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* cleanup */ } reject(err); });
       ws.on('close', () => {
         const args: string[] = ['-y'];
         if (inputFormat) args.push('-f', inputFormat);
         args.push('-i', tmpPath, ...outputArgs, output);
         const child = spawn(binary, args, { stdio: ['ignore', 'ignore', 'pipe'] });
-        const stderrLines: string[] = [];
+        trackChild(child);
+        const emitter = new FFmpegEmitter();
+        let stderrLines: string[] = [];
+        let closeStderr: (() => void) | undefined;
         if (child.stderr) {
-          const rl = createInterface({ input: child.stderr, crlfDelay: Infinity });
-          rl.on('line', (line: string) => stderrLines.push(line));
+          const captured = captureStderr(child.stderr, emitter);
+          stderrLines = captured.stderrLines;
+          closeStderr = captured.close;
         }
         child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
-          try { unlinkSync(tmpPath); } catch { /**/ }
-          if (code === 0 || (code === null && signal === null)) resolve();
+          closeStderr?.();
+          try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /**/ }
+          if (code === 0) resolve();
           else reject(new FFmpegSpawnError(code, signal, stderrLines.join('\n')));
         });
-        child.on('error', (err: Error) => { try { unlinkSync(tmpPath); } catch { /**/ } reject(err); });
+        child.on('error', (err: Error) => { try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /**/ } reject(err); });
       });
     });
   }
@@ -267,16 +278,20 @@ export function streamToFile(opts: StreamToFileOptions): Promise<void> {
     if (inputFormat) args.push('-f', inputFormat);
     args.push('-i', 'pipe:0', ...outputArgs, output);
     const child = spawn(binary, args, { stdio: ['pipe', 'ignore', 'pipe'] });
-    const _emitter = new FFmpegEmitter();
-    const stderrLines: string[] = [];
+    trackChild(child);
+    const emitter = new FFmpegEmitter();
+    let stderrLines: string[] = [];
+    let closeStderr: (() => void) | undefined;
     if (child.stderr) {
-      const rl = createInterface({ input: child.stderr, crlfDelay: Infinity });
-      rl.on('line', (line: string) => stderrLines.push(line));
+      const captured = captureStderr(child.stderr, emitter);
+      stderrLines = captured.stderrLines;
+      closeStderr = captured.close;
     }
     stream.pipe(child.stdin!);
     stream.on('error', (err: Error) => child.stdin?.destroy(err));
     child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
-      if (code === 0 || (code === null && signal === null)) resolve();
+      closeStderr?.();
+      if (code === 0) resolve();
       else reject(new FFmpegSpawnError(code, signal, stderrLines.join('\n')));
     });
     child.on('error', reject);
@@ -307,7 +322,7 @@ export function buildPipeThroughArgs(
   // Auto-inject fragmented-MP4 flags when piping to MP4/MOV (no seek available)
   const pipedContainerNeedsFragmentation =
     outputFormat === 'mp4' || outputFormat === 'mov';
-  const userAlreadySetMovflags = outputArgs.includes('-movflags');
+  const userAlreadySetMovflags = outputArgs.some((a, i) => a === '-movflags' && i + 1 < outputArgs.length);
   const effectiveOutputArgs =
     pipedContainerNeedsFragmentation && !userAlreadySetMovflags
       ? [...outputArgs, '-movflags', 'frag_keyframe+empty_moov+default_base_moof']

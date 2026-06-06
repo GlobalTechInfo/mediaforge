@@ -19,14 +19,9 @@ import {
 /** A stream label reference in the graph, e.g. "[0:v]" or "[scaled]" */
 export type StreamRef = string;
 
-let _labelCounter = 0;
-function autoLabel(prefix = 'p'): string {
-  return `${prefix}${_labelCounter++}`;
-}
-
-/** Reset the auto-label counter (useful in tests) */
+/** @deprecated Counter is now per-instance. This is a no-op. Will be removed in next major version. */
 export function resetLabelCounter(): void {
-  _labelCounter = 0;
+  // Deprecated — no-op
 }
 
 /**
@@ -56,6 +51,7 @@ export class GraphNode {
   constructor(graph: FilterGraph, inputs: GraphStream[]) {
     this.graph = graph;
     this.inputs = inputs;
+    graph._registerNode(this);
   }
 
   /** Apply a raw filter string */
@@ -147,15 +143,15 @@ export class GraphNode {
    * Returns GraphStream[] that can be used as inputs to subsequent filters.
    */
   out(...labels: string[]): GraphStream[] {
-    if (labels.length === 0) labels = [autoLabel()];
+    if (labels.length === 0) labels = [this.graph._autoLabel()];
     const outputs = labels.map((l) => new GraphStream(l, 'unknown'));
     this._commit(outputs);
     return outputs;
   }
 
   /** Shorthand: single output with auto-generated label */
-  outAuto(type: 'video' | 'audio' = 'unknown' as 'video'): GraphStream {
-    const label = autoLabel(type === 'video' ? 'v' : 'a');
+  outAuto(type: 'video' | 'audio' = 'video'): GraphStream {
+    const label = this.graph._autoLabel(type === 'video' ? 'v' : 'a');
     const stream = new GraphStream(label, type);
     this._commit([stream]);
     return stream;
@@ -163,7 +159,7 @@ export class GraphNode {
 
   /** Register this as a final output (no output label needed — used with -map) */
   mapOut(label?: string): GraphStream {
-    const lbl = label ?? autoLabel('out');
+    const lbl = label ?? this.graph._autoLabel('out');
     const stream = new GraphStream(lbl, 'unknown');
     this._commit([stream]);
     return stream;
@@ -175,6 +171,7 @@ export class GraphNode {
     const inputLabels = this.inputs.map((s) => `[${s.label}]`).join('');
     const outputLabels = outputs.map((s) => `[${s.label}]`).join('');
     this.graph._addLink(`${inputLabels}${filterStr}${outputLabels}`);
+    this.graph._unregisterNode(this);
   }
 }
 
@@ -243,6 +240,11 @@ export class MultiInputNode {
  */
 export class FilterGraph {
   private readonly _links: string[] = [];
+  private labelCounter = 0;
+  /** @internal */
+  _autoLabel(prefix = 'p'): string {
+    return `${prefix}${this.labelCounter++}`;
+  }
 
   /** @internal Called by GraphNode._commit() */
   _addLink(link: string): void {
@@ -277,9 +279,30 @@ export class FilterGraph {
 
   /**
    * Serialize the complete filter_complex string (semicolon-separated links).
+   * Throws if any nodes have not been committed.
    */
   toString(): string {
+    if (this._activeNodes.length > 0) {
+      throw new Error(
+        `FilterGraph has ${this._activeNodes.length} uncommitted node(s). ` +
+        'Call .out() or .mapOut() on all nodes before serialization.',
+      );
+    }
     return this._links.join(';');
+  }
+
+  /** @internal Track active (uncommitted) nodes */
+  private _activeNodes: GraphNode[] = [];
+
+  /** @internal */
+  _registerNode(node: GraphNode): void {
+    this._activeNodes.push(node);
+  }
+
+  /** @internal */
+  _unregisterNode(node: GraphNode): void {
+    const idx = this._activeNodes.indexOf(node);
+    if (idx !== -1) this._activeNodes.splice(idx, 1);
   }
 
   /** How many links are in the graph */

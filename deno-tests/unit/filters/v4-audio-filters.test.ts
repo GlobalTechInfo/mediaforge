@@ -27,7 +27,7 @@ describe('headphones filter', () => {
 
   it('serializes normalize', () => {
     const f = headphones({ hrir: '/a.so', normalize: true });
-    expect(f).toContain('normalize=true');
+    expect(f).toContain('normalize=1');
   });
 
   it('serializes htf', () => {

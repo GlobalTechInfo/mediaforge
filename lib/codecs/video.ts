@@ -173,8 +173,8 @@ export interface Vp9Options {
  * Serialize X264Options to ffmpeg argument array.
  * Emits codec args that follow -c:v libx264.
  */
-export function x264ToArgs(opts: X264Options): string[] {
-  const args: string[] = ['-c:v', 'libx264'];
+export function x264ToArgs(opts: X264Options & { noCodecArg?: boolean }): string[] {
+  const args: string[] = opts.noCodecArg ? [] : ['-c:v', 'libx264'];
   if (opts.preset !== undefined) args.push('-preset', opts.preset);
   if (opts.tune !== undefined) args.push('-tune', opts.tune);
   if (opts.profile !== undefined) args.push('-profile:v', opts.profile);
@@ -208,8 +208,8 @@ export function x264ToArgs(opts: X264Options): string[] {
 /**
  * Serialize X265Options to ffmpeg argument array.
  */
-export function x265ToArgs(opts: X265Options): string[] {
-  const args: string[] = ['-c:v', 'libx265'];
+export function x265ToArgs(opts: X265Options & { noCodecArg?: boolean }): string[] {
+  const args: string[] = opts.noCodecArg ? [] : ['-c:v', 'libx265'];
   if (opts.preset !== undefined) args.push('-preset', opts.preset);
   if (opts.tune !== undefined) args.push('-tune', opts.tune);
   if (opts.profile !== undefined) args.push('-profile:v', opts.profile);
@@ -230,8 +230,8 @@ export function x265ToArgs(opts: X265Options): string[] {
 /**
  * Serialize SvtAv1Options to ffmpeg argument array.
  */
-export function svtav1ToArgs(opts: SvtAv1Options): string[] {
-  const args: string[] = ['-c:v', 'libsvtav1'];
+export function svtav1ToArgs(opts: SvtAv1Options & { noCodecArg?: boolean }): string[] {
+  const args: string[] = opts.noCodecArg ? [] : ['-c:v', 'libsvtav1'];
   if (opts.preset !== undefined) args.push('-preset', String(opts.preset));
   if (opts.crf !== undefined) args.push('-crf', String(opts.crf));
   if (opts.qp !== undefined) args.push('-qp', String(opts.qp));
@@ -248,8 +248,8 @@ export function svtav1ToArgs(opts: SvtAv1Options): string[] {
 /**
  * Serialize Vp9Options to ffmpeg argument array.
  */
-export function vp9ToArgs(opts: Vp9Options): string[] {
-  const args: string[] = ['-c:v', 'libvpx-vp9'];
+export function vp9ToArgs(opts: Vp9Options & { noCodecArg?: boolean }): string[] {
+  const args: string[] = opts.noCodecArg ? [] : ['-c:v', 'libvpx-vp9'];
   if (opts.bitrate !== undefined) args.push('-b:v', `${opts.bitrate}k`);
   if (opts.minrate !== undefined) args.push('-minrate', `${opts.minrate}k`);
   if (opts.maxrate !== undefined) args.push('-maxrate', `${opts.maxrate}k`);
@@ -270,9 +270,6 @@ export function vp9ToArgs(opts: Vp9Options): string[] {
   if (opts.deadline !== undefined) args.push('-deadline', opts.deadline);
   return args;
 }
-
-// Alias for camelCase import compatibility
-export { svtav1ToArgs as svtAv1ToArgs };
 
 // ─── Additional Video Codec Helpers ──────────────────────────────────────────
 

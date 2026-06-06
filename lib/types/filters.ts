@@ -15,6 +15,8 @@ export interface FilterNode {
   named: Record<string, string | number | boolean>;
 }
 
+type FilterNodeOrRaw = { kind: 'node'; node: FilterNode } | { kind: 'raw'; raw: string };
+
 /**
  * Serialize a FilterNode to its ffmpeg string representation.
  * e.g. { name:'scale', positional:[1280,720], named:{flags:'lanczos'} }
@@ -31,7 +33,11 @@ export function serializeNode(node: FilterNode): string {
   // Named args join as key=value pairs, then ':' between them
   const named = Object.entries(node.named);
   if (named.length > 0) {
-    parts.push(...named.map(([k, v]) => `${k}=${String(v)}`));
+    const toFfmpegValue = (v: string | number | boolean): string => {
+      if (typeof v === 'boolean') return v ? '1' : '0';
+      return String(v);
+    };
+    parts.push(...named.map(([k, v]) => `${k}=${toFfmpegValue(v)}`));
   }
 
   if (parts.length === 0) return node.name;
@@ -43,25 +49,24 @@ export function serializeNode(node: FilterNode): string {
  * Filters are applied in order, output of each feeds the next.
  */
 export class FilterChain {
-  private readonly nodes: FilterNode[] = [];
+  private readonly nodes: FilterNodeOrRaw[] = [];
 
   /** Add a raw FilterNode */
   add(node: FilterNode): this {
-    this.nodes.push(node);
+    this.nodes.push({ kind: 'node', node });
     return this;
   }
 
   /** Add a raw filter string (escape hatch) */
   raw(filterStr: string): this {
-    // Stored as a special raw node
-    this.nodes.push({ name: '__raw__', positional: [filterStr], named: {} });
+    this.nodes.push({ kind: 'raw', raw: filterStr });
     return this;
   }
 
   /** Serialize the full chain to a comma-separated string */
   toString(): string {
     return this.nodes
-      .map((n) => (n.name === '__raw__' ? String(n.positional[0] ?? '') : serializeNode(n)))
+      .map((n) => (n.kind === 'raw' ? n.raw : serializeNode(n.node)))
       .join(',');
   }
 
@@ -71,7 +76,7 @@ export class FilterChain {
   }
 
   /** Get all nodes (for testing/inspection) */
-  getNodes(): readonly FilterNode[] {
+  getNodes(): readonly FilterNodeOrRaw[] {
     return this.nodes;
   }
 }

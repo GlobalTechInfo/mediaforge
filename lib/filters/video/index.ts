@@ -270,7 +270,7 @@ export function drawbox(opts: DrawboxOptions): string;
 export function drawbox(chainOrOpts: FilterChain | DrawboxOptions, opts?: DrawboxOptions): FilterChain | string {
   const isStandalone = !(chainOrOpts instanceof FilterChain);
   const o = isStandalone ? (chainOrOpts as DrawboxOptions) : opts!;
-  const named: Record<string, string | number> = {};
+  const named: Record<string, string | number | boolean> = {};
   if (o.width !== undefined) named['w'] = o.width;
   if (o.height !== undefined) named['h'] = o.height;
   if (o.x !== undefined) named['x'] = o.x;
@@ -306,7 +306,7 @@ export function drawgrid(opts: DrawgridOptions): string;
 export function drawgrid(chainOrOpts: FilterChain | DrawgridOptions, opts?: DrawgridOptions): FilterChain | string {
   const isStandalone = !(chainOrOpts instanceof FilterChain);
   const o = isStandalone ? (chainOrOpts as DrawgridOptions) : opts!;
-  const named: Record<string, string | number> = {};
+  const named: Record<string, string | number | boolean> = {};
   if (o.width !== undefined) named['w'] = o.width;
   if (o.height !== undefined) named['h'] = o.height;
   if (o.x !== undefined) named['x'] = o.x;
@@ -606,9 +606,15 @@ export interface ColorbalanceOptions {
 
 export function colorbalance(chain: FilterChain, opts: ColorbalanceOptions): FilterChain {
   const named: Record<string, string | number | boolean> = {};
-  for (const [k, v] of Object.entries(opts)) {
-    if (v !== undefined) named[k] = v;
-  }
+  if (opts.rs !== undefined) named['rs'] = opts.rs;
+  if (opts.gs !== undefined) named['gs'] = opts.gs;
+  if (opts.bs !== undefined) named['bs'] = opts.bs;
+  if (opts.rm !== undefined) named['rm'] = opts.rm;
+  if (opts.gm !== undefined) named['gm'] = opts.gm;
+  if (opts.bm !== undefined) named['bm'] = opts.bm;
+  if (opts.rh !== undefined) named['rh'] = opts.rh;
+  if (opts.gh !== undefined) named['gh'] = opts.gh;
+  if (opts.bh !== undefined) named['bh'] = opts.bh;
   return chain.add({ name: 'colorbalance', positional: [], named });
 }
 
@@ -931,23 +937,25 @@ export interface LevelsOptions {
   channel?: 'r' | 'g' | 'b' | 'a' | 'all';
 }
 
-/** Adjust levels (input/output range + gamma) */
-export function levels(opts?: LevelsOptions): string;
-export function levels(chain: FilterChain, opts?: LevelsOptions): FilterChain;
-export function levels(chainOrOpts?: FilterChain | LevelsOptions, opts?: LevelsOptions): FilterChain | string {
+/** Adjust levels (input/output range + gamma) using FFmpeg's `colorlevels` filter */
+export function colorlevels(opts?: LevelsOptions): string;
+export function colorlevels(chain: FilterChain, opts?: LevelsOptions): FilterChain;
+export function colorlevels(chainOrOpts?: FilterChain | LevelsOptions, opts?: LevelsOptions): FilterChain | string {
   const isStandalone = !(chainOrOpts instanceof FilterChain);
   const o = (isStandalone ? chainOrOpts : opts) ?? {};
-  // Implement using the 'levels' filter (FFmpeg 7+)
   const named: Record<string, string | number | boolean> = {};
-  if ((o as LevelsOptions).inBlack !== undefined) named['irange_min'] = (o as LevelsOptions).inBlack! / 255;
-  if ((o as LevelsOptions).inWhite !== undefined) named['irange_max'] = (o as LevelsOptions).inWhite! / 255;
-  if ((o as LevelsOptions).outBlack !== undefined) named['orange_min'] = (o as LevelsOptions).outBlack! / 255;
-  if ((o as LevelsOptions).outWhite !== undefined) named['orange_max'] = (o as LevelsOptions).outWhite! / 255;
+  if ((o as LevelsOptions).inBlack !== undefined) named['rimin'] = (o as LevelsOptions).inBlack! / 255;
+  if ((o as LevelsOptions).inWhite !== undefined) named['rimax'] = (o as LevelsOptions).inWhite! / 255;
+  if ((o as LevelsOptions).outBlack !== undefined) named['romin'] = (o as LevelsOptions).outBlack! / 255;
+  if ((o as LevelsOptions).outWhite !== undefined) named['romax'] = (o as LevelsOptions).outWhite! / 255;
   if ((o as LevelsOptions).gamma !== undefined) named['gamma'] = (o as LevelsOptions).gamma!;
-  const node = { name: 'levels', positional: [] as (string | number)[], named };
+  const node = { name: 'colorlevels', positional: [] as (string | number)[], named };
   if (isStandalone) return serializeNode(node);
   return (chainOrOpts as FilterChain).add(node);
 }
+
+/** @deprecated Use `colorlevels` instead. The FFmpeg filter is named `colorlevels`, not `levels`. */
+export const levels = colorlevels;
 
 // ─── Visual Correction ────────────────────────────────────────────────────────
 

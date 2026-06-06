@@ -15,17 +15,19 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
     "types": [
       "node"
     ]
   },
   "include": [
-    "src/**/*"
+    "lib/**/*"
   ],
   "exclude": [
     "node_modules",
     "dist",
     "tests",
-    "lib"
+    "deno-tests"
   ]
 }

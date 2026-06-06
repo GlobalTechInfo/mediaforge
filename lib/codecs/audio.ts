@@ -195,14 +195,12 @@ export function flacToArgs(opts: FlacOptions): string[] {
   return args;
 }
 
-// ─── Aliases for test-facing names ────────────────────────────────────────────
-export { opusToArgs as libOpusToArgs };
-export { mp3ToArgs  as libMp3LameToArgs };
-
 // ─── ac3ToArgs ────────────────────────────────────────────────────────────────
 export function ac3ToArgs(opts: Ac3Options): string[] {
   const args: string[] = ['-c:a', 'ac3'];
   if (opts.bitrate !== undefined) args.push('-b:a', `${opts.bitrate}k`);
+  if (opts.sampleRate !== undefined) args.push('-ar', String(opts.sampleRate));
+  if (opts.channels !== undefined) args.push('-ac', String(opts.channels));
   if (opts.dialogueLevel !== undefined) args.push('-dialnorm', String(opts.dialogueLevel));
   if (opts.centerMixLevel !== undefined) args.push('-center_mixlev', String(opts.centerMixLevel));
   if (opts.surroundMixLevel !== undefined) args.push('-surround_mixlev', String(opts.surroundMixLevel));
@@ -295,10 +293,15 @@ export interface VorbisOptions {
 
 export function vorbisToArgs(opts: VorbisOptions = {}): string[] {
   const args: string[] = ['-c:a', 'libvorbis'];
-  if (opts.qscale !== undefined) args.push('-q:a', String(opts.qscale));
-  else if (opts.bitrate !== undefined) args.push('-b:a', `${opts.bitrate}k`);
-  if (opts.minrate !== undefined) args.push('-minrate', `${opts.minrate}k`);
-  if (opts.maxrate !== undefined) args.push('-maxrate', `${opts.maxrate}k`);
+  if (opts.qscale !== undefined) {
+    args.push('-q:a', String(opts.qscale));
+    if (opts.minrate !== undefined || opts.maxrate !== undefined) {
+      // @ts-ignore - Deno check doesn't include console in its lib
+      console.warn('vorbisToArgs: minrate/maxrate ignored in qscale mode');
+    }
+  } else if (opts.bitrate !== undefined) args.push('-b:a', `${opts.bitrate}k`);
+  if (opts.minrate !== undefined && opts.qscale === undefined) args.push('-minrate', `${opts.minrate}k`);
+  if (opts.maxrate !== undefined && opts.qscale === undefined) args.push('-maxrate', `${opts.maxrate}k`);
   return args;
 }
 
@@ -317,9 +320,7 @@ export interface WavpackOptions {
 
 export function wavpackToArgs(opts: WavpackOptions = {}): string[] {
   const args: string[] = ['-c:a', 'wavpack'];
-  if (opts.quality === 'lossless' || opts.quality === undefined) {
-    // default is lossless
-  } else if (typeof opts.quality === 'number') {
+  if (typeof opts.quality === 'number') {
     args.push('-compression_level', String(opts.quality));
   }
   if (opts.bitrate !== undefined) args.push('-b:a', `${opts.bitrate}k`);

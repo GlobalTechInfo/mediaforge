@@ -1,14 +1,25 @@
 {
-  "extends": "./tsconfig.json",
   "compilerOptions": {
+    "target": "ES2022",
     "module": "CommonJS",
     "moduleResolution": "Node",
-    "rootDir": "./src",
+    "lib": ["ES2022"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "types": ["node"],
+    "rootDir": "./.ts2js",
     "outDir": "./dist/cjs",
     "declaration": false,
     "declarationMap": false,
     "sourceMap": false
   },
-  "include": ["src/**/*"],
+  "include": [".ts2js/**/*"],
   "exclude": ["node_modules", "dist", "tests"]
 }

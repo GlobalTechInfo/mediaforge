@@ -1948,8 +1948,9 @@ await run('filterGraph() factory → FilterGraph', () => {
   const fg = filterGraph();
   if (!fg) throw new Error('null');
 });
-await run('GraphNode: new GraphNode("scale",{w:640}) → non-null', () => {
-  const gn = new GraphNode('scale', { w: 640, h: 360 });
+await run('GraphNode: new GraphNode(graph, inputs) → non-null', () => {
+  const fg = filterGraph();
+  const gn = new GraphNode(fg, [new GraphStream('0:v', 'video')]);
   if (!gn) throw new Error('null');
 });
 await run('GraphStream: new GraphStream("label") → non-null', () => {
@@ -2248,8 +2249,8 @@ await run('negateMap({fileIndex:0,type:"a"}) → ["-map","-0:a"]', () => {
   const r = negateMap({ fileIndex: 0, type: 'a' });
   if (!r[1].startsWith('-')) throw new Error(`got: ${JSON.stringify(r)}`);
 });
-await run('setStreamMetadata(0,"a",0,"language","eng") → array with metadata:s:a:0', () => {
-  const r = setStreamMetadata(0, 'a', 0, 'language', 'eng');
+await run('setStreamMetadata("a",0,"language","eng") → array with metadata:s:a:0', () => {
+  const r = setStreamMetadata('a', 0, 'language', 'eng');
   if (!Array.isArray(r) || !r.join(' ').includes('a')) throw new Error(`got: ${JSON.stringify(r)}`);
 });
 await run('setDisposition(0,"a",0,["default"]) → array with -disposition', () => {

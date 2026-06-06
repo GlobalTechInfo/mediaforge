@@ -1,5 +1,9 @@
 import { runFFmpeg } from '../process/spawn.ts';
 import { resolveBinary } from '../utils/binary.ts';
+import { writeFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { probeAsync } from '../probe/ffprobe.ts';
 
 export interface WriteMetadataOptions {
   /** Input file */
@@ -80,8 +84,7 @@ export async function addChapters(opts: AddChaptersOptions): Promise<void> {
   if (chapterDefs.length > 0) {
     const lastIdx = chapters.length - 1;
     if (chapters[lastIdx]!.endSec === Number.MAX_SAFE_INTEGER) {
-      const { probe } = await import('../probe/ffprobe.ts');
-      const info = probe(input);
+      const info = await probeAsync(input);
       const duration = parseFloat(info.format?.duration ?? '0');
       chapters[lastIdx]!.endSec = duration;
     }
@@ -113,12 +116,11 @@ export async function writeMetadata(opts: WriteMetadataOptions): Promise<void> {
   const args: string[] = ['-y', '-i', input];
 
   // Add chapter file if chapters provided
+  let chapterTmpDir: string | null = null;
   let chapterInput: string | null = null;
   if (chapters.length > 0) {
-    const { writeFileSync } = await import('node:fs');
-    const { join } = await import('node:path');
-    const { tmpdir } = await import('node:os');
-    chapterInput = join(tmpdir(), `chapters-${Date.now()}.txt`);
+    chapterTmpDir = mkdtempSync(join(tmpdir(), 'mediaforge-chapters-'));
+    chapterInput = join(chapterTmpDir, 'chapters.txt');
     let chapterContent = ';FFMETADATA1\n';
     for (const ch of chapters) {
       chapterContent += `\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=${Math.round(ch.startSec * 1000)}\nEND=${Math.round(ch.endSec * 1000)}\ntitle=${ch.title}\n`;
@@ -146,9 +148,8 @@ export async function writeMetadata(opts: WriteMetadataOptions): Promise<void> {
   try {
     await runFFmpeg({ binary, args });
   } finally {
-    if (chapterInput) {
-      const { unlinkSync, existsSync } = await import('node:fs');
-      if (existsSync(chapterInput)) unlinkSync(chapterInput);
+    if (chapterTmpDir) {
+      if (existsSync(chapterTmpDir)) rmSync(chapterTmpDir, { recursive: true, force: true });
     }
   }
 }

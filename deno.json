@@ -7,11 +7,14 @@
   "exports": {
     ".": "./lib/index.ts"
   },
+  "compilerOptions": {
+    "lib": ["ES2022", "deno.window"]
+  },
   "tasks": {
     "test": "deno test --allow-env --allow-run --allow-write --allow-read --allow-sys=uid --ignore=deno-tests/battle.test.ts deno-tests/",
     "test:unit": "deno test --allow-env --allow-run --allow-write --allow-read --allow-sys=uid deno-tests/unit/",
     "test:integration": "deno test --allow-env --allow-run --allow-write --allow-read --allow-sys=uid deno-tests/integration/",
-    "check": "deno check lib/index.ts",
+    "check": "deno check lib/",
     "battle": "deno run --allow-env --allow-run --allow-write --allow-read --allow-sys=uid deno-tests/battle.test.ts"
   },
   "test": {
@@ -25,7 +28,6 @@
       "deno-tests/"
     ],
     "exclude": [
-      "src/",
       "tests/",
       "dist/",
       "node_modules/"
@@ -38,7 +40,6 @@
     "exclude": [
       "deno-tests",
       "tests/",
-      "src/",
       "eslint.config.mjs",
       "node_modules/",
       "dist/"
@@ -52,7 +53,6 @@
       "deno.json"
     ],
     "exclude": [
-      "src/**",
       "deno-tests",
       "tests/**",
       "dist/**",
