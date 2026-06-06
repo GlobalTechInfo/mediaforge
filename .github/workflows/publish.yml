@@ -23,8 +23,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.event.workflow_run.head_branch || github.ref }}
+
+      - name: Checkout release tag
+        if: github.event_name == 'workflow_run'
+        run: git fetch origin "${{ github.event.workflow_run.head_branch }}" && git checkout FETCH_HEAD
 
       - name: Setup Node.js 20
         uses: actions/setup-node@v5
