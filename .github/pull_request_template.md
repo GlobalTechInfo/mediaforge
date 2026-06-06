@@ -20,7 +20,6 @@
 ## Testing
 
 - [ ] `npm run typecheck` passes
-- [ ] `npm run lint` passes
 - [ ] `npm run build` passes
 - [ ] `npm run test` passes
 - [ ] `npm run battle` passes

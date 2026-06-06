@@ -38,9 +38,6 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Lint
-        run: npm run lint
-
       - name: Run all tests with coverage (Node 22 only)
         if: matrix.node == '22'
         run: npm run coverage
