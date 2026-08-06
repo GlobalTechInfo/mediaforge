@@ -56,7 +56,7 @@ async function executeTimestamps(opts: ScreenshotOptions, timestamps: (string | 
     const ts = timestamps[i]!;
     const ext = path.extname(filename) || '.png';
     const base = path.basename(filename, ext);
-    const outName = base.replace(/%\d*\.?\d*[diouxX]/g, String(i + 1).padStart(4, '0')) + ext;
+    const outName = base.replace(/%\d*(?:\.\d*)?[diouxX]/g, String(i + 1).padStart(4, '0')) + ext;
     const outPath = path.join(folder, outName);
 
     const args: string[] = ['-y', '-ss', String(toSeconds(ts)), '-i', input, '-vframes', '1'];

@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TMP = path.join(__dirname, 'tmp');
@@ -49,7 +49,7 @@ function section(title) {
 section('SETUP — generating test media');
 
 function ffmpegExec(args) {
-  execSync(`ffmpeg -y ${args}`, { stdio: 'pipe' });
+  execFileSync('ffmpeg', ['-y', ...args.trim().split(/\s+/)], { stdio: 'pipe' });
 }
 
 await run('generate input.mp4 (10s 640x360 video+audio)', () => {
