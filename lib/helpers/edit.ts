@@ -608,7 +608,7 @@ export async function applyLUT(opts: ApplyLutOptions): Promise<void> {
 
   const isWindows = process.platform === 'win32';
   const sanitised = isWindows ? lut : lut.replace(/\\/g, '/');
-  const escapedLut = sanitised.replace(/:/g, '\\:').replace(/'/g, "\\'");
+  const escapedLut = sanitised.replace(/(['\\,;\[\]%:])/g, '\\$1');
   const filter = `lut3d='${escapedLut}':interp=${interp}`;
 
   const builder = new FFmpegBuilder(input).setBinary(binary)
