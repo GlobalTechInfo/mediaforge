@@ -49,6 +49,12 @@ jobs:
         run: npm run build
 
       - name: Publish
-        run: npm publish --provenance --access public
+        run: |
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [[ "$PKG_VERSION" == *-* ]]; then
+            npm publish --provenance --access public --tag next
+          else
+            npm publish --provenance --access public
+          fi
         env:
           NODE_AUTH_TOKEN: ""
