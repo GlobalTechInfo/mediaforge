@@ -26,6 +26,7 @@
   "scripts": {
     "build": "tsx scripts/build.ts",
     "typecheck": "tsc -p tsconfig.check.json",
+    "lint": "deno lint",
     "pretest": "npm run build",
     "test": "node --import tsx/esm --test --test-concurrency=1 $(find tests/unit tests/integration -name '*.test.ts' | tr '\\n' ' ')",
     "test:unit": "node --import tsx/esm --test --test-concurrency=1 $(find tests/unit -name '*.test.ts' | tr '\\n' ' ')",
