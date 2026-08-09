@@ -1,6 +1,6 @@
 {
   "name": "@globaltech/mediaforge",
-  "version": "1.0.0-rc.1",
+  "version": "1.0.0",
   "author": "Qasim Ali",
   "license": "MIT",
   "nodeModulesDir": "none",
@@ -8,7 +8,10 @@
     ".": "./lib/index.ts"
   },
   "compilerOptions": {
-    "lib": ["ES2022", "deno.window"]
+    "lib": [
+      "ES2022",
+      "deno.window"
+    ]
   },
   "tasks": {
     "test": "deno test --allow-env --allow-run --allow-write --allow-read --allow-sys=uid --ignore=deno-tests/battle.test.ts deno-tests/",
