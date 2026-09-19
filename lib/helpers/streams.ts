@@ -112,12 +112,11 @@ export function pipeThrough(opts: PipeOptions): PipeProcess {
 
   emitter.emit('start', args);
 
-  let stderrLines: string[] = [];
   let closeStderr: (() => void) | undefined;
+  let capturedRef: { stderrLines: string[]; close: () => void } | undefined;
   if (child.stderr) {
-    const captured = captureStderr(child.stderr, emitter, progressParser);
-    stderrLines = captured.stderrLines;
-    closeStderr = captured.close;
+    capturedRef = captureStderr(child.stderr, emitter, progressParser);
+    closeStderr = capturedRef.close;
   }
 
   child.on('close', (code, signal) => {
@@ -125,7 +124,8 @@ export function pipeThrough(opts: PipeOptions): PipeProcess {
     if (code === 0) {
       emitter.emit('end');
     } else {
-      emitter.emit('error', new FFmpegSpawnError(code, signal, stderrLines.join('\n')));
+      const stderrOutput = capturedRef?.stderrLines.join('\n') ?? '';
+      emitter.emit('error', new FFmpegSpawnError(code, signal, stderrOutput));
     }
   });
 
@@ -254,18 +254,15 @@ export function streamToFile(opts: StreamToFileOptions): Promise<void> {
         const child = spawn(binary, args, { stdio: ['ignore', 'ignore', 'pipe'] });
         trackChild(child);
         const emitter = new FFmpegEmitter();
-        let stderrLines: string[] = [];
-        let closeStderr: (() => void) | undefined;
+        let capturedRef: { stderrLines: string[]; close: () => void } | undefined;
         if (child.stderr) {
-          const captured = captureStderr(child.stderr, emitter);
-          stderrLines = captured.stderrLines;
-          closeStderr = captured.close;
+          capturedRef = captureStderr(child.stderr, emitter);
         }
         child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
-          closeStderr?.();
+          capturedRef?.close();
           try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /**/ }
           if (code === 0) resolve();
-          else reject(new FFmpegSpawnError(code, signal, stderrLines.join('\n')));
+          else reject(new FFmpegSpawnError(code, signal, capturedRef?.stderrLines.join('\n') ?? ''));
         });
         child.on('error', (err: Error) => { try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /**/ } reject(err); });
       });
@@ -280,19 +277,16 @@ export function streamToFile(opts: StreamToFileOptions): Promise<void> {
     const child = spawn(binary, args, { stdio: ['pipe', 'ignore', 'pipe'] });
     trackChild(child);
     const emitter = new FFmpegEmitter();
-    let stderrLines: string[] = [];
-    let closeStderr: (() => void) | undefined;
+    let capturedRef: { stderrLines: string[]; close: () => void } | undefined;
     if (child.stderr) {
-      const captured = captureStderr(child.stderr, emitter);
-      stderrLines = captured.stderrLines;
-      closeStderr = captured.close;
+      capturedRef = captureStderr(child.stderr, emitter);
     }
     stream.pipe(child.stdin!);
     stream.on('error', (err: Error) => child.stdin?.destroy(err));
     child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
-      closeStderr?.();
+      capturedRef?.close();
       if (code === 0) resolve();
-      else reject(new FFmpegSpawnError(code, signal, stderrLines.join('\n')));
+      else reject(new FFmpegSpawnError(code, signal, capturedRef?.stderrLines.join('\n') ?? ''));
     });
     child.on('error', reject);
   });

@@ -5,6 +5,7 @@ import { mkdtempSync, realpathSync } from 'node:fs';
 import { spawnFFmpeg, runFFmpeg } from '../process/spawn.ts';
 import { resolveBinary, resolveProbe } from '../utils/binary.ts';
 import { probeAsync } from '../probe/ffprobe.ts';
+import { getAudioStreams } from '../probe/ffprobe.ts';
 import type { FFmpegProcess } from '../process/spawn.ts';
 
 export interface MergeOptions {
@@ -49,6 +50,8 @@ export async function mergeToFile(opts: MergeOptions): Promise<void> {
   if (inputs.length === 1) {
     const src = inputs[0] as string;
     if (!fs.existsSync(src)) throw new Error(`mergeToFile: input file not found: "${src}"`);
+    const outDir = path.dirname(path.resolve(output));
+    fs.mkdirSync(outDir, { recursive: true });
     fs.copyFileSync(src, output);
     return;
   }
@@ -102,7 +105,7 @@ export interface ConcatFilesOptions extends ConcatOptions {
   copy?: boolean;
 }
 
-export function concatFiles(opts: ConcatFilesOptions): FFmpegProcess {
+export async function concatFiles(opts: ConcatFilesOptions): Promise<FFmpegProcess> {
   const {
     inputs,
     output,
@@ -112,13 +115,31 @@ export function concatFiles(opts: ConcatFilesOptions): FFmpegProcess {
     binary = resolveBinary(),
   } = opts;
 
-  // Simple concat filter approach
+  // Build filter_complex — probe each input for audio presence to avoid
+  // invalid `[i:a?]` placeholders in filtergraph pad names.
   const n = inputs.length;
   const inputArgs: string[] = [];
   for (const inp of inputs) inputArgs.push('-i', inp);
 
+  const hasAudio: boolean[] = [];
+  for (const inp of inputs) {
+    try {
+      const result = await probeAsync(inp, { binary });
+      hasAudio.push(getAudioStreams(result).length > 0);
+    } catch {
+      // If probing fails, assume audio is present (conservative)
+      hasAudio.push(true);
+    }
+  }
+
   let filterComplex = '';
-  for (let i = 0; i < n; i++) filterComplex += `[${i}:v][${i}:a?]`;
+  for (let i = 0; i < n; i++) {
+    if (hasAudio[i]) {
+      filterComplex += `[${i}:v][${i}:a]`;
+    } else {
+      filterComplex += `[${i}:v]anullsrc[a${i}]`;
+    }
+  }
   filterComplex += `concat=n=${n}:v=1:a=1[v][a]`;
 
   const args: string[] = [
@@ -271,7 +292,7 @@ export async function concatWithTransitions(opts: ConcatWithTransitionsOptions):
 
   // Create scale filters for each input
   for (let i = 0; i < n; i++) {
-    filterComplex += `[${i}:v]${scaleFpsFilter}[v${i}];`;
+    filterComplex += `[${i}:v]${scaleFpsFilter}[xv${i}];`;
   }
 
   // Create xfade transitions using probed durations
@@ -281,7 +302,7 @@ export async function concatWithTransitions(opts: ConcatWithTransitionsOptions):
   for (let i = 0; i < n - 1; i++) {
     cumulativeOffset += (durations[i] ?? 5) - duration;
     const nextInput = i + 1;
-    transitionOffsets.push(`[v${i}][v${nextInput}]xfade=transition=${transition}:duration=${duration}:offset=${Math.max(0, cumulativeOffset)}[v${i + 1}];`);
+    transitionOffsets.push(`[xv${i}][xv${nextInput}]xfade=transition=${transition}:duration=${duration}:offset=${Math.max(0, cumulativeOffset)}[xv${i + 1}];`);
   }
 
   filterComplex += transitionOffsets.join('');
@@ -392,7 +413,7 @@ export function buildConcatTransitionArgs(
     '-y',
     ...inputArgs,
     '-filter_complex', filterComplex,
-    `-map`, `[v${n - 1}]`,
+    `-map`, `[xv${n - 1}]`,
     '-map', '[outa]',
     '-c:v', videoCodec,
     '-c:a', audioCodec,

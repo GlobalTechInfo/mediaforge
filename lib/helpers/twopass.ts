@@ -129,8 +129,9 @@ export function buildTwoPassArgs(opts: TwoPassOptions): {
   passlog: string;
 } {
   const binary = resolveBinary(opts.binary);
-  const passlog = opts.passlogfile ?? join(tmpdir(), `mediaforge-passlog`);
-  const pass1TempOut = join(tmpdir(), `mediaforge-pass1.mkv`);
+  const tmpDir = mkdtempSync(join(tmpdir(), 'mediaforge-twopass-'));
+  const passlog = opts.passlogfile ?? join(tmpDir, 'passlog');
+  const pass1TempOut = join(tmpDir, 'pass1.mkv');
 
   const inputArgs = ['-i', opts.input, ...(opts.extraInputArgs ?? [])];
   const videoArgs: string[] = [];
@@ -138,6 +139,7 @@ export function buildTwoPassArgs(opts: TwoPassOptions): {
   if (opts.videoBitrate) videoArgs.push('-b:v', opts.videoBitrate);
   const extraOut = opts.extraOutputArgs ?? [];
 
+  // Pass 1: always silence audio when video-only
   const pass1: string[] = [
     '-y',
     ...inputArgs,
@@ -150,11 +152,14 @@ export function buildTwoPassArgs(opts: TwoPassOptions): {
     pass1TempOut,
   ];
 
+  // Pass 2: mirror twoPassEncode behavior exactly
   const audioArgs: string[] = [];
   if (opts.audioCodec !== undefined && opts.audioCodec !== 'none') {
     audioArgs.push('-c:a', opts.audioCodec);
     if (opts.audioBitrate !== undefined) audioArgs.push('-b:a', opts.audioBitrate);
-  } else if (opts.audioCodec === undefined) {
+  } else if (opts.audioCodec === 'none') {
+    audioArgs.push('-an');
+  } else {
     audioArgs.push('-c:a', 'copy');
   }
 

@@ -82,6 +82,16 @@ describe('satisfiesVersion', () => {
   it('defaults minMinor to 0', () => {
     expect(satisfiesVersion({ major: 7, minor: 0 }, 7)).toBe(true);
   });
+
+  it('supports patch-level comparison', () => {
+    expect(satisfiesVersion({ major: 7, minor: 1, patch: 2 }, 7, 1, 1)).toBe(true);
+    expect(satisfiesVersion({ major: 7, minor: 1, patch: 0 }, 7, 1, 1)).toBe(false);
+  });
+
+  it('treats git builds as unknown', () => {
+    expect(satisfiesVersion({ major: 999, minor: 999, patch: 999, isGit: true }, 7, 1)).toBe(false);
+    expect(satisfiesVersion({ major: 0, minor: 0, patch: 0, isGit: true }, 0, 0, 0)).toBe(true);
+  });
 });
 
 describe('formatVersion', () => {

@@ -107,16 +107,26 @@ export function probeVersionAsync(binaryPath: string, timeoutMs = 10000): Promis
 }
 
 /**
- * Return true if actual satisfies the requirement (major >= min, minor >= minMinor within same major).
+ * Return true if actual satisfies the requirement using full semver comparison.
+ * Git/nightly builds are treated as "unknown" (returns true only when minMajor=0).
  */
 export function satisfiesVersion(
-  actual: Pick<VersionInfo, 'major' | 'minor'>,
+  actual: Pick<VersionInfo, 'major' | 'minor' | 'patch' | 'isGit'>,
   minMajor: number,
   minMinor = 0,
+  minPatch = 0,
 ): boolean {
+  const isGit = actual.isGit ?? false;
+  if (isGit) {
+    // Git/nightly builds: treat as unknown rather than infinitely new
+    return minMajor === 0 && minMinor === 0 && minPatch === 0;
+  }
   if (actual.major > minMajor) return true;
   if (actual.major < minMajor) return false;
-  return actual.minor >= minMinor;
+  if (actual.minor > minMinor) return true;
+  if (actual.minor < minMinor) return false;
+  const patch = actual.patch ?? 0;
+  return patch >= minPatch;
 }
 
 /**

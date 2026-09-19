@@ -175,7 +175,6 @@ export function mp3ToArgs(opts: LibMp3LameOptions): string[] {
   if (opts.bitrate !== undefined) args.push('-b:a', `${opts.bitrate}k`);
   if (opts.compressionLevel !== undefined) args.push('-compression_level', String(opts.compressionLevel));
   if (opts.jointStereo !== undefined) args.push('-joint_stereo', opts.jointStereo ? '1' : '0');
-  if (opts.abr === true) args.push('-abr', '1');
   if (opts.sampleRate !== undefined) args.push('-ar', String(opts.sampleRate));
   if (opts.channels !== undefined) args.push('-ac', String(opts.channels));
   return args;

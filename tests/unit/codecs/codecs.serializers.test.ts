@@ -475,8 +475,9 @@ describe('libMp3LameToArgs — extended options', () => {
     expect(args).toContain('-joint_stereo');
   });
 
-  it('includes abr flag', () => {
-    expect(libMp3LameToArgs({ abr: true })).toContain('-abr');
+  it('does not include undocumented -abr flag', () => {
+    const args = libMp3LameToArgs({ abr: true });
+    expect(args).not.toContain('-abr');
   });
 
   it('includes sampleRate and channels', () => {

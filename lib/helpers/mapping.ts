@@ -66,30 +66,27 @@ export function ss(
 // ─── Map builders ─────────────────────────────────────────────────────────────
 
 /**
- * Build a -map flag from a StreamSpecifier or raw string.
- * Returns `['-map', specStr]` tuple when called with a StreamSpecifier/string.
- * Returns the specifier string directly when called with (fileIndex, type, streamIndex).
- *
- * @example
- * mapStream(ss(0, 'v', 0))   → ['-map', '0:v:0']
- * mapStream('0:a:1')         → ['-map', '0:a:1']
- * mapStream(0, 'v', 0)       → '0:v:0'   (convenience — string only)
- */
-export function mapStream(spec: StreamSpecifier | string): ['-map', string];
-export function mapStream(fileIndex: number, type: MediaTypeChar, streamIndex?: number): string;
-export function mapStream(
-  spec: StreamSpecifier | string | number,
-  type?: MediaTypeChar,
-  streamIndex?: number,
-): ['-map', string] | string {
-  if (typeof spec === 'number') {
-    // Convenience: called as mapStream(0, 'v', 0) → returns spec string
-    const s: StreamSpecifier = { fileIndex: spec, ...(type !== undefined ? { type } : {}), ...(streamIndex !== undefined ? { streamIndex } : {}) };
-    return serializeSpecifier(s);
-  }
-  const str = typeof spec === 'string' ? spec : serializeSpecifier(spec);
-  return ['-map', str];
-}
+  * Build a -map flag from a StreamSpecifier or raw string.
+  * Returns `['-map', specStr]` tuple when called with a StreamSpecifier/string.
+  *
+  * @example
+  * mapStream(ss(0, 'v', 0))   → ['-map', '0:v:0']
+  * mapStream('0:a:1')         → ['-map', '0:a:1']
+  */
+ export function mapStream(spec: StreamSpecifier | string): ['-map', string];
+ export function mapStream(
+   spec: StreamSpecifier | string | number,
+   type?: MediaTypeChar,
+   streamIndex?: number,
+ ): ['-map', string] | string {
+   if (typeof spec === 'number') {
+     // Convenience: called as mapStream(fileIndex, type, streamIndex) → returns spec string
+     const s: StreamSpecifier = { fileIndex: spec, ...(type !== undefined ? { type } : {}), ...(streamIndex !== undefined ? { streamIndex } : {}) };
+     return serializeSpecifier(s);
+   }
+   const str = typeof spec === 'string' ? spec : serializeSpecifier(spec);
+   return ['-map', str];
+ }
 
 /**
  * Map all streams from an input file.
@@ -167,17 +164,18 @@ export function negateMap(spec: StreamSpecifier | string): ['-map', string] {
 // ─── Metadata / disposition mapping ──────────────────────────────────────────
 
 /**
- * Set stream metadata.
- * @example setStreamMetadata(0, 'a', 0, 'language', 'eng') → ['-metadata:s:a:0', 'language=eng']
- */
-export function setStreamMetadata(
-  type: MediaTypeChar,
-  streamIndex: number,
-  key: string,
-  value: string,
-): [string, string] {
-  return [`-metadata:s:${type}:${streamIndex}`, `${key}=${value}`];
-}
+  * Set stream metadata.
+  * @example setStreamMetadata(0, 'a', 0, 'language', 'eng') → ['-metadata:s:a:0', 'language=eng']
+  */
+  export function setStreamMetadata(
+    _fileIndex: number,
+   type: MediaTypeChar,
+   streamIndex: number,
+   key: string,
+   value: string,
+ ): [string, string] {
+   return [`-metadata:s:${type}:${streamIndex}`, `${key}=${value}`];
+ }
 
 /**
  * Set output-level metadata.

@@ -97,7 +97,8 @@ export async function addWatermark(opts: WatermarkOptions): Promise<void> {
   if (scaleWidth) transforms.push(`scale=${scaleWidth}:-1`);
   if (opacity < 1) transforms.push('format=rgba', `colorchannelmixer=aa=${opacity}`);
   // Always need at least one filter between [1:v] and [wm]
-  if (transforms.length === 0) transforms.push('copy');
+  // Use format=rgba instead of copy to avoid requiring ffmpeg ≥ 4.3
+  if (transforms.length === 0) transforms.push('format=rgba');
 
   const wmarkFilter = `[1:v]${transforms.join(',')}[wm]`;
   const filterComplex = `${wmarkFilter};[0:v][wm]overlay=${overlayExpr}[out]`;
@@ -182,7 +183,7 @@ export function buildWatermarkFilter(
   const transforms: string[] = [];
   if (scaleWidth) transforms.push(`scale=${scaleWidth}:-1`);
   if (opacity < 1) transforms.push('format=rgba', `colorchannelmixer=aa=${opacity}`);
-  if (transforms.length === 0) transforms.push('copy');
+  if (transforms.length === 0) transforms.push('format=rgba');
   const wmarkFilter = `[1:v]${transforms.join(',')}[wm]`;
   return `${wmarkFilter};[0:v][wm]overlay=${overlayExpr}[out]`;
 }

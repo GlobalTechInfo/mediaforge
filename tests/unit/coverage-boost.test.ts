@@ -1019,8 +1019,8 @@ describe('proResToArgs / dnxhdToArgs / ffv1ToArgs branch coverage', () => {
     assert.ok(dnxhdToArgs({ profile: 'dnxhr_hq' }).includes('dnxhr_hq'));
   });
 
-  it('ffv1ToArgs: coder + context + slices + sliceCrc=false', () => {
-    const a = ffv1ToArgs({ coder: 1, context: 1, slices: 16, sliceCrc: false });
+  it('ffv1ToArgs: level + context + slices + sliceCrc=false', () => {
+    const a = ffv1ToArgs({ level: 1, context: 1, slices: 16, sliceCrc: false });
     assert.ok(a.includes('1') && a.includes('16') && a.includes('0'));
   });
 

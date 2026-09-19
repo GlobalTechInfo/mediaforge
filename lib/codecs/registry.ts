@@ -289,6 +289,7 @@ export class CapabilityRegistry {
     this._filters = null;
     this._formats = null;
     this._hwaccels = null;
+    this._encoders = null;
   }
 }
 

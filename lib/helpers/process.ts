@@ -74,6 +74,8 @@ export function autoKillOnExit(child: ChildProcess, signal: NodeJS.Signals = 'SI
   const safeSignal = isWindows ? 'SIGKILL' : signal;
   const handler = () => {
     try { child.kill(safeSignal); } catch { /* ok */ }
+    // Re-raise the signal so Node.js still exits with the default behavior
+    if (!isWindows) process.kill(process.pid!, safeSignal);
   };
 
   process.once('exit',    handler);

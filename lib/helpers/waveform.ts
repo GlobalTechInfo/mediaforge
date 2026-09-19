@@ -64,7 +64,8 @@ export async function generateWaveform(opts: WaveformOptions): Promise<void> {
       'Remove these options for forward compatibility.',
     );
   }
-  const filter = `[0:a:${streamIndex}]showwavespic=s=${width}x${height}:colors=${color}:scale=${scale}[v]`;
+  const colorArg = color.startsWith('#') ? color.slice(1) : color;
+  const filter = `[0:a:${streamIndex}]showwavespic=s=${width}x${height}:colors=${colorArg}:scale=${scale}[v]`;
 
   const args: string[] = [
     '-y', '-i', input,

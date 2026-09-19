@@ -118,7 +118,7 @@ function buildProbeArgs(filePath: string, opts: ProbeOptions): string[] {
   if (opts.chapters !== false) showArgs.push('-show_chapters');
 
   return [
-    '-v', 'quiet',
+    '-v', 'error',
     '-print_format', 'json',
     ...showArgs,
     ...(opts.extraArgs ?? []),

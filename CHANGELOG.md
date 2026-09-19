@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.0] — 2026-09-19
+
+### Breaking Changes
+
+- **`concatFiles` is now `async`** — it probes each input for audio presence to avoid invalid filtergraph labels. Call sites must `await concatFiles({...})`.
+- **`setStreamMetadata` signature changed** — added `fileIndex` as the first parameter: `setStreamMetadata(fileIndex, type, streamIndex, key, value)`. Old call sites passing `(type, streamIndex, key, value)` will produce wrong metadata keys.
+- **`ffv1ToArgs` option `version` → `level`** — the option was renamed to match the emitted `-level` flag. Pass `{ level: 3 }` instead of `{ version: 3 }`.
+- **`mapStream(fileIndex, type, streamIndex)` return type** — now returns `['-map', spec]` (an array) instead of a bare string, consistent with the documented contract and all other mapping helpers. Spread usage (`...mapStream(...)`) will emit an extra `'-map'` arg — use `.map(mapStream(...)[1])` or assign the result first.
+- **`satisfiesVersion` now requires full `VersionInfo`** — callers passing `{ major, minor }` only will get a type error; pass the full object returned by `parseVersionOutput` or `probeVersion`.
+
+### Fixed
+
+- **#1 ffprobe error visibility** — `buildProbeArgs` now uses `-v error` instead of `-v quiet`, so probe failures surface meaningful error messages instead of empty `ProbeError.detail` strings.
+- **#2 FFmpegSpawnError.stderrOutput** — wired `captureStderr().stderrLines` into `FFmpegSpawnError` so spawn failures include ffmpeg diagnostics in `err.stderrOutput`.
+- **#3 Double error event on timeout** — added a `settled` flag in `spawnFFmpeg` so the timeout handler and the process `close` handler emit exactly one `'error'` event instead of two.
+- **#4 HLS segment extension** — `hlsPackage` and `adaptiveHls` already defaulted to `.ts` extensions; confirmed no regression.
+- **#5 concatFiles audio-less inputs** — `concatFiles` now probes each input for audio presence and uses `[i:v][i:a]` when audio exists or `[i:v]anullsrc[a${i}]` when it does not, eliminating invalid `[i:a?]` filtergraph labels.
+- **#6 setStreamMetadata signature** — added the missing `fileIndex` first parameter to match JSDoc; all call sites updated.
+- **#7 mapStream return type** — the three-argument convenience form now consistently returns an args array (`['-map', spec]`) matching the documented contract.
+- **#8 streams.ts stderr snapshot** — `pipeThrough`, `streamOutput`, and `streamToFile` now keep the `captureStderr` reference and read `stderrLines` at error time, fixing empty stderr in `FFmpegSpawnError`.
+- **#9 Builder timeout forwarding** — `FFmpegBuilder.run()` and `.spawn()` now accept an optional `timeout` option and forward it to the spawn layer.
+- **#10 Registry stale cache** — `CapabilityRegistry.invalidate()` now clears `_encoders` in addition to the other caches, preventing stale encoder data after `setBinary()`.
+- **#11 mergeToFile mkdir** — the single-input fast path now creates the output directory with `mkdirSync({ recursive: true })` before copying.
+- **#12 concatWithTransitions pad collision** — xfade output labels changed from `[vN]` to `[xvN]` to avoid colliding with input scale-pad labels.
+- **#13 Two-pass consistency** — `buildTwoPassArgs` now mirrors `twoPassEncode` exactly: uses a unique per-job temp directory, always includes `-an` in pass 1, and handles `audioCodec: 'none'` consistently in both functions.
+- **#14 drawtext %{...} expansion** — added `escapeDrawtextValue()` that preserves `%{pts_hms}`-style expressions while still escaping backslashes, quotes, and other drawtext special characters. `burnTimecode` and `buildBurnTimecodeFilter` now use it.
+- **#15 satisfiesVersion patch comparison** — full semver comparison now includes the patch component. Git/nightly builds are treated as "unknown" (only pass when `minMajor/minMinor/minPatch` are all 0) instead of being forced to `999.999.999`.
+- **#16 Negative progress percentage** — `buildProgress` now clamps `percent` to `[0, 100]` to handle negative `out_time_us` sentinels emitted by ffmpeg before the first frame.
+- **#17 autoKillOnExit signal handling** — the SIGINT/SIGTERM handler now re-raises the signal after cleanup so Node.js retains its default exit behavior.
+- **#18 normalizeAudio one-pass mode** — when `twoPass: false` the returned `NormalizeResult` now reports `null`-equivalent measured values instead of fabricating `inputI = targetI`.
+- **#19 VideoToolbox allowFrameReordering** — removed the incorrect `-realtime` mapping; `allowFrameReordering` is no longer emitted since ffmpeg's videotoolbox does not expose a direct flag for it.
+- **#20 mp3ToArgs -abr** — removed the undocumented `-abr` flag from `mp3ToArgs`; ABR is selected via `-b:a` instead.
+- **#21 watermark copy filter** — replaced the `copy` filter (requires ffmpeg ≥ 4.3) with `format=rgba` as the default no-op transform in watermark pipelines.
+- **#22 waveform hex colors** — `generateWaveform` now strips the leading `#` from hex colors before passing to `showwavespic` for broader compatibility.
+- **#23 ffv1ToArgs option rename** — renamed the `version` option to `level` to match the actual emitted `-level` flag and reduce confusion.
+
+---
+
 ## [0.3.0] — 2026-04-24
 
 ### Added
@@ -436,3 +474,10 @@ Initial release.
 - Codec / hardware acceleration registry
 - FFmpeg compatibility guards (v6 / v7 / v8)
 - Full TypeScript types, dual ESM + CJS build
+
+[2.0.0]: https://github.com/GlobalTechInfo/mediaforge/releases/tag/v2.0.0
+[0.3.0]: https://github.com/GlobalTechInfo/mediaforge/releases/tag/v0.3.0
+[0.3.0-rc.1]: https://github.com/GlobalTechInfo/mediaforge/releases/tag/v0.3.0-rc.1
+[0.2.0]: https://github.com/GlobalTechInfo/mediaforge/releases/tag/v0.2.0
+[0.1.0]: https://github.com/GlobalTechInfo/mediaforge/releases/tag/v0.1.0
+[0.0.1]: https://github.com/GlobalTechInfo/mediaforge/releases/tag/v0.0.1

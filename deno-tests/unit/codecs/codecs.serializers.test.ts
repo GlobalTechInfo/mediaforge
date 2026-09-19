@@ -475,8 +475,9 @@ describe('mp3ToArgs — extended options', () => {
     expect(args).toContain('-joint_stereo');
   });
 
-  it('includes abr flag', () => {
-    expect(mp3ToArgs({ abr: true })).toContain('-abr');
+  it('does not include undocumented -abr flag', () => {
+    const args = mp3ToArgs({ abr: true });
+    expect(args).not.toContain('-abr');
   });
 
   it('includes sampleRate and channels', () => {

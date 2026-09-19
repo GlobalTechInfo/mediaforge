@@ -474,10 +474,8 @@ export function theoraToArgs(opts: TheoraOptions = {}): string[] {
  * Open standard — excellent for archival. Available in both v7 and v8.
  */
 export interface Ffv1Options {
-  /** Codec version: 0, 1, or 3. Default: 3 */
-  version?: 0 | 1 | 3;
   /** Error correction level: 0 (none) to 3 (maximum). Default: 0 */
-  coder?: 0 | 1 | 2;
+  level?: 0 | 1 | 2 | 3;
   /** Context model: 0 or 1 */
   context?: 0 | 1;
   /** Number of slices (for threading). Powers of 2: 4, 8, 16, ... */
@@ -488,8 +486,7 @@ export interface Ffv1Options {
 
 export function ffv1ToArgs(opts: Ffv1Options = {}): string[] {
   const args: string[] = ['-c:v', 'ffv1'];
-  if (opts.version !== undefined) args.push('-level', String(opts.version));
-  if (opts.coder !== undefined) args.push('-coder', String(opts.coder));
+  if (opts.level !== undefined) args.push('-level', String(opts.level));
   if (opts.context !== undefined) args.push('-context', String(opts.context));
   if (opts.slices !== undefined) args.push('-slices', String(opts.slices));
   if (opts.sliceCrc !== undefined) args.push('-slicecrc', opts.sliceCrc ? '1' : '0');

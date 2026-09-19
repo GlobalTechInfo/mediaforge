@@ -77,9 +77,12 @@ export function spawnFFmpeg(opts: SpawnOptions): FFmpegProcess {
 
   const emitter = new FFmpegEmitter();
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  let settled = false;
 
   if (timeout !== undefined && timeout > 0) {
     timeoutHandle = setTimeout(() => {
+      if (settled) return;
+      settled = true;
       emitter.emit('error', new Error(`ffmpeg timed out after ${timeout}ms`));
       child.kill('SIGTERM');
     }, timeout);
@@ -96,24 +99,29 @@ export function spawnFFmpeg(opts: SpawnOptions): FFmpegProcess {
   emitter.emit('start', args);
 
   let closeStderr: (() => void) | undefined;
+  let capturedStderr: { stderrLines: string[]; close: () => void } | undefined;
 
   if (child.stderr !== null) {
-    const captured = captureStderr(child.stderr, emitter, progressParser);
-    closeStderr = captured.close;
+    capturedStderr = captureStderr(child.stderr, emitter, progressParser);
+    closeStderr = capturedStderr.close;
   }
 
   child.on('close', (code: number | null, signal: string | null) => {
+    if (settled) return;
+    settled = true;
     if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
     closeStderr?.();
     if (code === 0) {
       emitter.emit('end');
     } else {
-      const stderr = ''; // stderr already streamed via emitter
-      emitter.emit('error', new FFmpegSpawnError(code, signal, stderr));
+      const stderrOutput = capturedStderr?.stderrLines.join('\n') ?? '';
+      emitter.emit('error', new FFmpegSpawnError(code, signal, stderrOutput));
     }
   });
 
   child.on('error', (err: Error) => {
+    if (settled) return;
+    settled = true;
     if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
     emitter.emit('error', err);
   });

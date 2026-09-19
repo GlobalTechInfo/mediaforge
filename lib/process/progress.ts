@@ -73,7 +73,7 @@ function buildProgress(
   };
 
   if (totalDurationUs !== undefined && totalDurationUs > 0) {
-    info.percent = Math.min(100, (outTimeUs / totalDurationUs) * 100);
+    info.percent = Math.max(0, Math.min(100, (outTimeUs / totalDurationUs) * 100));
   }
 
   return info;

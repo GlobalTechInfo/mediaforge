@@ -362,7 +362,6 @@ export function videotoolboxToArgs(opts: VideoToolboxOptions, codec: VideoToolbo
   const args: string[] = ['-c:v', codec];
   if (opts.bitrate !== undefined) args.push('-b:v', `${opts.bitrate}k`);
   if (opts.quality !== undefined) args.push('-q:v', String(Math.round(opts.quality * 100)));
-  if (opts.allowFrameReordering !== undefined) args.push('-realtime', opts.allowFrameReordering ? '1' : '0');
   if (opts.maxKeyFrameInterval !== undefined) args.push('-g', String(opts.maxKeyFrameInterval));
   if (opts.profile !== undefined) args.push('-profile:v', opts.profile);
   return args;

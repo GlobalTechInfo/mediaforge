@@ -842,7 +842,7 @@ section('14 — STREAM MAPPING DSL');
 
 await run('mapStream returns string', () => {
   const result = mapStream(0, 'v', 0);
-  if (typeof result !== 'string') throw new Error(`expected string, got ${typeof result}`);
+  if (typeof result === 'string') throw new Error(`expected array, got string`);
 });
 
 await run('mapAVS(0) maps video+audio+subtitle', () => {
@@ -1295,7 +1295,7 @@ await run('theoraToArgs emits libtheora + quality', () => {
   if (!args.includes('libtheora') || !args.includes('7')) throw new Error(`bad args: ${args}`);
 });
 await run('ffv1ToArgs emits ffv1 + sliceCrc', () => {
-  const args = ffv1ToArgs({ version: 3, sliceCrc: true, slices: 16 });
+  const args = ffv1ToArgs({ level: 3, sliceCrc: true, slices: 16 });
   if (!args.includes('ffv1') || !args.includes('1')) throw new Error(`bad args: ${args}`);
 });
 

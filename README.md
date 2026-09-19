@@ -190,8 +190,8 @@ await ffmpeg('input.mp4')
 | `.overwrite(bool)` | Overwrite output (default: true) |
 | `.logLevel(level)` | Set ffmpeg log level |
 | `.hwAccel(name, opts?)` | Enable hardware acceleration |
-| `.spawn(opts?)` | Start process, return `FFmpegProcess` |
-| `.run(opts?)` | Start process, return `Promise<void>` |
+| `.spawn(opts?)` | Start process, return `FFmpegProcess`. Options: `{ parseProgress?, totalDurationUs?, timeout? }` |
+| `.run(opts?)` | Start process, return `Promise<void>`. Options: `{ parseProgress?, totalDurationUs?, timeout? }` |
 | `.dry()` | Return CLI args without executing |
 
 ---
@@ -334,8 +334,8 @@ await mergeToFile({
   audioCodec: 'aac',
 });
 
-// filter_complex concat (event-based control)
-const proc = concatFiles({
+// filter_complex concat (event-based control) — now async, probes inputs for audio presence
+const proc = await concatFiles({
   inputs: ['a.mp4', 'b.mp4', 'c.mp4'],
   output: 'out.mp4',
 });
@@ -596,7 +596,7 @@ await ffmpeg('in.mp4').output('out.mpg').addOutputOption(...mpeg2ToArgs({ bitrat
 await ffmpeg('in.mp4').output('out.webm').addOutputOption(...vp8ToArgs({ bitrate: 800, cpuUsed: 4 })).run();
 
 // FFV1 lossless archival
-await ffmpeg('in.mp4').output('out.mkv').addOutputOption(...ffv1ToArgs({ version: 3, slices: 16, sliceCrc: true })).run();
+await ffmpeg('in.mp4').output('out.mkv').addOutputOption(...ffv1ToArgs({ level: 3, slices: 16, sliceCrc: true })).run();
 ```
 
 | Helper | Encoder | Available |
@@ -679,7 +679,7 @@ await ffmpeg('in.mp4').output('out.mp4').addOutputOption(...vulkanVideoToArgs({ 
 
 <a name="edit-helpers"></a>
 
-## Edit Helpers (v0.3.0)
+## Edit Helpers
 
 ### `trimVideo` — cut by time range
 
@@ -776,7 +776,7 @@ await streamToUrl({ input: 'video.mp4', url: 'rtmp://live.twitch.tv/app/STREAM_K
 
 <a name="color-grading-filters"></a>
 
-## Color Grading & Visual Filters (v0.3.0)
+## Color Grading & Visual Filters
 
 ```ts
 import { curves, levels, deband, deshake, deflicker, smartblur } from 'mediaforge';
@@ -810,7 +810,7 @@ await ffmpeg('in.mp4').output('out.mp4').videoFilter(chain.toString()).run();
 | `vignette(opts?)` | ✅ | Apply vignette effect |
 | `vaguedenoiser(opts?)` | ✅ | Wavelet-based denoising |
 
-## Analysis Helpers (v0.4.0)
+## Analysis Helpers
 
 ```ts
 import { detectSilence, detectScenes, cropDetect, burnTimecode, parseLoudnorm } from 'mediaforge';
@@ -862,7 +862,7 @@ await burnTimecode({
 
 <a name="hardware-codecs-v3"></a>
 
-## Hardware Codec Helpers (v0.3.0 additions)
+## Hardware Codec Helpers
 
 ```ts
 import { amfToArgs, videotoolboxToArgs } from 'mediaforge';
@@ -1340,6 +1340,7 @@ renice(proc.child, 10);  // lower priority — works on Linux, macOS, and Window
 
 // Auto-kill on process exit (prevents orphan ffmpeg processes)
 // Listens to exit, SIGINT, SIGTERM — does NOT touch uncaughtException
+// Re-raises the signal after cleanup so Node.js retains default exit behavior
 const unregister = autoKillOnExit(proc.child);
 proc.emitter.on('end', () => unregister());
 
@@ -1368,7 +1369,10 @@ proc.emitter.on('progress', (info) => {
 });
 proc.emitter.on('stderr',   (line) => { /* raw stderr line */ });
 proc.emitter.on('end',      ()     => console.log('Done'));
-proc.emitter.on('error',    (err)  => console.error(err));
+proc.emitter.on('error',    (err)  => {
+  // err is FFmpegSpawnError — check err.stderrOutput for ffmpeg diagnostics
+  console.error(err.stderrOutput);
+});
 
 await new Promise((res, rej) => {
   proc.emitter.on('end', res);

@@ -1,6 +1,6 @@
 import { spawnFFmpeg, runFFmpeg } from '../process/spawn.ts';
 import { resolveBinary } from '../utils/binary.ts';
-import { escapeFilterValue } from '../utils/filter.ts';
+import { escapeDrawtextValue } from '../utils/filter.ts';
 
 // ─── detectSilence ─────────────────────────────────────────────────────
 
@@ -288,7 +288,7 @@ export async function burnTimecode(opts: BurnTimecodeOptions): Promise<void> {
 
   // Build drawtext expression for timecode
   const timeExpr = format || '%{pts_hms}';
-  const drawtext = `drawtext=text='${escapeFilterValue(timeExpr)}':fontsize=${fontsize}:fontcolor=${fontcolor}`;
+  const drawtext = `drawtext=text='${escapeDrawtextValue(timeExpr)}':fontsize=${fontsize}:fontcolor=${fontcolor}`;
 
   // Position
   let posX = x ?? '10';
@@ -313,7 +313,7 @@ export function buildBurnTimecodeFilter(
   x: string = '10',
   y: string = 'h-th-10'
 ): string {
-  return `drawtext=text='${timeFormat}':fontsize=${fontsize}:fontcolor=${fontcolor}:x=${x}:y=${y}${fontfile ? `:fontfile='${fontfile}'` : ''}`;
+  return `drawtext=text='${timeFormat}':fontsize=${fontsize}:fontcolor=${fontcolor}:x=${x}:y=${y}${fontfile ? `:fontfile='${escapeDrawtextValue(fontfile)}'` : ''}`;
 }
 
 // ─── parseLoudnorm ───────────────────────────────────────────────────
@@ -447,7 +447,7 @@ export async function normalizeAudio(opts: NormalizeOptions): Promise<NormalizeR
       binary,
       args: ['-y', '-i', input, '-c:v', videoCodec, '-af', `loudnorm=i=${targetI}:lra=${targetLra}:tp=${targetTp}`, output],
     });
-    return { inputI: targetI, inputLra: targetLra, inputTp: targetTp, inputThresh: targetI - 10, targetOffset: 0 };
+    return { inputI: null as unknown as number, inputLra: null as unknown as number, inputTp: null as unknown as number, inputThresh: null as unknown as number, targetOffset: 0 } as NormalizeResult;
   }
 
   // Pass 1: measure

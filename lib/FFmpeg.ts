@@ -459,7 +459,7 @@ export class FFmpegBuilder {
 
   // ─── Execution ────────────────────────────────────────────────────────────
 
-  private _buildSpawnOpts(opts?: { parseProgress?: boolean; totalDurationUs?: number }): SpawnOptions {
+  private _buildSpawnOpts(opts?: { parseProgress?: boolean; totalDurationUs?: number; timeout?: number }): SpawnOptions {
     const spawnOpts: SpawnOptions = {
       binary: this._binary,
       args: this.buildArgs(),
@@ -468,6 +468,9 @@ export class FFmpegBuilder {
     if (opts?.totalDurationUs !== undefined) {
       spawnOpts.totalDurationUs = opts.totalDurationUs;
     }
+    if (opts?.timeout !== undefined) {
+      spawnOpts.timeout = opts.timeout;
+    }
     return spawnOpts;
   }
 
@@ -475,7 +478,7 @@ export class FFmpegBuilder {
    * Spawn the process with full event-emitter control.
    * Useful for streaming progress or piping stdout.
    */
-  spawn(opts?: { parseProgress?: boolean; totalDurationUs?: number }): FFmpegProcess {
+  spawn(opts?: { parseProgress?: boolean; totalDurationUs?: number; timeout?: number }): FFmpegProcess {
     return spawnFFmpeg(this._buildSpawnOpts(opts));
   }
 
@@ -483,7 +486,7 @@ export class FFmpegBuilder {
    * Run ffmpeg and return a Promise that resolves on success.
    * Rejects with FFmpegSpawnError on non-zero exit.
    */
-  async run(opts?: { parseProgress?: boolean; totalDurationUs?: number }): Promise<void> {
+  async run(opts?: { parseProgress?: boolean; totalDurationUs?: number; timeout?: number }): Promise<void> {
     await runFFmpeg(this._buildSpawnOpts(opts));
   }
 
