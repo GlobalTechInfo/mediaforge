@@ -79,24 +79,12 @@ export function spawnFFmpeg(opts: SpawnOptions): FFmpegProcess {
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   let settled = false;
 
-  if (timeout !== undefined && timeout > 0) {
-    timeoutHandle = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      emitter.emit('error', new Error(`ffmpeg timed out after ${timeout}ms`));
-      child.kill('SIGTERM');
-    }, timeout);
-    if (typeof timeoutHandle.unref === 'function') timeoutHandle.unref();
-  }
-
   const progressParser = parseProgress
     ? new ProgressParser(
         (info) => emitter.emit('progress', info),
         totalDurationUs,
       )
     : null;
-
-  emitter.emit('start', args);
 
   let closeStderr: (() => void) | undefined;
   let capturedStderr: { stderrLines: string[]; close: () => void } | undefined;
@@ -106,11 +94,36 @@ export function spawnFFmpeg(opts: SpawnOptions): FFmpegProcess {
     closeStderr = capturedStderr.close;
   }
 
+  // Release the stderr reader exactly once, on every exit path. The timeout
+  // path sets `settled` itself, so the close handler would otherwise
+  // early-return and leak the readline interface + stream listeners.
+  let stderrClosed = false;
+  const releaseStderr = (): void => {
+    if (stderrClosed) return;
+    stderrClosed = true;
+    closeStderr?.();
+  };
+
+  if (timeout !== undefined && timeout > 0) {
+    timeoutHandle = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      releaseStderr();
+      emitter.emit('error', new Error(`ffmpeg timed out after ${timeout}ms`));
+      child.kill('SIGTERM');
+    }, timeout);
+    if (typeof timeoutHandle.unref === 'function') timeoutHandle.unref();
+  }
+
+  // Defer so callers can attach listeners to the returned FFmpegProcess before
+  // 'start' fires. Emitting synchronously here made the event unobservable.
+  queueMicrotask(() => emitter.emit('start', args));
+
   child.on('close', (code: number | null, signal: string | null) => {
     if (settled) return;
     settled = true;
     if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
-    closeStderr?.();
+    releaseStderr();
     if (code === 0) {
       emitter.emit('end');
     } else {
@@ -123,6 +136,7 @@ export function spawnFFmpeg(opts: SpawnOptions): FFmpegProcess {
     if (settled) return;
     settled = true;
     if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+    releaseStderr();
     emitter.emit('error', err);
   });
 

@@ -202,14 +202,10 @@ function cmdCaps(binary: string, flags: {
 
 // ─── Subcommand: probe ────────────────────────────────────────────────────────
 
-function cmdProbe(binary: string, file: string, ffprobeOverride?: string): void {
-  let probeBin = ffprobeOverride;
-  if (probeBin === undefined) {
-    probeBin = resolveProbe();
-    if (!probeBin) {
-      probeBin = binary.replace('ffmpeg', 'ffprobe');
-    }
-  }
+function cmdProbe(_binary: string, file: string, ffprobeOverride?: string): void {
+  // resolveProbe() always returns a string (FFPROBE_PATH env or 'ffprobe'), so
+  // the previous `if (!probeBin)` fallback was unreachable dead code.
+  const probeBin = ffprobeOverride ?? resolveProbe();
   let output: string;
   try {
     output = execFileSync(probeBin, [

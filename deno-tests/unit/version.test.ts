@@ -63,29 +63,33 @@ describe('parseVersionOutput', () => {
 });
 
 describe('satisfiesVersion', () => {
+  // satisfiesVersion takes a full VersionInfo shape (breaking change in 2.0.0).
+  const rel = (major: number, minor: number, patch = 0) =>
+    ({ major, minor, patch, isGit: false });
+
   it('returns true when major is greater', () => {
-    expect(satisfiesVersion({ major: 8, minor: 0 }, 7)).toBe(true);
+    expect(satisfiesVersion(rel(8, 0), 7)).toBe(true);
   });
 
   it('returns false when major is less', () => {
-    expect(satisfiesVersion({ major: 6, minor: 5 }, 7)).toBe(false);
+    expect(satisfiesVersion(rel(6, 5), 7)).toBe(false);
   });
 
   it('returns true when major matches and minor is sufficient', () => {
-    expect(satisfiesVersion({ major: 7, minor: 1 }, 7, 1)).toBe(true);
+    expect(satisfiesVersion(rel(7, 1), 7, 1)).toBe(true);
   });
 
   it('returns false when major matches but minor is insufficient', () => {
-    expect(satisfiesVersion({ major: 7, minor: 0 }, 7, 1)).toBe(false);
+    expect(satisfiesVersion(rel(7, 0), 7, 1)).toBe(false);
   });
 
   it('defaults minMinor to 0', () => {
-    expect(satisfiesVersion({ major: 7, minor: 0 }, 7)).toBe(true);
+    expect(satisfiesVersion(rel(7, 0), 7)).toBe(true);
   });
 
   it('supports patch-level comparison', () => {
-    expect(satisfiesVersion({ major: 7, minor: 1, patch: 2 }, 7, 1, 1)).toBe(true);
-    expect(satisfiesVersion({ major: 7, minor: 1, patch: 0 }, 7, 1, 1)).toBe(false);
+    expect(satisfiesVersion(rel(7, 1, 2), 7, 1, 1)).toBe(true);
+    expect(satisfiesVersion(rel(7, 1, 0), 7, 1, 1)).toBe(false);
   });
 
   it('treats git builds as unknown', () => {

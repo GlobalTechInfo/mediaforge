@@ -3,6 +3,8 @@
  * All methods are pure — they return new arrays, never mutate.
  */
 
+import type { LogLevel } from '../types/options.ts';
+
 /** A single argument entry: a flag and optional value */
 export interface ArgEntry {
   flag: string;
@@ -42,8 +44,6 @@ export function toBitrate(value: string | number): string {
 /**
  * Build the global option args that appear before any -i.
  */
-import type { LogLevel } from '../types/options.ts';
-
 export function buildGlobalArgs(opts: {
   overwrite?: boolean;
   noOverwrite?: boolean;

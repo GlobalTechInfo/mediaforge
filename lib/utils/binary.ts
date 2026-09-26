@@ -88,16 +88,17 @@ export function isBinaryAvailable(binaryPath: string): boolean {
  */
 export function isBinaryAvailableAsync(binaryPath: string, timeoutMs = 5000): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
-    let ac: AbortController | null;
+    let child;
     try {
-      ac = new AbortController();
+      child = spawn(binaryPath, ['-version'], { stdio: 'ignore' });
     } catch {
-      ac = null;
+      // spawn() throws synchronously on invalid input (e.g. an embedded NUL).
+      // The signature promises a boolean, so resolve false rather than reject.
+      resolve(false);
+      return;
     }
-    const opts: Record<string, unknown> = { stdio: 'ignore' };
-    if (ac !== null) opts['signal'] = ac.signal;
-    const child = spawn(binaryPath, ['-version'], opts as import('node:child_process').SpawnOptions);
-    const timer = setTimeout(() => { if (ac !== null) ac.abort(); child.kill(); resolve(false); }, timeoutMs);
+    const timer = setTimeout(() => { child.kill(); resolve(false); }, timeoutMs);
+    if (typeof timer.unref === 'function') timer.unref();
     child.on('error', () => { clearTimeout(timer); resolve(false); });
     child.on('close', (code) => { clearTimeout(timer); resolve(code === 0); });
   });

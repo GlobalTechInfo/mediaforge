@@ -9,6 +9,31 @@ import type { ProgressInfo } from '../types/progress.ts';
 
 type PartialProgress = Partial<Record<string, string>>;
 
+/** Upper bound on keys held in an in-progress block (see ProgressParser.push). */
+const MAX_PROGRESS_KEYS = 64;
+
+/**
+ * Parse an integer from a progress field.
+ * FFmpeg reports "N/A" for counters it does not track on every code path, and
+ * `parseInt('N/A')` yields NaN — which then poisons `percent` and every
+ * downstream arithmetic on ProgressInfo. Fall back to 0 instead.
+ */
+function parseIntSafe(raw: string | undefined): number {
+  if (raw === undefined) return 0;
+  const trimmed = raw.trim();
+  if (trimmed === '' || trimmed === 'N/A') return 0;
+  const n = parseInt(trimmed, 10);
+  return Number.isNaN(n) ? 0 : n;
+}
+
+function parseFloatSafe(raw: string | undefined): number {
+  if (raw === undefined) return 0;
+  const trimmed = raw.trim();
+  if (trimmed === '' || trimmed === 'N/A') return 0;
+  const n = parseFloat(trimmed);
+  return Number.isNaN(n) ? 0 : n;
+}
+
 function parseSpeed(raw: string): number {
   // "2.50x" → 2.5,  "N/A" → 0
   if (raw === 'N/A' || raw === '') return 0;
@@ -55,19 +80,19 @@ function buildProgress(
   block: PartialProgress,
   totalDurationUs?: number,
 ): ProgressInfo {
-  const outTimeUs = parseInt(block['out_time_us'] ?? block['out_time_ms'] ?? '0', 10);
+  const outTimeUs = parseIntSafe(block['out_time_us'] ?? block['out_time_ms']);
   const progressVal = block['progress'] ?? 'continue';
   const progress: 'continue' | 'end' = progressVal === 'continue' || progressVal === 'end' ? progressVal : 'continue';
 
   const info: ProgressInfo = {
-    frame: parseInt(block['frame'] ?? '0', 10),
-    fps: parseFloat(block['fps'] ?? '0'),
+    frame: parseIntSafe(block['frame']),
+    fps: parseFloatSafe(block['fps']),
     bitrate: block['bitrate'] ?? 'N/A',
     totalSize: parseSize(block['total_size'] ?? '0'),
     outTimeUs,
     outTime: block['out_time'] ?? '00:00:00.000000',
-    dupFrames: parseInt(block['dup_frames'] ?? '0', 10),
-    dropFrames: parseInt(block['drop_frames'] ?? '0', 10),
+    dupFrames: parseIntSafe(block['dup_frames']),
+    dropFrames: parseIntSafe(block['drop_frames']),
     speed: parseSpeed(block['speed'] ?? 'N/A'),
     progress,
   };
@@ -102,6 +127,13 @@ export class ProgressParser {
 
     const key = line.slice(0, eq).trim();
     const value = line.slice(eq + 1).trim();
+
+    // Bound the block: if ffmpeg never emits `progress=` (e.g. -progress was
+    // not passed, or the run aborts), every key=value stderr line would
+    // otherwise accumulate here for the lifetime of the process.
+    if (this.block[key] === undefined && Object.keys(this.block).length >= MAX_PROGRESS_KEYS) {
+      return;
+    }
 
     this.block[key] = value;
 

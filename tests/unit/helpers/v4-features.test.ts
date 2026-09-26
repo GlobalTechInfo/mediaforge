@@ -85,6 +85,38 @@ describe('concatWithTransitions helpers', () => {
     const args = buildConcatTransitionArgs(['a.mp4', 'b.mp4'], 'out.mp4', 'crossfade', 1, 'libx264', 'aac', '30', '1920x1080');
     assert.ok(args.some(a => a.includes('scale=1920x1080')));
   });
+
+  // Regression: xfade used to write over the next input's scale/pad label,
+  // which made ffmpeg abort with exit code 234 (battle test, 2 inputs + 3 inputs).
+  for (const n of [2, 3, 4]) {
+    it(`buildConcatTransitionArgs defines every filtergraph label exactly once (${n} inputs)`, () => {
+      const inputs = Array.from({ length: n }, (_, i) => `p${i + 1}.mp4`);
+      const args = buildConcatTransitionArgs(inputs, 'out.mp4', 'fade', 0.5);
+      const fc = args[args.indexOf('-filter_complex') + 1];
+
+      const defined: string[] = [];
+      for (const seg of fc.split(';').filter(Boolean)) {
+        const out = seg.slice(seg.lastIndexOf('[') + 1, seg.lastIndexOf(']'));
+        if (out) defined.push(out);
+      }
+      const dupes = defined.filter((l, i) => defined.indexOf(l) !== i);
+      assert.deepStrictEqual(dupes, [], `duplicate filtergraph label(s): ${dupes.join(', ')}`);
+
+      // Every label consumed by an xfade/acrossfade chain must be defined upstream.
+      const consumed = [...fc.matchAll(/\[([a-z]+\d*)\]\[/g)].map(m => m[1]);
+      for (const c of consumed) {
+        assert.ok(defined.includes(c), `label [${c}] consumed but never defined`);
+      }
+
+      // The mapped video label must exist in the graph.
+      const mappedVideo = args[args.indexOf('-map') + 1];
+      assert.ok(defined.includes(mappedVideo.slice(1, -1)), `-map ${mappedVideo} is not defined`);
+
+      // No trailing separator: ffmpeg < 5 parses the empty trailing
+      // filterchain as a filter with an empty name ("No such filter: ''").
+      assert.ok(!fc.endsWith(';'), `filter_complex must not end with ';': ${fc}`);
+    });
+  }
 });
 
 // ─── detectSilence helpers ─��───────────────────────────────────────────

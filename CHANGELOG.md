@@ -7,14 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [2.0.0] — 2026-09-19
+## [2.0.0]
 
 ### Breaking Changes
 
 - **`concatFiles` is now `async`** — it probes each input for audio presence to avoid invalid filtergraph labels. Call sites must `await concatFiles({...})`.
 - **`setStreamMetadata` signature changed** — added `fileIndex` as the first parameter: `setStreamMetadata(fileIndex, type, streamIndex, key, value)`. Old call sites passing `(type, streamIndex, key, value)` will produce wrong metadata keys.
 - **`ffv1ToArgs` option `version` → `level`** — the option was renamed to match the emitted `-level` flag. Pass `{ level: 3 }` instead of `{ version: 3 }`.
-- **`mapStream(fileIndex, type, streamIndex)` return type** — now returns `['-map', spec]` (an array) instead of a bare string, consistent with the documented contract and all other mapping helpers. Spread usage (`...mapStream(...)`) will emit an extra `'-map'` arg — use `.map(mapStream(...)[1])` or assign the result first.
+- **`mapStream(fileIndex, type, streamIndex)` now returns an args tuple** — the numeric convenience form had no overload declaration and returned a **bare specifier string** (`'0:v:0'`) while the `StreamSpecifier`/string form returned `['-map', '0:v:0']`. That asymmetry made it impossible to `...mapStream(0, 'v', 0)` into an argument list. Both forms now return `['-map', spec]`: `mapStream(0, 'v', 0) // → ['-map', '0:v:0']`. Call sites that treated the result as a string (`.map(mapStream(0,'v',0))`, `args.push(mapStream(0,'v',0))`) must switch to `...mapStream(0,'v',0)`.
 - **`satisfiesVersion` now requires full `VersionInfo`** — callers passing `{ major, minor }` only will get a type error; pass the full object returned by `parseVersionOutput` or `probeVersion`.
 
 ### Fixed
@@ -23,29 +23,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **#2 FFmpegSpawnError.stderrOutput** — wired `captureStderr().stderrLines` into `FFmpegSpawnError` so spawn failures include ffmpeg diagnostics in `err.stderrOutput`.
 - **#3 Double error event on timeout** — added a `settled` flag in `spawnFFmpeg` so the timeout handler and the process `close` handler emit exactly one `'error'` event instead of two.
 - **#4 HLS segment extension** — `hlsPackage` and `adaptiveHls` already defaulted to `.ts` extensions; confirmed no regression.
-- **#5 concatFiles audio-less inputs** — `concatFiles` now probes each input for audio presence and uses `[i:v][i:a]` when audio exists or `[i:v]anullsrc[a${i}]` when it does not, eliminating invalid `[i:a?]` filtergraph labels.
+- **#5 concatFiles audio-less inputs** — `concatFiles` now probes each input for audio presence and uses `[i:v][i:a]` when audio exists or a synthetic `anullsrc=channel_layout=stereo:sample_rate=44100[a${i}]` source when it does not, eliminating invalid `[i:a?]` filtergraph labels. The silent track is generated as a standalone source (not `[i:v]anullsrc[...]`, which is invalid syntax because `anullsrc` is a source filter and takes no input).
 - **#6 setStreamMetadata signature** — added the missing `fileIndex` first parameter to match JSDoc; all call sites updated.
-- **#7 mapStream return type** — the three-argument convenience form now consistently returns an args array (`['-map', spec]`) matching the documented contract.
+- **#7 mapStream numeric overload** — the three-argument convenience form is now declared in the public type signature as `mapStream(fileIndex: number, type?: MediaTypeChar, streamIndex?: number): ['-map', string]`, and it returns the same `['-map', spec]` tuple as the `StreamSpecifier`/string form. The two forms are now interchangeable; see the Breaking Changes note above for migrating old call sites.
 - **#8 streams.ts stderr snapshot** — `pipeThrough`, `streamOutput`, and `streamToFile` now keep the `captureStderr` reference and read `stderrLines` at error time, fixing empty stderr in `FFmpegSpawnError`.
 - **#9 Builder timeout forwarding** — `FFmpegBuilder.run()` and `.spawn()` now accept an optional `timeout` option and forward it to the spawn layer.
 - **#10 Registry stale cache** — `CapabilityRegistry.invalidate()` now clears `_encoders` in addition to the other caches, preventing stale encoder data after `setBinary()`.
 - **#11 mergeToFile mkdir** — the single-input fast path now creates the output directory with `mkdirSync({ recursive: true })` before copying.
-- **#12 concatWithTransitions pad collision** — xfade output labels changed from `[vN]` to `[xvN]` to avoid colliding with input scale-pad labels.
+- **#12 concatWithTransitions duplicate filtergraph labels** — the xfade chain wrote its result over the scale/pad label of the next input (`[v0][v1]xfade=…[v1]` while `[1:v]scale=…[v1]` had already defined it), which makes ffmpeg abort with `Output with label 'v1' does not exist in any defined filter graph, or was already used elsewhere` (exit code 234). Both `concatWithTransitions` and `buildConcatTransitionArgs` now keep the per-input scale/pad labels `v{i}` and write xfade results to a separate `x{i}` namespace, mapping the final `[x{n-1}]`. Audio already used the same separated scheme (`a{i}` → `atmp{i}` → `outa`). See also #51.
 - **#13 Two-pass consistency** — `buildTwoPassArgs` now mirrors `twoPassEncode` exactly: uses a unique per-job temp directory, always includes `-an` in pass 1, and handles `audioCodec: 'none'` consistently in both functions.
 - **#14 drawtext %{...} expansion** — added `escapeDrawtextValue()` that preserves `%{pts_hms}`-style expressions while still escaping backslashes, quotes, and other drawtext special characters. `burnTimecode` and `buildBurnTimecodeFilter` now use it.
-- **#15 satisfiesVersion patch comparison** — full semver comparison now includes the patch component. Git/nightly builds are treated as "unknown" (only pass when `minMajor/minMinor/minPatch` are all 0) instead of being forced to `999.999.999`.
+- **#15 satisfiesVersion patch comparison** — full semver comparison now includes the patch component, and Git/nightly builds are treated as "unknown" by `satisfiesVersion` (they pass only when `minMajor`/`minMinor`/`minPatch` are all 0). `parseVersionOutput` still records `999.999.999` for such builds: that sentinel is what makes `isFeatureExpected` — and therefore `guardFeatureVersion` and `checkFeature` — pass on nightly builds, which ship the newest features.
 - **#16 Negative progress percentage** — `buildProgress` now clamps `percent` to `[0, 100]` to handle negative `out_time_us` sentinels emitted by ffmpeg before the first frame.
 - **#17 autoKillOnExit signal handling** — the SIGINT/SIGTERM handler now re-raises the signal after cleanup so Node.js retains its default exit behavior.
-- **#18 normalizeAudio one-pass mode** — when `twoPass: false` the returned `NormalizeResult` now reports `null`-equivalent measured values instead of fabricating `inputI = targetI`.
+- **#18 normalizeAudio one-pass mode** — when `twoPass: false` the returned `NormalizeResult` now reports `NaN` for the measured fields instead of fabricating `inputI = targetI`. The values are genuinely unknown in single-pass mode (the source is never analysed), and `NaN` propagates honestly rather than being forced through `as unknown as number` casts on `null`.
 - **#19 VideoToolbox allowFrameReordering** — removed the incorrect `-realtime` mapping; `allowFrameReordering` is no longer emitted since ffmpeg's videotoolbox does not expose a direct flag for it.
 - **#20 mp3ToArgs -abr** — removed the undocumented `-abr` flag from `mp3ToArgs`; ABR is selected via `-b:a` instead.
 - **#21 watermark copy filter** — replaced the `copy` filter (requires ffmpeg ≥ 4.3) with `format=rgba` as the default no-op transform in watermark pipelines.
 - **#22 waveform hex colors** — `generateWaveform` now strips the leading `#` from hex colors before passing to `showwavespic` for broader compatibility.
 - **#23 ffv1ToArgs option rename** — renamed the `version` option to `level` to match the actual emitted `-level` flag and reduce confusion.
 
+### Fixed — streaming & process lifecycle
+
+- **#24 `streamOutput` stderr deadlock** — `streamOutput` piped stderr but never read it. Once the 64 KB OS pipe buffer filled, ffmpeg blocked on write and the transcode hung forever. stderr is now drained into a bounded 8 KB tail used for diagnostics. A 4000-line (~300 KB) stderr run now completes in ~40 ms.
+- **#25 `streamOutput` reported failures as success** — the internal `PassThrough` emitted `end` when the child's stdout drained, which happens before the child's `close` event, so a non-zero exit surfaced as a clean success. stdout is now piped with `{ end: false }` and `end()` is deferred to the `close` handler, so failures reliably emit an `FFmpegSpawnError` (with the captured stderr attached).
+- **#26 `streamOutput` orphaned ffmpeg processes** — destroying or closing the returned stream did not kill the child. The stream's `close` event now terminates a still-running child.
+- **#27 `'start'` event was unobservable** — `spawnFFmpeg` and `pipeThrough` emitted `'start'` synchronously, before the caller could attach a listener. Both now emit on a microtask so `proc.emitter.on('start', ...)` actually fires.
+- **#28 stderr reader leak on timeout and spawn error** — the `close` handler early-returns once `settled` is set, so the timeout and `'error'` paths never called `captureStderr().close()`, leaking the readline interface and its stream listeners. stderr is now released exactly once on every exit path.
+- **#29 `pipeThrough` double terminal event** — `'error'` is always followed by `'close'`, which emitted a second `end`/`error` on the same emitter. A `settled` guard now guarantees exactly one terminal event.
+- **#30 `streamToFile` double settle and file-descriptor leak** — both code paths could resolve/reject twice, and the temp-buffer error paths removed the temp directory without destroying the write stream, leaving the fd open and pending writes pointed at a deleted path. The write stream is now destroyed before cleanup and both paths are guarded.
+
+### Fixed — memory & resource leaks
+
+- **#31 unbounded child-tracking leak** — `trackChild` appended every child to a module-level array and never removed it, so a long-running process leaked one entry per encode and `getSpawnedCount()` scanned the whole history. Tracking is now a `Set` of live children, pruned on `close`/`exit`; `killAllFFmpeg` iterates a snapshot because killing can mutate the set synchronously.
+- **#32 `autoKillOnExit` leaked signal listeners** — the handler was registered with `process.once` but removed with `process.off`, which only removes one registration, so repeated calls left orphaned SIGINT/SIGTERM handlers behind. Now registered with `process.on` and removed with `removeListener`.
+- **#33 `buildTwoPassArgs` leaked a temp directory** — the dry-run arg builder called `mkdtempSync` on every invocation and never cleaned up. The directory is now documented as intentionally retained (the returned `passlog` path must stay valid for a manual run) and callers that do not run the passes are told to remove it.
+- **#34 `writeMetadata` leaked a temp directory on failure** — the chapter file was written outside the `try` block, so a write failure left the temp dir behind. It is now cleaned up on error.
+- **#35 unbounded progress block** — if ffmpeg never emitted `progress=`, every `key=value` stderr line accumulated in the parser for the life of the process. The block is now capped at 64 keys.
+- **#36 `CapabilityRegistry` could block forever** — the internal `spawnSync` had no timeout, so a wedged binary would hang the event loop indefinitely. It now has a 15 s timeout, a `SIGKILL` kill signal, and a 32 MB output cap.
+
+### Fixed — correctness
+
+- **#37 `probeAsync` never settled on success** — the success path left `settled` false and never cleared the timeout, so a completed probe left a live timer that later killed an already-reaped child. Both paths now settle exactly once and clear the timer.
+- **#38 `probeVersionAsync` could exit before resolving** — the child was `unref()`'d immediately after spawn while the function was waiting for its `close` event, so the process could exit with the promise unsettled; the timeout was meanwhile *not* unref'd, so it alone held the loop open. The child now stays referenced and only the timer is unref'd.
+- **#39 `getDefaultRegistry` ignored its `binary` argument** — a single cached instance was returned for every call after the first, handing back capabilities probed from a different binary. Registries are now cached per binary path.
+- **#40 `ProgressInfo` fields could be `NaN`** — `parseInt`/`parseFloat` on ffmpeg's `N/A` sentinels produced `NaN` for `frame`, `fps`, `outTimeUs`, `dupFrames` and `dropFrames`, and `NaN` propagated into `percent` and any downstream arithmetic. `N/A` and unparsable values now normalise to `0`.
+- **#41 `parseFrameRate` returned `NaN` values** — `"1/abc"` produced `{ num: 1, den: NaN, value: NaN }` instead of `null`. Non-finite components and `N/A` are now rejected; `summarizeAudioStream` likewise guards a non-numeric `sample_rate`.
+- **#42 `extractJsonBlock` was quadratic** — it attempted a `JSON.parse` for every `{`…`}` candidate, which became a CPU sink on large stderr dumps (e.g. `loudnorm` over a long file). Replaced with a single-pass brace matcher that is string- and escape-aware.
+- **#43 multi-byte UTF-8 corruption in child stdout** — `chunk.toString()` per chunk splits characters that straddle chunk boundaries, corrupting non-ASCII metadata and titles. `probeAsync` and `probeVersionAsync` now reassemble the byte stream with `StringDecoder`.
+- **#44 `isBinaryAvailableAsync` could reject** — `spawn()` throws synchronously on invalid input (e.g. an embedded NUL), but the signature promises `Promise<boolean>`. It now resolves `false` instead, and the timeout path no longer aborts and kills redundantly.
+- **#45 `trimVideo` emitted a negative duration** — `end <= start` produced `-t <negative>`, which ffmpeg rejects with an opaque error. Now validated with a clear message.
+- **#46 `stackVideos` built `amix` from optional pads** — `[i:a?]` pads are dropped by ffmpeg, so `amix=inputs=N` could receive fewer inputs than declared, and when no input had audio the `[audio]` label was never created. Inputs are now probed first and the audio graph is only added when at least one input has audio (otherwise `-an` is used).
+- **#47 `adaptiveHls` accepted malformed resolutions** — `Number('')` is `0`, not `NaN`, so `"1920x"` passed validation and emitted `scale=1920:0`. Empty, non-finite and non-positive dimensions are now rejected, and an empty `variants` array (which produced an invalid `split=0`) throws.
+
+### Security
+
+- **#48 chapter title injection (FFMETADATA)** — chapter titles were interpolated into the generated `FFMETADATA1` file unescaped, so a title containing a newline could inject arbitrary metadata keys and `[CHAPTER]` sections into the output. Backslashes are escaped, newlines are flattened to spaces, and leading `#`/`;` comment markers are neutralised.
+- **#49 `burnTimecode` font path injection** — the font file path was interpolated into the `drawtext` filter unescaped, so a path containing a quote broke out of the filter option. It now uses `escapeDrawtextValue`, matching what `buildBurnTimecodeFilter` already did.
+- **#50 `concatFiles` probed with the wrong binary** — the ffmpeg binary was passed where the *ffprobe* binary is expected, so every probe failed silently and audio was always assumed present (defeating #5). It now resolves `resolveProbe()`.
+- **#51 Transition filtergraph ended with a stray `;`** — `concatWithTransitions` and `buildConcatTransitionArgs` terminated every `-filter_complex` link with `;`, leaving an empty trailing filterchain. ffmpeg 5+ tolerates it, but ffmpeg 4.x (still shipped by Ubuntu 20.04/22.04 and most distro packages) parses the empty chain as a filter with an empty name and aborts with `No such filter: ''` (exit code 1). Both now build the graph through a shared `buildTransitionGraph` helper that joins links instead of terminating them, which also removed the duplicated graph-building code.
+
+- **#52 `scripts/build.ts` silently corrupted HLS segment extensions** — the build copied `lib/` to a temp directory and ran a global `sed "s/\.ts'/.js'/g"` over every source file to rewrite `.ts` import specifiers for the ESM/CJS output. That rewrote *any* string ending in `.ts`, not just import paths, so `hls.ts`'s `segmentFilename = 'segment%03d.ts'` and `segmentPattern = '%v_seg%03d.ts'` shipped as `.js` in the published package. The result was that npm/Deno consumers got `.js`-named HLS segments while source consumers (and the whole test suite, which imports from source) got `.ts` — the library behaved differently depending on how it was loaded. The temp-copy-and-`sed` step is gone entirely; both build targets now use TypeScript's native `rewriteRelativeImportExtensions` (with `allowImportingTsExtensions`), which rewrites import specifiers in the emitted output and cannot touch string literals.
+- **#53 `hlsPackage` wrote nothing and reported success** — neither ffmpeg's `hls` muxer nor `dashPackage`'s muxer creates the output directory. If `outputDir` did not exist, ffmpeg's HLS muxer **exited 0 and produced no files at all**, so `hlsPackage(...).run()` silently did nothing. `hlsPackage` now creates the output directory (and `dashPackage` the manifest's parent) up front, matching `adaptiveHls`. The battle tests had pre-created the directory themselves, which is why this was never caught.
+- **#54 `hlsVersion` was accepted but never emitted** — the option was documented as non-existent while real callers (including both battle tests) passed it, and it was silently dropped. `hlsPackage` now emits `-hls_version` and validates it as an integer in 3–8. Note it is a top-level muxer option: `hlsFlags: 'hls_version=3'` makes ffmpeg abort with `Unable to parse option value "hls_version=3"`.
+- **#55 `showspectrum` colour accepted CSS colours it cannot parse** — `generateSpectrum`/`buildSpectrumFilter` typed `color` as a free `string` and passed it to the `showspectrum` filter, whose `color` option is an integer enum of named palettes. Any CSS colour (`'red'`, `'#ff0000'`) made ffmpeg fail with `Undefined constant or missing '(' in 'red'`. The option is now typed `SpectrumColor` and validated against the exported `SPECTRUM_COLORS` list, with an error that names the valid palettes. (`generateWaveform`'s colour genuinely *is* a CSS colour and is unchanged — the two are easy to confuse.)
+- **#56 `buildLoudnormFilter` emitted `offset=undefined`** — the `measured` parameter required a `targetOffset` field that `parseLoudnorm()` never returns, so the obvious composition `buildLoudnormFilter(-16, 11, -1.5, await parseLoudnorm(...))` was a type error, and forcing it at runtime produced `offset=undefined`, which ffmpeg rejects. `targetOffset` is now optional and `offset=` is omitted when absent. Both the camelCase `EbuR128Result` shape and the snake_case spelling ffmpeg prints (`input_i`, `input_lra`, …) are accepted, and unusable values raise a clear error instead of silently emitting `undefined`.
+- **#57 `addChapters` accepted unusable chapter definitions** — a missing or misspelled start key silently wrote `START=NaN` (chapters then all read back as `0`), and out-of-order chapters made ffmpeg fail with `Chapter end time 1000 before start 2000` / `Cannot allocate memory`. `addChapters` now resolves `start` (or the `startSec` alias, matching `ChapterMeta`) and validates that every start is a finite non-negative number and that chapters are in ascending order. Empty lists and blank titles are rejected too.
+- **#58 `formatDuration` emitted garbage for invalid input** — negative values produced `"-1:-1:-5.000"`, and `NaN`/`Infinity` produced `"NaN:NaN:000NaN"`. It now throws a `RangeError` for non-finite or negative input.
+- **#59 `parseDuration` could not read clock notation** — despite the name it only handled a plain seconds string, so `"00:01:30.5"` parsed as `0` and `"1:30"` as `1`. It now accepts both forms ffmpeg emits: JSON seconds (`"120.042000"`) and text clock notation (`"00:02:00.042"`, `"2:00"`, `"-5"`), still returning `null` for absent/`'N/A'`/junk input.
+- **#60 `parseFrameRate` accepted negative rates** — `"-30/1"` returned `{ value: -30 }`, which is not a usable frame rate. Negative numerators now return `null`.
+
+### Known limitations
+
+- **`hlsVersion` requires ffmpeg 5 or newer.** `-hls_version` does not exist in the HLS muxer of ffmpeg 4.x (e.g. Ubuntu 20.04/22.04). Passing `hlsVersion` to `hlsPackage` on such a build makes ffmpeg exit non-zero with `Unrecognized option 'hls_version'`. Omit the option on ffmpeg 4.x and let ffmpeg choose.
+- **`VideoToolboxOptions.allowFrameReordering` is accepted but ignored.** FFmpeg's `videotoolbox` encoder exposes no direct flag for it, so the option is never emitted (see #19). It remains in the public type for backwards compatibility; passing it has no effect.
+- **An unhandled `'error'` event throws.** `FFmpegEmitter` extends `EventEmitter`, so emitting `'error'` with no attached listener raises an uncaught exception. Always attach an `'error'` listener to the emitter returned by `spawnFFmpeg()`, `pipeThrough()` and `concatFiles()`. `FFmpegEmitter` sets `captureRejections: true`, which handles rejected listener promises but does *not* suppress the unhandled-`'error'` throw.
+
+### Documentation
+
+The README was audited line-by-line against the source and every claim was verified by executing the library. **32 defects** were corrected:
+
+- **Non-functional examples.** `extractFrames({ pattern, quality })` (neither option exists — it is `filename`/`format`), `detectSilence({ noiseLevel, silenceOnly })` plus the wrong `silence.startTimes` return shape, `parseLoudnorm({ measures })` returning `{ normalized }`, `addChapters({ startSec, endSec })` (that shape belongs to `writeMetadata`; `addChapters` takes `{ title, start }`), and `videoFilterChain('scale=1280:720')` — the factory takes no arguments, so the filter string was silently discarded and `toString()` returned `""`.
+- **Filter overloads were documented backwards.** The README claimed "all filter functions work in two modes". In fact only 8 of 26 audio filters and 10 of 50 video filters are dual-style; the rest require a `FilterChain` as their first argument and throw a `TypeError` otherwise. Examples such as `highpass({ frequency: 80 })`, `dynaudnorm()` and `compand()` crashed. Both sections now carry verified dual/chained tables.
+- **Repeated `.videoFilter()`/`.audioFilter()` calls.** Each call appends another `-vf`/`-af` pair and FFmpeg only honours the last, so several documented examples silently dropped filters. Now documented as an explicit footgun.
+- **Wrong factual claims corrected:** the fabricated `hlsVersion` option; `generateWaveform`'s `backgroundColor`/`mode` being described as "emitted when non-default" when they are deprecated no-ops; `ss(0,'a','eng')` documented as a language selector; `mapAVS` missing its optional `0:s?` pad; `buildLoudnormFilter` shown in uppercase when it emits lowercase keys; `buildScreenshotArgs` shown with the wrong flag order; `resetLabelCounter` described as functional when it is a deprecated no-op; `streamToUrl`'s `format` described as required when it is inferred from the URL scheme; and "75 built-in filters" when the real count is 76.
+- **`levels()` mis-described.** It was documented as FFmpeg 7.x's `levels` filter, but it is a deprecated alias for `colorlevels`, which exists in FFmpeg 6 and 7.
+- **New coverage added:** 15 previously undocumented builder methods; the full CLI surface (5 of ~20 flags were documented); 14 Table-of-Contents entries; corrected Deno permissions; and repaired malformed markdown in the codec-serializer tables.
+- **`tests/unit/readme.claims.test.ts`** (38 assertions) locks every documented claim to the source, so the docs cannot drift again. It also verifies that all 76 exported filters appear in the inventory, that no markdown table is ragged, that every TOC link resolves, and that every public builder method is documented.
+
 ---
 
-## [0.3.0] — 2026-04-24
+## [0.3.0]
 
 ### Added
 
@@ -126,7 +194,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.3.0-rc.1] — 2026-04-18
+## [0.3.0-rc.1]
 
 ### Added
 
@@ -179,7 +247,7 @@ Node battle test extended with 22 new integration tests (sections 25–27). Deno
 
 ---
 
-## [0.2.0] — 2026-04-08
+## [0.2.0]
 
 ### Breaking Changes
 
@@ -251,7 +319,7 @@ Unit test coverage added for all 17 new codec serializers in `tests/unit/codecs/
 - **`dashPackage`** — removed `min_buffer_time`, `use_template`, `use_timeline`; all removed from FFmpeg DASH muxer in v7.x
 - **`parseFrameRate`** — return type changed from `ParsedFrameRate | null` (`{num,den,value}` object) to `number | null`. `ParsedFrameRate` is now a `type` alias for `number` (**breaking**: code accessing `.value`/`.num`/`.den` must use the value directly)
 - **`selectBestCodec`** — now returns the last no-`featureKey` candidate as software fallback instead of `null`, so `selectVideoCodec` always resolves to a string on any machine
-- **`mapStream(fileIndex, type, streamIndex?)`** — new three-argument overload returning a plain string; original single-argument tuple form unchanged
+- **`mapStream(fileIndex, type, streamIndex?)`** — new three-argument overload added; original single-argument tuple form unchanged. (In 2.x the numeric overload returned a bare specifier string; it returns the same `['-map', spec]` tuple as the string form since 2.0.0.)
 - **`scale`, `crop`, `overlay`, `drawtext`, `fade`** — standalone call form added: `scale({w:320,h:180})` returns a serialized string. `ScaleOptions`/`CropOptions` accept `w`/`h` shorthand
 - **`volume`, `loudnorm`, `equalizer`, `atempo`** — standalone call form added: `loudnorm({i:-16,lra:11,tp:-1.5})` returns serialized string
 - **`FFmpegBuilder.videoFilter` / `.audioFilter`** — accept `string | FilterChain | {toString()}` so standalone filter results pass directly: `.videoFilter(scale({w:320,h:180}))`
@@ -320,7 +388,7 @@ Unit test coverage added for all 17 new codec serializers in `tests/unit/codecs/
 
 ---
 
-## [0.1.0] — 2026-04-08
+## [0.1.0]
 
 ### Fixed
 
@@ -459,7 +527,7 @@ Consider increasing the value for the 'analyzeduration' and 'probesize' options
 
 ---
 
-## [0.0.1] — 2026-03-15
+## [0.0.1]
 
 Initial release.
 

@@ -117,14 +117,19 @@ export async function concatFiles(opts: ConcatFilesOptions): Promise<FFmpegProce
 
   // Build filter_complex — probe each input for audio presence to avoid
   // invalid `[i:a?]` placeholders in filtergraph pad names.
+  if (inputs.length === 0) throw new Error('concatFiles requires at least one input');
+
   const n = inputs.length;
   const inputArgs: string[] = [];
   for (const inp of inputs) inputArgs.push('-i', inp);
 
+  // `binary` is the FFMPEG path; probeAsync needs the FFPROBE path. Passing
+  // ffmpeg here made every probe fail, so audio was always assumed present.
+  const probeBin = resolveProbe();
   const hasAudio: boolean[] = [];
   for (const inp of inputs) {
     try {
-      const result = await probeAsync(inp, { binary });
+      const result = await probeAsync(inp, { binary: probeBin });
       hasAudio.push(getAudioStreams(result).length > 0);
     } catch {
       // If probing fails, assume audio is present (conservative)
@@ -137,7 +142,9 @@ export async function concatFiles(opts: ConcatFilesOptions): Promise<FFmpegProce
     if (hasAudio[i]) {
       filterComplex += `[${i}:v][${i}:a]`;
     } else {
-      filterComplex += `[${i}:v]anullsrc[a${i}]`;
+      // anullsrc is a SOURCE filter: it takes no inputs. The previous form
+      // `[i:v]anullsrc[aN]` was invalid filtergraph syntax and always failed.
+      filterComplex += `anullsrc=channel_layout=stereo:sample_rate=44100[a${i}]`;
     }
   }
   filterComplex += `concat=n=${n}:v=1:a=1[v][a]`;
@@ -221,6 +228,66 @@ export interface ConcatWithTransitionsOptions {
 }
 
 /**
+ * Shared `-filter_complex` builder for transition concatenation.
+ *
+ * Two invariants matter here:
+ *
+ * 1. **Label namespaces must not overlap.** Per-input scale/pad links write to
+ *    `v{i}`; xfade results are written to a separate `x{i}` namespace (audio
+ *    does the same with `a{i}` → `atmp{i}` → `outa`). Letting xfade write back
+ *    to `v{i+1}` redefines the next input's pad label and ffmpeg aborts with
+ *    exit code 234.
+ * 2. **No trailing `;`.** Segments are joined rather than each terminated with
+ *    `;`. ffmpeg < 5 parses the empty trailing filterchain as a filter with an
+ *    empty name and fails with `No such filter: ''`.
+ *
+ * The final video label is `[x{n-1}]` and the final audio label is `[outa]`.
+ */
+function buildTransitionGraph(
+  n: number,
+  parts: {
+    scaleFpsFilter: string;
+    transition: TransitionType;
+    duration: number;
+    offsets: number[];
+    audioFormat: string;
+  },
+): string {
+  const { scaleFpsFilter, transition, duration, offsets, audioFormat } = parts;
+  const segments: string[] = [];
+
+  // Normalize every input to a common size/rate.
+  for (let i = 0; i < n; i++) {
+    segments.push(`[${i}:v]${scaleFpsFilter}[v${i}]`);
+  }
+
+  // Chain the xfades. Input 0 feeds the first xfade; each xfade output feeds the next.
+  for (let i = 0; i < n - 1; i++) {
+    const left = i === 0 ? 'v0' : `x${i}`;
+    segments.push(
+      `[${left}][v${i + 1}]xfade=transition=${transition}:duration=${duration}:offset=${offsets[i] ?? 0}[x${i + 1}]`,
+    );
+  }
+
+  // Audio: format every input, then chain acrossfades so no output is orphaned.
+  for (let i = 0; i < n; i++) {
+    segments.push(`[${i}:a]${audioFormat ? `aformat=${audioFormat}` : 'anull'}[a${i}]`);
+  }
+  if (n === 1) {
+    segments.push('[a0]anull[outa]');
+  } else {
+    let prev = 'a0';
+    for (let i = 1; i < n; i++) {
+      const label = i < n - 1 ? `atmp${i}` : 'outa';
+      segments.push(`[${prev}][a${i}]acrossfade=d=${duration}:curve1=tri:curve2=tri[${label}]`);
+      prev = label;
+    }
+  }
+
+  return segments.join(';');
+}
+
+/**
  * Concatenate videos with transitions (crossfade/xfade).
  *
  * @example
@@ -285,51 +352,30 @@ export async function concatWithTransitions(opts: ConcatWithTransitionsOptions):
 
   // Build filter_complex
   // Use xfade filter for transitions between clips
-  let filterComplex = '';
-
-  // First, scale and fps all inputs to same size
   const scaleFpsFilter = `scale=${resolution ? resolution + ':force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2' : 'iw:ih'}${fps ? `,fps=${fps}` : ''}`;
 
-  // Create scale filters for each input
-  for (let i = 0; i < n; i++) {
-    filterComplex += `[${i}:v]${scaleFpsFilter}[xv${i}];`;
-  }
-
-  // Create xfade transitions using probed durations
-  const transitionOffsets: string[] = [];
+  // Xfade offsets from the probed durations.
+  const offsets: number[] = [];
   let cumulativeOffset = 0;
-
   for (let i = 0; i < n - 1; i++) {
     cumulativeOffset += (durations[i] ?? 5) - duration;
-    const nextInput = i + 1;
-    transitionOffsets.push(`[xv${i}][xv${nextInput}]xfade=transition=${transition}:duration=${duration}:offset=${Math.max(0, cumulativeOffset)}[xv${i + 1}];`);
+    offsets.push(Math.max(0, cumulativeOffset));
   }
 
-  filterComplex += transitionOffsets.join('');
-
-  // Add audio crossfade using acrossfade filter
   const audioFormatFilter = opts.audioFormat !== '' ? (opts.audioFormat ?? 'sample_fmts=s16:sample_rates=44100:channel_layouts=stereo') : '';
-  for (let i = 0; i < n; i++) {
-    filterComplex += `[${i}:a]${audioFormatFilter ? `aformat=${audioFormatFilter}` : 'anull'}[a${i}];`;
-  }
-
-  // Audio acrossfade transitions — chain sequentially so no output is orphaned
-  if (n === 1) {
-    filterComplex += `[a0]anull[outa]`;
-  } else {
-    let prev = `a0`;
-    for (let i = 1; i < n; i++) {
-      const label = i < n - 1 ? `atmp${i}` : `outa`;
-      filterComplex += `[${prev}][a${i}]acrossfade=d=${duration}:curve1=tri:curve2=tri[${label}];`;
-      prev = label;
-    }
-  }
+  const filterComplex = buildTransitionGraph(n, {
+    scaleFpsFilter,
+    transition,
+    duration,
+    offsets,
+    audioFormat: audioFormatFilter,
+  });
 
   const args: string[] = [
     '-y',
     ...inputArgs,
     '-filter_complex', filterComplex,
-    `-map`, `[v${n - 1}]`,
+    '-map', `[x${n - 1}]`,
     '-map', '[outa]',
     '-c:v', videoCodec,
     '-c:a', audioCodec,
@@ -376,44 +422,29 @@ export function buildConcatTransitionArgs(
 
   const scaleFpsFilter = `scale=${resolution ? resolution + ':force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2' : 'iw:ih'}${fps ? `,fps=${fps}` : ''}`;
 
-  let filterComplex = '';
-  for (let i = 0; i < n; i++) {
-    filterComplex += `[${i}:v]${scaleFpsFilter}[v${i}];`;
-  }
-
-  const transitionOffsets: string[] = [];
+  // Dedicated `x{i}` output labels keep xfade results from colliding with the
+  // `v{i}` scale/pad labels of the inputs.
+  const offsets: number[] = [];
   let cumulativeOffset = 0;
-
   for (let i = 0; i < n - 1; i++) {
-    const nextInput = i + 1;
     const clipDuration = durations?.[i] ?? duration * 2;
     cumulativeOffset += clipDuration - duration;
-    transitionOffsets.push(`[v${i}][v${nextInput}]xfade=transition=${transition}:duration=${duration}:offset=${cumulativeOffset}[v${i + 1}];`);
+    offsets.push(cumulativeOffset);
   }
 
-  filterComplex += transitionOffsets.join('');
-
-  const afmt = audioFormat ?? 'sample_fmts=s16:sample_rates=44100:channel_layouts=stereo';
-  for (let i = 0; i < n; i++) {
-    filterComplex += `[${i}:a]${afmt ? `aformat=${afmt}` : 'anull'}[a${i}];`;
-  }
-
-  if (n === 1) {
-    filterComplex += `[a0]anull[outa]`;
-  } else {
-    let prev = `a0`;
-    for (let i = 1; i < n; i++) {
-      const label = i < n - 1 ? `atmp${i}` : `outa`;
-      filterComplex += `[${prev}][a${i}]acrossfade=d=${duration}:curve1=tri:curve2=tri[${label}];`;
-      prev = label;
-    }
-  }
+  const filterComplex = buildTransitionGraph(n, {
+    scaleFpsFilter,
+    transition,
+    duration,
+    offsets,
+    audioFormat: audioFormat ?? 'sample_fmts=s16:sample_rates=44100:channel_layouts=stereo',
+  });
 
   return [
     '-y',
     ...inputArgs,
     '-filter_complex', filterComplex,
-    `-map`, `[xv${n - 1}]`,
+    '-map', `[x${n - 1}]`,
     '-map', '[outa]',
     '-c:v', videoCodec,
     '-c:a', audioCodec,

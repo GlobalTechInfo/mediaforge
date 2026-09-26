@@ -32,6 +32,15 @@ export interface HlsOptions {
   audioBitrate?: string;
   /** HLS flags (comma-separated). Common: 'delete_segments', 'append_list', 'split_by_time' */
   hlsFlags?: string;
+  /**
+   * HLS protocol version to write (`-hls_version`), 3-8.
+   *
+   * This is a top-level hls-muxer option, NOT an `hls_flags` entry — passing
+   * `hls_version=3` via `hlsFlags` makes ffmpeg abort with
+   * `Unable to parse option value "hls_version=3"`. ffmpeg picks a version
+   * automatically when this is omitted.
+   */
+  hlsVersion?: number;
   /** Keyframe interval (must align with segment duration × fps). Default: 48 */
   gopSize?: number;
   /** Force IDR frame at each segment boundary */
@@ -72,6 +81,7 @@ export function hlsPackage(opts: HlsOptions): FFmpegBuilder {
     audioCodec = 'aac',
     audioBitrate = '128k',
     hlsFlags,
+    hlsVersion,
     gopSize = 48,
     forceKeyFrames,
     crf,
@@ -82,6 +92,12 @@ export function hlsPackage(opts: HlsOptions): FFmpegBuilder {
 
   const outputPath = `${outputDir}/${playlistName}`;
   const segmentPath = `${outputDir}/${segmentFilename}`;
+
+  // ffmpeg's hls muxer does NOT create the output directory. If it is missing,
+  // ffmpeg still exits 0 and writes nothing at all — a silent no-op rather than
+  // an error. Create it here so the call either works or fails loudly.
+  mkdirSync(dirname(outputPath), { recursive: true });
+  mkdirSync(dirname(segmentPath), { recursive: true });
 
   const builder = new FFmpegBuilder(input)
     .overwrite()
@@ -101,10 +117,14 @@ export function hlsPackage(opts: HlsOptions): FFmpegBuilder {
   if (movflags !== undefined) builder.addOutputOption('-movflags', movflags);
   if (forceKeyFrames !== undefined)
     builder.addOutputOption('-force_key_frames', forceKeyFrames);
-  if (hlsFlags !== undefined)
-    builder.addOutputOption('-hls_flags', hlsFlags);
-  if (hlsKeyInfoFile !== undefined)
-    builder.addOutputOption('-hls_key_info_file', hlsKeyInfoFile);
+  if (hlsFlags !== undefined) builder.addOutputOption('-hls_flags', hlsFlags);
+  if (hlsVersion !== undefined) {
+    if (!Number.isInteger(hlsVersion) || hlsVersion < 3 || hlsVersion > 8) {
+      throw new Error(`hlsPackage: hlsVersion must be an integer between 3 and 8, got ${hlsVersion}`);
+    }
+    builder.addOutputOption('-hls_version', String(hlsVersion));
+  }
+  if (hlsKeyInfoFile !== undefined) builder.addOutputOption('-hls_key_info_file', hlsKeyInfoFile);
 
   if (binary !== undefined) builder.setBinary(binary);
   return builder;
@@ -179,12 +199,37 @@ export function adaptiveHls(opts: AdaptiveHlsOptions): FFmpegBuilder {
     binary,
   } = opts;
 
+  if (variants.length === 0) {
+    throw new Error('adaptiveHls requires at least one variant');
+  }
+
+  // Validate before building any path or filter string. A missing `resolution`
+  // used to blow up as "Cannot read properties of undefined (reading 'replace')"
+  // from deep inside the scale-filter construction, and a missing `label` would
+  // silently emit "%v.m3u8" with the placeholder unsubstituted.
+  variants.forEach((v, i) => {
+    if (typeof v?.label !== 'string' || v.label.trim() === '') {
+      throw new Error(`adaptiveHls: variant ${i} is missing a non-empty "label"`);
+    }
+    if (typeof v.resolution !== 'string' || v.resolution.trim() === '') {
+      throw new Error(`adaptiveHls: variant "${v.label}" is missing a "resolution" (e.g. "1920x1080")`);
+    }
+    if (typeof v.videoBitrate !== 'string' || v.videoBitrate.trim() === '') {
+      throw new Error(`adaptiveHls: variant "${v.label}" is missing a "videoBitrate" (e.g. "2M")`);
+    }
+  });
+
   // Build filter_complex: split video to N scaled streams + split audio to N streams
   const vSplit = `[0:v]split=${variants.length}${variants.map((_, i) => `[v${i}]`).join('')}`;
   const aSplit = `[0:a]asplit=${variants.length}${variants.map((_, i) => `[a${i}]`).join('')}`;
   const scaleFilters = variants.map((v, i) => {
     const parts = v.resolution.replace('x', ':').split(':');
-    if (parts.length !== 2 || parts.some(p => isNaN(Number(p)))) {
+    // Number('') is 0, not NaN, so an incomplete value like "1920x" used to
+    // slip through validation and emit scale=1920:0.
+    const invalid =
+      parts.length !== 2 ||
+      parts.some(p => p.trim() === '' || !Number.isFinite(Number(p)) || Number(p) <= 0);
+    if (invalid) {
       throw new Error(`Invalid resolution for variant "${v.label}": "${v.resolution}"`);
     }
     const [w, h] = parts;
@@ -313,6 +358,9 @@ export function dashPackage(opts: DashOptions): FFmpegBuilder {
     .addOutputOption('-window_size', String(windowSize))
     .addOutputOption('-use_template', useTemplate ? '1' : '0')
     .addOutputOption('-use_timeline', useTimeline ? '1' : '0');
+
+  // The dash muxer will not create the output directory either.
+  mkdirSync(dirname(output), { recursive: true });
   if (dashFlags !== undefined)
     builder.addOutputOption('-dash_flags', dashFlags);
   if (initSegmentName !== undefined)

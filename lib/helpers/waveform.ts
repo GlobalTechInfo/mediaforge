@@ -1,7 +1,38 @@
-
-
 import { runFFmpeg } from '../process/spawn.ts';
 import { resolveBinary } from '../utils/binary.ts';
+
+/**
+ * Palettes accepted by the `showspectrum` filter's `color` option.
+ * These map to ffmpeg's integer enum (0–14) — they are not CSS colours.
+ */
+export const SPECTRUM_COLORS = [
+  'channel',
+  'intensity',
+  'rainbow',
+  'moreland',
+  'nebulae',
+  'fire',
+  'fiery',
+  'fruit',
+  'cool',
+  'magma',
+  'green',
+  'viridis',
+  'plasma',
+  'cividis',
+  'terrain',
+] as const;
+
+export type SpectrumColor = (typeof SPECTRUM_COLORS)[number];
+
+function assertSpectrumColor(color: string): asserts color is SpectrumColor {
+  if (!(SPECTRUM_COLORS as readonly string[]).includes(color)) {
+    throw new Error(
+      `Invalid showspectrum color "${color}". ` +
+        `This is a palette name, not a CSS colour. Valid values: ${SPECTRUM_COLORS.join(', ')}.`,
+    );
+  }
+}
 
 export interface WaveformOptions {
   /** Input audio/video file */
@@ -94,7 +125,15 @@ export interface SpectrumOptions {
   output: string;
   width?: number;
   height?: number;
-  color?: string;
+  /**
+   * Colour scheme. Default: 'fire'.
+   *
+   * This is NOT a CSS colour — `showspectrum`'s `color` option is an integer
+   * enum of named palettes. Passing e.g. 'red' (or '#ff0000') makes ffmpeg fail
+   * with `Undefined constant or missing '(' in 'red'`. Note that 'green' happens
+   * to be a valid palette name, which makes the failure mode easy to miss.
+   */
+  color?: SpectrumColor;
   fps?: number;
   binary?: string;
 }
@@ -109,6 +148,8 @@ export async function generateSpectrum(opts: SpectrumOptions): Promise<void> {
     fps = 25,
     binary = resolveBinary(),
   } = opts;
+
+  assertSpectrumColor(color);
 
   const filter = `showspectrum=s=${width}x${height}:color=${color}:fps=${fps}:mode=combined`;
 
@@ -131,9 +172,18 @@ export function buildWaveformFilter(
   width: number, height: number,
   color: string, scale: string, streamIndex: number,
 ): string {
+  // NOTE: the color is passed through verbatim here, while generateWaveform()
+  // strips a leading '#'. Both forms are accepted by showwavespic, so the
+  // builder keeps the caller's value unchanged.
   return `[0:a:${streamIndex}]showwavespic=s=${width}x${height}:colors=${color}:scale=${scale}[v]`;
 }
 
-export function buildSpectrumFilter(width: number, height: number, color: string, fps: number): string {
+export function buildSpectrumFilter(
+  width: number,
+  height: number,
+  color: SpectrumColor,
+  fps: number,
+): string {
+  assertSpectrumColor(color);
   return `showspectrum=s=${width}x${height}:color=${color}:fps=${fps}:mode=combined`;
 }

@@ -14,12 +14,14 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "types": ["node"],
-    "rootDir": "./.ts2js",
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "rootDir": "./lib",
     "outDir": "./dist/cjs",
     "declaration": false,
     "declarationMap": false,
     "sourceMap": false
   },
-  "include": [".ts2js/**/*"],
+  "include": ["lib/**/*"],
   "exclude": ["node_modules", "dist", "tests"]
 }

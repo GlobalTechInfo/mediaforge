@@ -62,7 +62,10 @@ export function detectSilence(opts: DetectSilenceOptions): Promise<SilenceSegmen
     const onStderr = (line: string) => {
       if (settled) return;
       const startMatch = line.match(/silence_start:\s*([\d.]+)/);
-      const endMatch = line.match(/silence_end:\s*([\d.]+)\|duration:\s*([\d.]+)/);
+      // ffmpeg prints "silence_end: 1.800000 | silence_duration: 1.800000".
+      // The previous pattern required "|duration:", which never matches
+      // "| silence_duration:", so no silence segment was ever recorded.
+      const endMatch = line.match(/silence_end:\s*([\d.]+)\s*\|\s*silence_duration:\s*([\d.]+)/);
 
       if (startMatch) {
         const newStart = parseFloat(startMatch[1]!);
@@ -298,7 +301,7 @@ export async function burnTimecode(opts: BurnTimecodeOptions): Promise<void> {
   if (position === 'br') { posX = 'w-tw-10'; posY = 'h-th-10'; }
   if (position === 'center') { posX = '(w-tw)/2'; posY = '(h-th)/2'; }
 
-  const filter = `${drawtext}:x=${posX}:y=${posY}${font ? `:fontfile='${font}'` : ''}`;
+  const filter = `${drawtext}:x=${posX}:y=${posY}${font ? `:fontfile='${escapeDrawtextValue(font)}'` : ''}`;
 
   const args = ['-y', '-i', input, '-vf', filter, '-c:a', 'copy', output];
 
@@ -313,7 +316,7 @@ export function buildBurnTimecodeFilter(
   x: string = '10',
   y: string = 'h-th-10'
 ): string {
-  return `drawtext=text='${timeFormat}':fontsize=${fontsize}:fontcolor=${fontcolor}:x=${x}:y=${y}${fontfile ? `:fontfile='${escapeDrawtextValue(fontfile)}'` : ''}`;
+  return `drawtext=text='${escapeDrawtextValue(timeFormat)}':fontsize=${fontsize}:fontcolor=${fontcolor}:x=${x}:y=${y}${fontfile ? `:fontfile='${escapeDrawtextValue(fontfile)}'` : ''}`;
 }
 
 // ─── parseLoudnorm ───────────────────────────────────────────────────
@@ -379,11 +382,16 @@ export async function parseLoudnorm(opts: ParseLoudnormOptions): Promise<EbuR128
   // Parse JSON from output using brace-depth tracking for robustness
   const parsedJson = extractJsonBlock(output);
   if (parsedJson) {
+    const num = (key: string): number => {
+      const raw = parsedJson[key];
+      const n = typeof raw === 'number' ? raw : parseFloat(String(raw ?? 0));
+      return Number.isNaN(n) ? 0 : n;
+    };
     return {
-      inputI: typeof parsedJson['input_i'] === 'number' ? parsedJson['input_i'] : parseFloat(String(parsedJson['input_i'] ?? 0)),
-      inputLra: typeof parsedJson['input_lra'] === 'number' ? parsedJson['input_lra'] : parseFloat(String(parsedJson['input_lra'] ?? 0)),
-      inputTp: typeof parsedJson['input_tp'] === 'number' ? parsedJson['input_tp'] : parseFloat(String(parsedJson['input_tp'] ?? 0)),
-      inputThresh: typeof parsedJson['input_thresh'] === 'number' ? parsedJson['input_thresh'] : parseFloat(String(parsedJson['input_thresh'] ?? 0)),
+      inputI: num('input_i'),
+      inputLra: num('input_lra'),
+      inputTp: num('input_tp'),
+      inputThresh: num('input_thresh'),
     };
   }
 
@@ -447,7 +455,16 @@ export async function normalizeAudio(opts: NormalizeOptions): Promise<NormalizeR
       binary,
       args: ['-y', '-i', input, '-c:v', videoCodec, '-af', `loudnorm=i=${targetI}:lra=${targetLra}:tp=${targetTp}`, output],
     });
-    return { inputI: null as unknown as number, inputLra: null as unknown as number, inputTp: null as unknown as number, inputThresh: null as unknown as number, targetOffset: 0 } as NormalizeResult;
+    // Single-pass loudnorm never measures the source, so the input_* fields
+    // are genuinely unknown. They are reported as NaN rather than being
+    // forced through `as unknown as number` casts on null.
+    return {
+      inputI: Number.NaN,
+      inputLra: Number.NaN,
+      inputTp: Number.NaN,
+      inputThresh: Number.NaN,
+      targetOffset: 0,
+    };
   }
 
   // Pass 1: measure
@@ -466,12 +483,17 @@ export async function normalizeAudio(opts: NormalizeOptions): Promise<NormalizeR
   const jsonStr = stderrLines.join('\n');
   const parsedJson = extractJsonBlock(jsonStr);
   if (parsedJson) {
+    const num = (key: string, fallback: number): number => {
+      const raw = parsedJson[key];
+      const n = typeof raw === 'number' ? raw : parseFloat(String(raw ?? fallback));
+      return Number.isNaN(n) ? fallback : n;
+    };
     measured = {
-      inputI: typeof parsedJson['input_i'] === 'number' ? parsedJson['input_i'] : parseFloat(String(parsedJson['input_i'] ?? targetI)),
-      inputLra: typeof parsedJson['input_lra'] === 'number' ? parsedJson['input_lra'] : parseFloat(String(parsedJson['input_lra'] ?? targetLra)),
-      inputTp: typeof parsedJson['input_tp'] === 'number' ? parsedJson['input_tp'] : parseFloat(String(parsedJson['input_tp'] ?? targetTp)),
-      inputThresh: typeof parsedJson['input_thresh'] === 'number' ? parsedJson['input_thresh'] : parseFloat(String(parsedJson['input_thresh'] ?? targetI - 10)),
-      targetOffset: typeof parsedJson['target_offset'] === 'number' ? parsedJson['target_offset'] : parseFloat(String(parsedJson['target_offset'] ?? '0')),
+      inputI: num('input_i', targetI),
+      inputLra: num('input_lra', targetLra),
+      inputTp: num('input_tp', targetTp),
+      inputThresh: num('input_thresh', targetI - 10),
+      targetOffset: num('target_offset', 0),
     };
   }
 
@@ -510,36 +532,113 @@ export async function adjustVolume(opts: AdjustVolumeOptions): Promise<void> {
 /**
  * Extract a JSON object from a string by tracking brace depth.
  * This is more robust than regex for parsing nested JSON in stderr output.
+ *
+ * Single pass: the previous implementation tried JSON.parse on every `{`..`}`
+ * candidate, which is O(n^2) parses and became a CPU sink on large stderr
+ * dumps (e.g. loudnorm over a long file).
  */
 function extractJsonBlock(text: string): Record<string, unknown> | null {
-  let start = text.indexOf('{');
-  while (start !== -1) {
-    for (let end = start + 1; end <= text.length; end++) {
-      if (text[end - 1] === '}') {
-        try {
-          const parsed = JSON.parse(text.slice(start, end));
-          if (typeof parsed === 'object' && parsed !== null) return parsed as Record<string, unknown>;
-        } catch {
-          continue;
+  for (let start = 0; start < text.length; start++) {
+    if (text[start] !== '{') continue;
+
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = start; i < text.length; i++) {
+      const ch = text[i]!;
+
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (ch === '\\') escaped = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+
+      if (ch === '"') inString = true;
+      else if (ch === '{') depth++;
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0) {
+          try {
+            const parsed: unknown = JSON.parse(text.slice(start, i + 1));
+            if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+              return parsed as Record<string, unknown>;
+            }
+          } catch {
+            // Not valid JSON — keep scanning for a later candidate.
+          }
+          break;
         }
       }
     }
-    start = text.indexOf('{', start + 1);
   }
   return null;
 }
 
 // ─── Arg builders ─────────────────────────────────────────────────────────────
 
+/**
+ * Build a `loudnorm` filter string.
+ *
+ * `measured` accepts the result of {@link parseLoudnorm} directly
+ * (`EbuR128Result`, camelCase). The ffmpeg-native snake_case spelling
+ * (`input_i`, `input_lra`, `input_tp`, `input_thresh`, `target_offset`) is also
+ * accepted, since that is the spelling ffmpeg prints in its analysis output.
+ * `targetOffset` is optional — when omitted the `offset=` option is left out
+ * entirely, because emitting `offset=undefined` makes ffmpeg abort with
+ * `Unable to parse option value "undefined"`.
+ */
 export function buildLoudnormFilter(
   targetI: number, targetLra: number, targetTp: number,
-  measured?: { inputI: number; inputLra: number; inputTp: number; inputThresh: number; targetOffset: number },
+  measured?: {
+    inputI?: number;
+    inputLra?: number;
+    inputTp?: number;
+    inputThresh?: number;
+    targetOffset?: number;
+    input_i?: number;
+    input_lra?: number;
+    input_tp?: number;
+    input_thresh?: number;
+    target_offset?: number;
+  },
 ): string {
   let filter = `loudnorm=i=${targetI}:lra=${targetLra}:tp=${targetTp}`;
   if (measured) {
-    filter += `:measured_i=${measured.inputI}:measured_lra=${measured.inputLra}` +
-      `:measured_tp=${measured.inputTp}:measured_thresh=${measured.inputThresh}` +
-      `:offset=${measured.targetOffset}:linear=true`;
+    const pick = (camel: number | undefined, snake: number | undefined): number | undefined =>
+      typeof camel === 'number' ? camel : snake;
+
+    const i = pick(measured.inputI, measured.input_i);
+    const lra = pick(measured.inputLra, measured.input_lra);
+    const tp = pick(measured.inputTp, measured.input_tp);
+    const thresh = pick(measured.inputThresh, measured.input_thresh);
+
+    const missing = (
+      [
+        ['inputI', i],
+        ['inputLra', lra],
+        ['inputTp', tp],
+        ['inputThresh', thresh],
+      ] as const
+    ).find(([, v]) => typeof v !== 'number' || !Number.isFinite(v));
+
+    if (missing) {
+      throw new Error(
+        `buildLoudnormFilter: measured.${missing[0]} is missing or not a finite number. ` +
+          'Pass the result of parseLoudnorm(), or the equivalent snake_case keys ' +
+          '(input_i, input_lra, input_tp, input_thresh).',
+      );
+    }
+
+    filter += `:measured_i=${i}:measured_lra=${lra}` +
+      `:measured_tp=${tp}:measured_thresh=${thresh}`;
+
+    const offset = pick(measured.targetOffset, measured.target_offset);
+    if (typeof offset === 'number' && Number.isFinite(offset)) {
+      filter += `:offset=${offset}`;
+    }
+    filter += ':linear=true';
   }
   return filter;
 }

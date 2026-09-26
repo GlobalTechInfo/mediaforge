@@ -3,7 +3,7 @@ import { resolveBinary } from '../utils/binary.ts';
 import { writeFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { probeAsync } from '../probe/ffprobe.ts';
+import { probeAsync, parseDuration } from '../probe/ffprobe.ts';
 
 export interface WriteMetadataOptions {
   /** Input file */
@@ -34,12 +34,20 @@ export interface AddChaptersOptions {
   input: string;
   /** Output file path */
   output: string;
-  /** Chapter definitions with title and start time (in seconds) */
+  /**
+   * Chapter definitions with title and start time (in seconds).
+   *
+   * `start` is canonical, but `startSec` is also accepted because that is the
+   * name used by {@link ChapterMeta} and is what callers naturally reach for.
+   * Passing neither produces a clear error instead of writing `START=NaN`.
+   */
   chapters: {
     /** Chapter title */
     title: string;
     /** Start time in seconds */
-    start: number;
+    start?: number;
+    /** Start time in seconds (alias for `start`) */
+    startSec?: number;
   }[];
   /** ffmpeg binary override */
   binary?: string;
@@ -70,13 +78,47 @@ export async function addChapters(opts: AddChaptersOptions): Promise<void> {
     binary = resolveBinary(),
   } = opts;
 
+  // Resolve `start` / `startSec` once, then validate. Without this a missing or
+  // misspelled key silently wrote START=NaN, and out-of-order chapters made
+  // ffmpeg fail with the very unhelpful "Chapter end time 1000 before start 2000"
+  // / "Cannot allocate memory".
+  if (!Array.isArray(chapterDefs) || chapterDefs.length === 0) {
+    throw new Error('addChapters requires at least one chapter');
+  }
+
+  const starts = chapterDefs.map((ch, i) => {
+    if (typeof ch?.title !== 'string' || ch.title.trim() === '') {
+      throw new Error(`addChapters: chapter ${i} is missing a non-empty "title"`);
+    }
+    const start = typeof ch.start === 'number' ? ch.start : ch.startSec;
+    if (typeof start !== 'number' || !Number.isFinite(start) || start < 0) {
+      throw new Error(
+        `addChapters: chapter ${i} ("${ch.title}") needs a finite, non-negative start ` +
+          'time in seconds, passed as `start` (or `startSec`).',
+      );
+    }
+    return start;
+  });
+
+  for (let i = 1; i < starts.length; i++) {
+    const prev = starts[i - 1]!;
+    const cur = starts[i]!;
+    if (cur < prev) {
+      throw new Error(
+        `addChapters: chapters must be in ascending time order — chapter ${i} ` +
+          `("${chapterDefs[i]!.title}", start ${cur}) starts before chapter ${i - 1} ` +
+          `("${chapterDefs[i - 1]!.title}", start ${prev}).`,
+      );
+    }
+  }
+
   // Convert chapter definitions to ChapterMeta format
-  const chapters: ChapterMeta[] = chapterDefs.map((ch, i) => {
-    const nextChapter = chapterDefs[i + 1];
+  const chapters: ChapterMeta[] = starts.map((startSec, i) => {
+    const nextStart = starts[i + 1];
     return {
-      title: ch.title,
-      startSec: ch.start,
-      endSec: nextChapter ? nextChapter.start : Number.MAX_SAFE_INTEGER,
+      title: chapterDefs[i]!.title,
+      startSec,
+      endSec: nextStart !== undefined ? nextStart : Number.MAX_SAFE_INTEGER,
     };
   });
 
@@ -85,8 +127,8 @@ export async function addChapters(opts: AddChaptersOptions): Promise<void> {
     const lastIdx = chapters.length - 1;
     if (chapters[lastIdx]!.endSec === Number.MAX_SAFE_INTEGER) {
       const info = await probeAsync(input);
-      const duration = parseFloat(info.format?.duration ?? '0');
-      chapters[lastIdx]!.endSec = duration;
+      // parseFloat('N/A') is NaN, which would emit a bogus END= value.
+      chapters[lastIdx]!.endSec = parseDuration(info.format?.duration) ?? 0;
     }
   }
 
@@ -120,12 +162,15 @@ export async function writeMetadata(opts: WriteMetadataOptions): Promise<void> {
   let chapterInput: string | null = null;
   if (chapters.length > 0) {
     chapterTmpDir = mkdtempSync(join(tmpdir(), 'mediaforge-chapters-'));
-    chapterInput = join(chapterTmpDir, 'chapters.txt');
-    let chapterContent = ';FFMETADATA1\n';
-    for (const ch of chapters) {
-      chapterContent += `\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=${Math.round(ch.startSec * 1000)}\nEND=${Math.round(ch.endSec * 1000)}\ntitle=${ch.title}\n`;
+    try {
+      chapterInput = join(chapterTmpDir, 'chapters.txt');
+      writeFileSync(chapterInput, buildChapterContent(chapters));
+    } catch (err) {
+      // Never leave the temp dir behind if writing the chapter file fails.
+      try { rmSync(chapterTmpDir, { recursive: true, force: true }); } catch { /* cleanup */ }
+      chapterTmpDir = null;
+      throw err;
     }
-    writeFileSync(chapterInput, chapterContent);
     args.push('-i', chapterInput, '-map_chapters', '1');
   }
 
@@ -191,7 +236,19 @@ export function buildMetadataArgs(
 export function buildChapterContent(chapters: ChapterMeta[]): string {
   let content = ';FFMETADATA1\n';
   for (const ch of chapters) {
-    content += `\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=${Math.round(ch.startSec * 1000)}\nEND=${Math.round(ch.endSec * 1000)}\ntitle=${ch.title}\n`;
+    content += `\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=${Math.round(ch.startSec * 1000)}\nEND=${Math.round(ch.endSec * 1000)}\ntitle=${escapeFfmetadataValue(ch.title)}\n`;
   }
   return content;
+}
+
+/**
+ * Neutralize characters that would break out of the FFMETADATA1 format.
+ * A newline (or a leading '#'/';' comment marker) in a chapter title would
+ * otherwise let the title inject arbitrary metadata keys or sections.
+ */
+function escapeFfmetadataValue(value: string): string {
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/^([#;])/, '\\$1');
 }

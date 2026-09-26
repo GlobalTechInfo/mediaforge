@@ -97,6 +97,11 @@ export class CapabilityRegistry {
     const result = spawnSync(this.binary, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       encoding: 'utf8',
+      // spawnSync blocks the event loop; cap it so a wedged binary cannot
+      // hang the whole process forever.
+      timeout: 15000,
+      killSignal: 'SIGKILL',
+      maxBuffer: 32 * 1024 * 1024,
     });
     if (result.error) throw new Error(result.error.message);
     // ffmpeg exits non-zero for informational flags like -codecs; use stdout regardless
@@ -293,12 +298,16 @@ export class CapabilityRegistry {
   }
 }
 
-/** Global default registry (lazy, uses FFMPEG_PATH / system ffmpeg) */
-let _defaultRegistry: CapabilityRegistry | null = null;
+/** Default registries, keyed by binary path. */
+const _defaultRegistries = new Map<string, CapabilityRegistry>();
 
 export function getDefaultRegistry(binary = 'ffmpeg'): CapabilityRegistry {
-  if (_defaultRegistry === null) {
-    _defaultRegistry = new CapabilityRegistry(binary);
-  }
-  return _defaultRegistry;
+  // Keyed by binary: a single cached instance ignored the `binary` argument on
+  // every call after the first, handing back capabilities probed from a
+  // different binary.
+  const existing = _defaultRegistries.get(binary);
+  if (existing !== undefined) return existing;
+  const registry = new CapabilityRegistry(binary);
+  _defaultRegistries.set(binary, registry);
+  return registry;
 }

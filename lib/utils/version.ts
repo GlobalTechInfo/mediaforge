@@ -1,4 +1,6 @@
 import { execFileSync, spawn } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
+import type { Buffer } from 'node:buffer';
 import type { VersionInfo } from '../types/version.ts';
 
 /** Matches "ffmpeg version 7.1.1 ...", "ffmpeg version 8.1 ..." and "ffmpeg version N-116912-gabcdef ..." */
@@ -35,8 +37,10 @@ export function parseVersionOutput(output: string): VersionInfo {
     if (gitMatch !== null) {
       raw = gitMatch[1] ?? 'unknown';
       isGit = true;
-      // Git/nightly builds have the latest features — set to a high sentinel
-      // so that satisfiesVersion returns true for any reasonable minimum version.
+      // Nightly builds carry unreleased features, so report a high sentinel.
+      // It is consumed by isFeatureExpected() (via guardFeatureVersion), which
+      // compares version.major directly, so every feature gate passes.
+      // satisfiesVersion() deliberately ignores these numbers for isGit.
       major = 999;
       minor = 999;
       patch = 999;
@@ -82,15 +86,30 @@ export function probeVersion(binaryPath: string): VersionInfo {
  */
 export function probeVersionAsync(binaryPath: string, timeoutMs = 10000): Promise<VersionInfo> {
   return new Promise<VersionInfo>((resolve, reject) => {
-    const chunks: string[] = [];
+    // A per-chunk toString() corrupts multi-byte UTF-8 split across chunk
+    // boundaries; StringDecoder reassembles the byte stream correctly.
+    const decoder = new StringDecoder('utf8');
+    let output = '';
     let settled = false;
     const child = spawn(binaryPath, ['-version'], { stdio: ['ignore', 'pipe', 'pipe'] });
-    child.stdout?.on('data', (chunk: Buffer) => chunks.push(chunk.toString()));
+    child.stdout?.on('data', (chunk: Buffer) => { output += decoder.write(chunk); });
+
     const timer = setTimeout(() => {
-      if (!settled) { settled = true; child.kill(); reject(new Error(`probeVersionAsync timed out for "${binaryPath}" after ${timeoutMs}ms`)); }
+      if (settled) return;
+      settled = true;
+      child.kill();
+      reject(new Error(`probeVersionAsync timed out for "${binaryPath}" after ${timeoutMs}ms`));
     }, timeoutMs);
+    // The child itself must stay referenced, otherwise the process can exit
+    // before 'close' fires and the promise never settles. Only the timer is
+    // unref'd, so it cannot by itself keep the event loop alive.
+    if (typeof timer.unref === 'function') timer.unref();
+
     child.on('error', (err: Error) => {
-      if (!settled) { settled = true; clearTimeout(timer); reject(new Error(`Failed to probe version for "${binaryPath}": ${err.message}`)); }
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new Error(`Failed to probe version for "${binaryPath}": ${err.message}`));
     });
     child.on('close', (code: number | null) => {
       if (settled) return;
@@ -100,15 +119,17 @@ export function probeVersionAsync(binaryPath: string, timeoutMs = 10000): Promis
         reject(new Error(`probeVersionAsync failed for "${binaryPath}" with exit code ${code}`));
         return;
       }
-      resolve(parseVersionOutput(chunks.join('')));
+      output += decoder.end();
+      resolve(parseVersionOutput(output));
     });
-    if (typeof child.unref === 'function') child.unref();
   });
 }
 
 /**
  * Return true if actual satisfies the requirement using full semver comparison.
- * Git/nightly builds are treated as "unknown" (returns true only when minMajor=0).
+ * Git/nightly builds report an unknown version, so they satisfy only a
+ * zero minimum (callers that need a real gate should use guardFeatureVersion
+ * against the capability registry instead).
  */
 export function satisfiesVersion(
   actual: Pick<VersionInfo, 'major' | 'minor' | 'patch' | 'isGit'>,

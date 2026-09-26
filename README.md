@@ -90,6 +90,9 @@ Requires `ffmpeg` (and `ffprobe`) to be installed and on `PATH`, or set `FFMPEG_
 
 ## Table of Contents
 
+- [What is mediaforge?](#what-is-mediaforge)
+- [Install](#install)
+- [Runtime Support](#runtime-support)
 - [Fluent Builder API](#fluent-builder-api)
 - [Screenshots & Frame Extraction](#screenshots-frame-extraction)
 - [Pipe & Stream I/O](#pipe-stream-io)
@@ -102,20 +105,26 @@ Requires `ffmpeg` (and `ffprobe`) to be installed and on `PATH`, or set `FFMPEG_
 - [Waveform & Spectrum](#waveform-spectrum)
 - [Codec Serializers](#codec-serializers)
 - [Color Grading & Visual Filters](#color-grading-filters)
-- [Hardware Codec Helpers (v0.3.0)](#hardware-codecs-v3)
-- [Edit Helpers (v0.3.0)](#edit-helpers)
+- [Edit Helpers](#edit-helpers)
+- [Analysis Helpers](#analysis-helpers)
+- [Hardware Codec Helpers](#hardware-codecs-v3)
+- [Audio Filters](#audio-filters)
 - [Named Presets](#named-presets)
 - [HLS & DASH Packaging](#hls-dash-packaging)
 - [Two-Pass Encoding](#two-pass-encoding)
+- [Arg-Builder Functions](#arg-builders)
 - [Stream Mapping DSL](#stream-mapping-dsl)
 - [Hardware Acceleration](#hardware-acceleration)
+- [Low-level Filter Graph API](#filter-graph-api)
 - [Filter System](#filter-system)
 - [FFprobe Integration](#ffprobe-integration)
 - [Process Management](#process-management)
 - [Progress Events](#progress-events)
+- [Deno & Bun Usage](#deno-bun-usage)
 - [CLI](#cli)
 - [Compatibility Guards](#compatibility-guards)
 - [Version Support](#version-support)
+- [Environment Variables](#environment-variables)
 
 ---
 
@@ -159,40 +168,91 @@ await ffmpeg('input.mp4')
 
 ### Builder methods
 
+#### Inputs
+
 | Method | Description |
 |--------|-------------|
 | `.input(path, opts?)` | Add input file |
-| `.seekInput(pos)` | Seek in last-added input (fast) |
+| `.seekInput(pos)` | Seek in last-added input (fast, emitted before `-i`) |
 | `.inputDuration(d)` | Limit last-added input duration |
-| `.inputFormat(fmt)` | Force input format |
+| `.inputFormat(fmt)` | Force input format (`-f` before `-i`) |
+| `.inputFps(rate)` | Set input frame rate (`-r` before `-i`, for raw inputs) |
+
+#### Outputs
+
+| Method | Description |
+|--------|-------------|
 | `.output(path, opts?)` | Add output — call before codec/filter options |
+| `.outputFormat(fmt)` | Force output format (`-f`) |
+| `.map(spec)` | Add stream mapping |
+| `.duration(d)` | Limit output duration |
+| `.seekOutput(pos)` | Output seek (accurate, re-encode) |
+| `.addOutputOption(...args)` | Pass extra output args |
+
+#### Video
+
+| Method | Description |
+|--------|-------------|
 | `.videoCodec(codec)` | Set video codec (`libx264`, `libx265`, `copy`, …) |
 | `.videoBitrate(rate)` | Set video bitrate (`2M`, `4000k`, …) |
 | `.fps(rate)` | Set output frame rate |
 | `.size(wxh)` | Set output size (`1280x720`) |
 | `.crf(value)` | Set CRF quality value |
-| `.pixelFormat(fmt)` | Set pixel format |
+| `.pixelFormat(fmt)` | Set pixel format (`-pix_fmt`) |
+| `.noVideo()` | Disable video stream (`-vn`) |
+| `.videoFilter(f)` | Set `-vf` filter chain — call **once**, see note below |
+
+#### Audio
+
+| Method | Description |
+|--------|-------------|
 | `.audioCodec(codec)` | Set audio codec (`aac`, `libopus`, `copy`, …) |
 | `.audioBitrate(rate)` | Set audio bitrate (`128k`, `192k`, …) |
-| `.audioSampleRate(hz)` | Set sample rate |
-| `.audioChannels(n)` | Set channel count |
-| `.noVideo()` | Disable video stream |
-| `.noAudio()` | Disable audio stream |
-| `.outputFormat(fmt)` | Force output format |
-| `.map(spec)` | Add stream mapping |
-| `.duration(d)` | Limit output duration |
-| `.seekOutput(pos)` | Output seek (accurate, re-encode) |
-| `.videoFilter(f)` | Set `-vf` filter chain |
-| `.audioFilter(f)` | Set `-af` filter chain |
-| `.complexFilter(f)` | Set `-filter_complex` |
-| `.addOutputOption(...args)` | Pass extra output args |
-| `.addGlobalOption(...args)` | Pass extra global args |
-| `.overwrite(bool)` | Overwrite output (default: true) |
+| `.audioSampleRate(hz)` | Set sample rate (`-ar`) |
+| `.audioChannels(n)` | Set channel count (`-ac`) |
+| `.noAudio()` | Disable audio stream (`-an`) |
+| `.audioFilter(f)` | Set `-af` filter chain — call **once**, see note below |
+
+#### Subtitles
+
+| Method | Description |
+|--------|-------------|
+| `.subtitleCodec(codec)` | Set subtitle codec (`-c:s`) |
+| `.noSubtitle()` | Disable subtitle stream (`-sn`) |
+
+#### Filters, hardware, and globals
+
+| Method | Description |
+|--------|-------------|
+| `.complexFilter(f)` | Set `-filter_complex`. **Only the last call takes effect.** |
+| `.hwAccel(name, opts?)` | Enable hardware acceleration (`-hwaccel`, optional `{ device }`) |
+| `.addGlobalOption(...args)` | Pass extra global args (before any `-i`) |
+| `.overwrite(bool)` | Overwrite output (default: `true`) |
 | `.logLevel(level)` | Set ffmpeg log level |
-| `.hwAccel(name, opts?)` | Enable hardware acceleration |
+| `.enableProgress()` | Add `-progress pipe:2` so `progress` events are emitted |
+| `.setBinary(path)` | Override the ffmpeg binary (also clears cached version/registry) |
+
+> **Call `.videoFilter()` / `.audioFilter()` at most once.** Each call appends
+> another `-vf` / `-af` pair, and FFmpeg only applies the last one. Join your
+> filters with commas instead — see the [Filter System](#filter-system) section.
+
+#### Inspection and capability checks
+
+| Method | Description |
+|--------|-------------|
+| `.getVersion()` | Probe and cache the ffmpeg version (`VersionInfo`) |
+| `.getRegistry()` | Probe and cache the `CapabilityRegistry` |
+| `.checkCodec(codec, dir?)` | `{ available, reason?, alternative? }` — never throws |
+| `.checkHwaccel(name)` | `{ available, reason?, alternative? }` — never throws |
+| `.checkFeature(key)` | Version-gated feature check |
+| `.selectVideoCodec(candidates)` | First available codec, or `null` |
+| `.selectHwaccel(names)` | First available hwaccel, or `null` |
+| `.versionString()` | Human-readable version string (`Promise<string>`) |
+| `.buildArgs()` | Full argument array (same as `.dry()`) |
+| `.dry()` | Return CLI args without executing |
+| `.dryCommand()` | Return a shell-quoted command line for logging |
 | `.spawn(opts?)` | Start process, return `FFmpegProcess`. Options: `{ parseProgress?, totalDurationUs?, timeout? }` |
 | `.run(opts?)` | Start process, return `Promise<void>`. Options: `{ parseProgress?, totalDurationUs?, timeout? }` |
-| `.dry()` | Return CLI args without executing |
 
 ---
 
@@ -248,11 +308,14 @@ fs.writeFileSync('frame.png', buf);
 await extractFrames({
   input: 'video.mp4',
   folder: './frames',
-  fps: 30,           // Extract at 30 fps (every frame)
-  pattern: 'frame_%06d.png',
+  fps: 30,                    // Extract at 30 fps (every frame)
+  filename: 'frame_%06d.png', // NOTE: the option is `filename`, not `pattern`
   size: '1920x1080',
-  quality: 95,
+  format: 'png',              // 'png' | 'jpg' | 'bmp' | 'tiff'
+  startTime: 5,
+  endTime: 15,                // Only used together with startTime
 });
+// Returns { files, firstFrame, lastFrame }
 ```
 
 ---
@@ -395,8 +458,14 @@ const result = await normalizeAudio({
   targetI: -23,    // integrated loudness (LUFS)
   targetLra: 7,    // loudness range (LU)
   targetTp: -2,    // true peak (dBTP)
+  twoPass: true,   // default
 });
 console.log(`Input was ${result.inputI} LUFS`);
+
+// With twoPass: false the source is never measured, so the input_* fields are
+// NaN (genuinely unknown) rather than a fabricated value.
+const onePass = await normalizeAudio({ input: 'a.mp4', output: 'b.mp4', twoPass: false });
+console.log(Number.isNaN(onePass.inputI));   // true
 
 // Podcast standard (-16 LUFS)
 await normalizeAudio({ input: 'episode.mp3', output: 'episode-norm.mp3', targetI: -16 });
@@ -405,22 +474,25 @@ await normalizeAudio({ input: 'episode.mp3', output: 'episode-norm.mp3', targetI
 await adjustVolume({ input: 'in.mp4', output: 'out.mp4', volume: '0.5' });   // half
 await adjustVolume({ input: 'in.mp4', output: 'out.mp4', volume: '6dB' });   // +6dB
 
-// Detect silence and get timestamp ranges
-const silence = await detectSilence({
+// Detect silence and get timestamp ranges.
+// Returns SilenceSegment[] — an array of { start, end, duration }, not an object.
+const silences = await detectSilence({
   input: 'audio.wav',
-  noiseLevel: -40,      // dB threshold (default: -60dB)
-  duration: 2,       // minimum silence duration in seconds
-  silenceOnly: true,    // return only silence ranges (false = include speech)
+  threshold: -40,     // dB threshold (default: -50)
+  duration: 2,        // minimum silence length in seconds (default: 0.5)
 });
-console.log(silence.startTimes);   // [0.5, 45.2, 120.8]
-console.log(silence.endTimes);    // [2.1, 47.0, 122.5]
+for (const s of silences) {
+  console.log(`Silent ${s.start}s → ${s.end}s (${s.duration}s)`);
+}
 
-// Parse loudnorm output for EBU R128 analysis
-const loudness = await parseLoudnorm({
-  input: 'audio.mp3',
-  measures: ['I', 'LRA', 'TP'],   // what to measure
-});
-console.log(loudness.normalized);  // { I: -23.1, LRA: 6.2, TP: -1.8 }
+// Two-pass EBU R128 measurement.
+// `mode: 'file'` (default) probes the file; `mode: 'output'` parses a string
+// you already captured from a loudnorm run.
+const loudness = await parseLoudnorm({ input: 'audio.mp3' });
+console.log(loudness.inputI);     // integrated loudness, LUFS
+console.log(loudness.inputLra);   // loudness range, LU
+console.log(loudness.inputTp);    // true peak, dBTP
+console.log(loudness.inputThresh); // threshold, LUFS
 ```
 
 ---
@@ -510,14 +582,18 @@ await writeMetadata({
 await stripMetadata({ input: 'original.mp4', output: 'clean.mp4' });
 
 // Add chapter markers (convenience wrapper)
+// Each chapter only needs `start`; the end time of each chapter is taken from
+// the next chapter's start, and the last one ends at the media duration.
+// `startSec` is accepted as an alias for `start`. Chapters must be supplied in
+// ascending time order — addChapters() throws if they are not.
 await addChapters({
   input: 'movie.mp4',
   output: 'chapters.mp4',
   chapters: [
-    { title: 'Introduction', startSec: 0 },
-    { title: 'Chapter 1: Setup', startSec: 120 },
-    { title: 'Chapter 2: Action', startSec: 600, endSec: 1200 },
-    { title: 'Conclusion', startSec: 1800 },
+    { title: 'Introduction', start: 0 },
+    { title: 'Chapter 1: Setup', start: 120 },
+    { title: 'Chapter 2: Action', start: 600 },
+    { title: 'Conclusion', start: 1800 },
   ],
 });
 ```
@@ -537,10 +613,9 @@ await generateWaveform({
   output: 'waveform.png',
   width: 1920,
   height: 240,
-  color: '#00aaff',
-  backgroundColor: '#1a1a2e',  // Only emitted when non-default (FFmpeg 7.x safe)
-  mode: 'line',    // line | point | p2p | cline
-  scale: 'lin',    // lin | log
+  color: '#00aaff',   // leading '#' is stripped before it reaches showwavespic
+  scale: 'lin',       // 'lin' | 'log'
+  streamIndex: 0,
 });
 
 // Real-time spectrum visualizer video
@@ -549,15 +624,28 @@ await generateSpectrum({
   output: 'spectrum.mp4',
   width: 1280,
   height: 720,
-  color: 'fire',
+  color: 'fire',   // see the palette list below — NOT a CSS colour
   fps: 25,
 });
 ```
 
-> **FFmpeg 7.x compatibility:** The `showwavespic` filter's `bgcolor` and `draw`
-> parameters were removed in FFmpeg 7.1. `generateWaveform` only emits `bgcolor`
-> when you set a non-default (non-black) value, and only emits `draw` when the
-> mode is not the default `'line'`.
+> **`generateSpectrum` colour is a palette, not a CSS colour.** Unlike
+> `generateWaveform` (whose colour *is* a CSS colour for `showwavespic`), the
+> `showspectrum` filter's `color` option is an integer enum of named palettes.
+> Passing `'red'` or `'#ff0000'` makes ffmpeg abort with
+> `Undefined constant or missing '(' in 'red'`. The valid values are exported as
+> `SPECTRUM_COLORS` and typed as `SpectrumColor`:
+> `channel`, `intensity`, `rainbow`, `moreland`, `nebulae`, `fire`, `fiery`,
+> `fruit`, `cool`, `magma`, `green`, `viridis`, `plasma`, `cividis`, `terrain`.
+> Note that `green` is a valid palette name while `red` is not — an easy trap.
+
+> **FFmpeg 7.x compatibility:** the `showwavespic` filter's `bgcolor` and `draw`
+> parameters were removed in FFmpeg 7.1, so `generateWaveform` never emits them.
+> The `backgroundColor` and `mode` options are **deprecated no-ops**: they are
+> still accepted so existing code keeps type-checking, but they have no effect
+> and passing them logs a deprecation warning. Remove them for forward
+> compatibility. The `videoFilter`-style builder `buildWaveformFilter()` takes
+> the colour verbatim (no `#` stripping).
 
 ---
 
@@ -599,27 +687,28 @@ await ffmpeg('in.mp4').output('out.webm').addOutputOption(...vp8ToArgs({ bitrate
 await ffmpeg('in.mp4').output('out.mkv').addOutputOption(...ffv1ToArgs({ level: 3, slices: 16, sliceCrc: true })).run();
 ```
 
-| Helper | Encoder | Available |
-|--------|---------|-----------|
-| `x264ToArgs(opts)` | `libx264` | v6+ |
-| `x265ToArgs(opts)` | `libx265` | v6+ |
-| `svtav1ToArgs(opts)` | `libsvtav1` | v6+ |
-| `vp9ToArgs(opts)` | `libvpx-vp9` | v6+ | `crf`, `bitrate`, `quality`, `cpuUsed`, `tileColumns`, `rowMt`, `deadline` |
-| `proResToArgs(opts?, enc?)` | `prores_ks` / `prores_aw` / `prores` | v6+ |
-| `dnxhdToArgs(opts?)` | `dnxhd` | v6+ |
-| `mjpegToArgs(opts?)` | `mjpeg` | v6+ |
-| `mpeg2ToArgs(opts?)` | `mpeg2video` | v6+ |
-| `mpeg4ToArgs(opts?, enc?)` | `mpeg4` / `libxvid` | v6+ |
-| `vp8ToArgs(opts?)` | `libvpx` | v6+ |
-| `theoraToArgs(opts?)` | `libtheora` | v6+ |
-| `ffv1ToArgs(opts?)` | `ffv1` | v6+ |
+| Helper | Encoder | Min FFmpeg |
+|--------|---------|-------------|
+| `x264ToArgs(opts)` | `libx264` | v6 |
+| `x265ToArgs(opts)` | `libx265` | v6 |
+| `svtav1ToArgs(opts)` (alias `svtAv1ToArgs`) | `libsvtav1` | v6 |
+| `vp9ToArgs(opts)` | `libvpx-vp9` | v6 |
+| `proResToArgs(opts?, enc?)` | `prores_ks` / `prores_aw` / `prores` | v6 |
+| `dnxhdToArgs(opts?)` | `dnxhd` | v6 |
+| `mjpegToArgs(opts?)` | `mjpeg` | v6 |
+| `mpeg2ToArgs(opts?)` | `mpeg2video` | v6 |
+| `mpeg4ToArgs(opts?, enc?)` | `mpeg4` / `libxvid` | v6 |
+| `vp8ToArgs(opts?)` | `libvpx` | v6 |
+| `theoraToArgs(opts?)` | `libtheora` | v6 |
+| `ffv1ToArgs(opts?)` | `ffv1` | v6 |
 
 ### Audio
 
 ```ts
 import {
   aacToArgs, mp3ToArgs, opusToArgs, flacToArgs, ac3ToArgs,
-  alacToArgs, eac3ToArgs, vorbisToArgs, pcmToArgs, mp2ToArgs,
+  alacToArgs, eac3ToArgs, truehdToArgs, vorbisToArgs, wavpackToArgs,
+  pcmToArgs, mp2ToArgs,
 } from 'mediaforge';
 
 // Apple Lossless
@@ -635,20 +724,23 @@ await ffmpeg('in.mp4').output('out.wav').addOutputOption(...pcmToArgs('pcm_s24le
 await ffmpeg('in.mp4').output('out.mpg').addOutputOption(...mp2ToArgs({ bitrate: 192, sampleRate: 48000 })).run();
 ```
 
-| Helper | Encoder | Use case |
-|--------|---------|----------|
-| `aacToArgs(opts)` | `aac` | Universal streaming | `bitrate`, `vbr`, `profile` (`aac_low`, `aac_he`, `aac_he_v2`), `sampleRate`, `channels` |
-| `mp3ToArgs(opts)` | `libmp3lame` | Consumer/podcasting |
-| `opusToArgs(opts)` | `libopus` | WebRTC, Discord |
-| `flacToArgs(opts?)` | `flac` | Lossless |
-| `ac3ToArgs(opts?)` | `ac3` | Dolby Digital |
-| `alacToArgs(opts?)` | `alac` | Apple Lossless |
-| `eac3ToArgs(opts?)` | `eac3` | Dolby Digital Plus (Netflix/Amazon) |
-| `truehdToArgs(opts?)` | `truehd` | Dolby TrueHD (Blu-ray) |
-| `vorbisToArgs(opts?)` | `libvorbis` | Ogg Vorbis |
-| `wavpackToArgs(opts?)` | `wavpack` | Hybrid lossless |
-| `pcmToArgs(format, opts?)` | `pcm_s16le`, `pcm_s24le`, `pcm_f32le`, … | Raw PCM masters |
-| `mp2ToArgs(opts?)` | `mp2` | DVB/ATSC broadcast |
+> `mp3ToArgs` and `opusToArgs` are also exported under the aliases
+> `libMp3LameToArgs` and `libOpusToArgs`.
+
+| Helper | Encoder | Use case | Options |
+|--------|---------|----------|---------|
+| `aacToArgs(opts)` | `aac` | Universal streaming | `aacCoder`, `vbr`, `bitrate`, `sampleRate`, `channels`, `channelLayout`, `sampleFmt`, `profile` |
+| `mp3ToArgs(opts)` | `libmp3lame` | Consumer / podcasting | `qscale`, `bitrate`, `compressionLevel`, `reservoir`, `jointStereo`, `abr`, `sampleRate`, `channels` |
+| `opusToArgs(opts)` | `libopus` | WebRTC, Discord | `bitrate`, `vbr`, `application`, `frameDuration`, `compressionLevel`, `packetLoss`, `fec`, `dtx`, `channels`, `sampleRate` |
+| `flacToArgs(opts?)` | `flac` | Lossless | `compressionLevel`, `lpcOrder`, `lpcCoeffPrecision`, `predictionOrderMethod`, `minPartitionOrder`, `maxPartitionOrder` |
+| `ac3ToArgs(opts?)` | `ac3` | Dolby Digital | `bitrate`, `dialogueLevel`, `centerMixLevel`, `surroundMixLevel`, `audioCodingMode`, `channels`, `sampleRate` |
+| `alacToArgs(opts?)` | `alac` | Apple Lossless | `minPredictionOrder`, `maxPredictionOrder` |
+| `eac3ToArgs(opts?)` | `eac3` | Dolby Digital Plus (Netflix/Amazon) | `bitrate`, `dialNorm`, `mixLevel`, `roomType`, `centerMixLevel`, `surroundMixLevel` |
+| `truehdToArgs(opts?)` | `truehd` | Dolby TrueHD (Blu-ray) | `sampleRate`, `channelLayout` |
+| `vorbisToArgs(opts?)` | `libvorbis` | Ogg Vorbis | `qscale`, `bitrate`, `minrate`, `maxrate` |
+| `wavpackToArgs(opts?)` | `wavpack` | Hybrid lossless | `quality`, `bitrate`, `extra` |
+| `pcmToArgs(format, opts?)` | `pcm_s16le`, `pcm_s24le`, `pcm_f32le`, … | Raw PCM masters | `sampleRate`, `channels` |
+| `mp2ToArgs(opts?)` | `mp2` | DVB/ATSC broadcast | `bitrate`, `sampleRate` |
 
 ### Hardware Acceleration
 
@@ -769,7 +861,9 @@ await deinterlace({ input: 'broadcast.ts', output: 'progressive.mp4' });
 await applyLUT({ input: 'raw.mp4', output: 'graded.mp4', lut: 'film.cube' });
 await stabilizeVideo({ input: 'shaky.mp4', output: 'stable.mp4', smoothing: 15 });
 // Requires FFmpeg compiled with --enable-libvidstab
-await streamToUrl({ input: 'video.mp4', url: 'rtmp://live.twitch.tv/app/STREAM_KEY', format: 'flv' }); // format required
+// `format` is optional — it is inferred from the URL scheme
+// (rtmp/rtmps → flv, srt/udp/rtp → mpegts, otherwise flv).
+await streamToUrl({ input: 'video.mp4', url: 'rtmp://live.twitch.tv/app/STREAM_KEY' });
 ```
 
 ---
@@ -779,36 +873,49 @@ await streamToUrl({ input: 'video.mp4', url: 'rtmp://live.twitch.tv/app/STREAM_K
 ## Color Grading & Visual Filters
 
 ```ts
-import { curves, levels, deband, deshake, deflicker, smartblur } from 'mediaforge';
-import { FilterChain } from 'mediaforge';
+import { curves, deband, deshake, deflicker, smartblur, FilterChain } from 'mediaforge';
 
-// Standalone (returns filter string for .videoFilter())
+// Dual-style — works standalone (returns a filter string) or chained
 await ffmpeg('in.mp4').output('out.mp4').videoFilter(curves({ preset: 'vintage' })).videoCodec('libx264').run();
-await ffmpeg('in.mp4').output('out.mp4').videoFilter(levels({ inBlack: 10, inWhite: 240 })).videoCodec('libx264').run();
 
-// Chained (attach to a FilterChain)
+// Chained-only — a FilterChain is required as the first argument
 const chain = new FilterChain();
 deband(chain);
 deshake(chain, { rx: 16, ry: 16 });
+deflicker(chain);
+smartblur(chain);
 await ffmpeg('in.mp4').output('out.mp4').videoFilter(chain.toString()).run();
 ```
 
-| Filter | Standalone | Description |
-|--------|-----------|-------------|
-| `curves(opts)` | ✅ | Tone curves — named presets (`vintage`, `cross_process`, …) or custom R/G/B points |
-| `levels(opts?)` | ✅ | Input/output range + gamma adjustment (FFmpeg 7+; not in FFmpeg 6) |
-| `deband(chain, opts?)` | ❌ | Remove banding from flat regions |
-| `deshake(chain, opts?)` | ❌ | Camera shake stabilisation (no external lib) |
-| `deflicker(chain, opts?)` | ❌ | Reduce temporal flicker (time-lapses) |
-| `smartblur(chain, opts?)` | ❌ | Edge-preserving smoothing |
-| `hstack(chain, n)` | ❌ | Stack N videos horizontally (use `stackVideos` for high-level) |
-| `vstack(chain, n)` | ❌ | Stack N videos vertically |
-| `xstack(chain, opts)` | ❌ | Arrange N videos in a custom grid |
-| `colorSource(chain, opts?)` | ❌ | Solid colour source frame (for overlays) |
-| `drawbox(opts?)` | ✅ | Draw colored boxes/frames on video |
-| `drawgrid(opts?)` | ✅ | Draw a grid overlay |
-| `vignette(opts?)` | ✅ | Apply vignette effect |
-| `vaguedenoiser(opts?)` | ✅ | Wavelet-based denoising |
+| Filter | Style | Description |
+|--------|-------|-------------|
+| `curves(opts)` | dual | Tone curves — named presets (`vintage`, `cross_process`, …) or custom R/G/B points |
+| `levels(opts?)` | dual | Input/output range + gamma via FFmpeg's `colorlevels` filter (deprecated alias of `colorlevels`) |
+| `deband(chain, opts?)` | chained | Remove banding from flat regions |
+| `deshake(chain, opts?)` | chained | Camera shake stabilisation (no external lib) |
+| `deflicker(chain, opts?)` | chained | Reduce temporal flicker (time-lapses) |
+| `smartblur(chain, opts?)` | chained | Edge-preserving smoothing |
+| `hstack(chain, n)` | chained | Stack N videos horizontally (use `stackVideos` for a high-level API) |
+| `vstack(chain, n)` | chained | Stack N videos vertically |
+| `xstack(chain, opts)` | chained | Arrange N videos in a custom grid |
+| `colorSource(chain, opts?)` | chained | Solid colour source frame (for overlays) |
+| `drawbox(opts?)` | dual | Draw colored boxes/frames on video |
+| `drawgrid(opts?)` | dual | Draw a grid overlay |
+| `vignette(opts?)` | dual | Apply vignette effect |
+| `vaguedenoiser(opts?)` | dual | Wavelet-based denoising |
+
+> **`levels()` is a deprecated alias.** It is the same function as
+> `colorlevels()`, and it serializes to FFmpeg's **`colorlevels`** filter — not
+> the unrelated `levels` filter added in FFmpeg 7.x. `colorlevels` is available
+> in FFmpeg 6 and 7, so there is no v6/v7 caveat:
+>
+> ```ts
+> levels({ inBlack: 10, inWhite: 240 });
+> // → 'colorlevels=rimin=0.0392…:rimax=0.9411…'
+> ```
+>
+> Prefer `curves()` for tone work, or `.addOutputOption('-vf', 'levels=...')`
+> if you specifically need the FFmpeg 7.x `levels` filter.
 
 ## Analysis Helpers
 
@@ -825,7 +932,7 @@ silences.forEach(s => console.log(`Silence: ${s.start.toFixed(2)}s – ${s.end.t
 
 // Two-pass EBU R128 loudness measurement (non-destructive)
 const loudness = await parseLoudnorm({ input: 'audio.mp3' });
-console.log(loudness); // { input_i, input_lra, input_tp, input_thresh, ... }
+console.log(loudness); // { inputI, inputLra, inputTp, inputThresh }  ← camelCase
 ```
 
 ```ts
@@ -881,67 +988,88 @@ await ffmpeg('in.mp4').output('out.mp4').addOutputOption(...videotoolboxToArgs({
 
 ## Audio Filters
 
-mediaforge exports 26 audio filters. All support two overload styles — standalone (returns filter string) or chained (appends to `FilterChain`).
+mediaforge exports 26 audio filters. They fall into two groups:
+
+| Style | Filters | Usage |
+|-------|---------|-------|
+| **Dual** (standalone *and* chained) | `volume`, `loudnorm`, `equalizer`, `bass`, `treble`, `atempo`, `headphones`, `sofalizer` | `bass({ gain: 4 })` → string, or `bass(chain, { gain: 4 })` |
+| **Chained only** (`FilterChain` required as first argument) | `aecho`, `afade`, `agate`, `amerge`, `amix`, `aresample`, `asetpts`, `asplit`, `atrim`, `channelmap`, `channelsplit`, `compand`, `dynaudnorm`, `highpass`, `lowpass`, `pan`, `rubberband`, `silencedetect` | `highpass(chain, 80)` |
+
+> Calling a chained-only filter without a `FilterChain` throws
+> `TypeError: Cannot read properties of undefined`. For example
+> `highpass({ frequency: 80 })` is **not** valid — use `highpass(chain, 80)`.
 
 ```ts
 import {
-  volume, loudnorm, equalizer, bass, treble, atempo,
-  aecho, afade, highpass, lowpass, dynaudnorm, compand,
-  aresample, amerge, amix, pan, channelmap, channelsplit,
-  asplit, silencedetect, rubberband, agate, asetpts, atrim,
+  bass, treble, equalizer, loudnorm, atempo,      // dual
+  highpass, lowpass, agate, dynaudnorm,          // chained only
+  rubberband, aecho, pan, aresample,
   headphones, sofalizer,
+  FilterChain,
 } from 'mediaforge';
 
-// Standalone — returns filter string for .audioFilter()
+// Standalone — the filter functions return strings, so join them yourself
 await ffmpeg('in.mp4').output('out.mp4')
   .audioFilter([
-    bass({ gain: 4 }),                          // boost bass +4dB
-    treble({ gain: -2 }),                       // cut highs -2dB
-    highpass({ frequency: 80 }),                // remove sub-80Hz rumble
+    bass({ gain: 4 }),                                // → 'bass=g=4'
+    treble({ gain: -2 }),                             // → 'treble=g=-2'
     equalizer({ frequency: 3000, width_type: 'o', width: 1, gain: 3 }),
-    dynaudnorm(),                               // dynamic normalisation
-    compand(),                                  // dynamic range compression
+    loudnorm({ i: -16, lra: 11 }),                    // → 'loudnorm=i=-16:lra=11'
   ].join(','))
   .audioCodec('aac').run();
 
+// Chained-only filters need a FilterChain
+const chain = new FilterChain();
+highpass(chain, 80);            // remove sub-80Hz rumble
+lowpass(chain, 16000);
+agate(chain, { threshold: 0.02 });
+dynaudnorm(chain);
+await ffmpeg('podcast.mp3').output('gated.mp3')
+  .audioFilter(chain.toString())
+  .audioCodec('libmp3lame').run();
+
 // Tempo / pitch
 await ffmpeg('in.mp4').output('out.mp4')
-  .audioFilter(atempo({ tempo: 1.5 }))         // 1.5× speed (audio only)
-  .audioFilter(rubberband({ pitch: 1.5 }))     // pitch-shift up
+  .audioFilter(atempo({ tempo: 1.5 }))          // 1.5× speed (audio only)
+  .audioCodec('aac').run();
+
+const rb = new FilterChain();
+rubberband(rb, { pitch: 1.5 });                // pitch-shift up
+await ffmpeg('in.mp4').output('out.mp4')
+  .audioFilter(rb.toString())
   .audioCodec('aac').run();
 
 // Spatial audio
+const spat = new FilterChain();
+aecho(spat, { delays: 500, decays: 0.5 });
 await ffmpeg('in.mp4').output('out.mp4')
-  .audioFilter(aecho(new FilterChain(), { delays: 500, decays: 0.5 }))
-  .audioFilter(headphones({ map: 'stereo' }))
-  .audioFilter(sofalizer({ sofa: 'HRTF_44100.sofa', gain: 3.0 }))
+  .audioFilter([
+    spat.toString(),
+    headphones({ map: 'stereo' }),                        // virtual surround
+    sofalizer({ sofa: 'HRTF_44100.sofa', gain: 3.0 }),    // SOFA 3D audio
+  ].join(','))
   .audioCodec('aac').run();
 
-// Channel manipulation
+// Channel manipulation (chained-only)
+const chan = new FilterChain();
+pan(chan, 'mono|c0=0.5*c0+0.5*c1');
+aresample(chan, 44100);
 await ffmpeg('stereo.mp3').output('mono.mp3')
-  .audioFilter(pan(new FilterChain(), 'mono|c0=0.5*c0+0.5*c1'))
-  .audioFilter(aresample(new FilterChain(), 44100))
+  .audioFilter(chan.toString())
   .audioCodec('libmp3lame').run();
-
-// Silence / gating
-await ffmpeg('podcast.mp3').output('gated.mp3')
-  .audioFilter(agate(new FilterChain(), { threshold: 0.02 }))
-  .audioFilter(highpass(new FilterChain(), 80))
-  .audioFilter(lowpass(new FilterChain(), 16000))
-  .audioCodec('libmp3lame').run();
-
-import { headphones, sofalizer } from 'mediaforge';
-
-// Virtual surround sound from stereo headphones
-await ffmpeg('in.mp4').output('out.mp4')
-  .audioFilter(headphones({ map: 'stereo' }))
-  .run();
-
-// SOFA file-based 3D audio virtualization
-await ffmpeg('in.mp4').output('out.mp4')
-  .audioFilter(sofalizer({ sofa: 'HRTF_44100.sofa', gain: 3.0 }))
-  .run();
 ```
+
+> **Do not call `.audioFilter()` / `.videoFilter()` more than once.** Each call
+> appends another `-af` / `-vf` pair to the argument list, and FFmpeg only
+> honours the last one:
+>
+> ```ts
+> // ✗ WRONG — produces ['-af','volume=2','-af','alimiter']; only alimiter runs
+> ffmpeg('in.mp4').output('out.mp4').audioFilter('volume=2').audioFilter('alimiter');
+>
+> // ✓ RIGHT — one joined filter
+> ffmpeg('in.mp4').output('out.mp4').audioFilter('volume=2,alimiter');
+> ```
 
 ---
 
@@ -1001,10 +1129,18 @@ await hlsPackage({
   input: 'input.mp4',
   outputDir: './hls-output',
   segmentDuration: 6,
-  hlsVersion: 3,          // 3 | 4 | 5 | 6 | 7 — default: 3
+  playlistName: 'playlist.m3u8',   // default
+  segmentFilename: 'segment%03d.ts', // default
+  hlsListSize: 0,                  // 0 = keep all segments (default)
+  gopSize: 48,                     // keyframe interval (default)
   videoCodec: 'libx264',
   videoBitrate: '2M',
   audioBitrate: '128k',
+  // hlsVersion is a top-level muxer option (`-hls_version`, 3–8), NOT an
+  // hls_flags entry — `hlsFlags: 'hls_version=3'` makes ffmpeg abort.
+  hlsVersion: 3,           // optional; ffmpeg picks a version when omitted
+  hlsFlags: 'delete_segments',
+  // hlsKeyInfoFile: './key.info',  // AES-128 encryption key info
 }).run();
 
 // Adaptive HLS (multiple bitrates)
@@ -1028,10 +1164,12 @@ await dashPackage({
 }).run();
 ```
 
-> **FFmpeg 7.x compatibility:** `hls_version` and all other `hls_*` flags are
-> output-private options in FFmpeg — they must follow `-f hls` in the argument
-> list or FFmpeg will reject them with `Unrecognized option 'hls_version'`. The
-> library now guarantees correct flag ordering internally.
+> **FFmpeg option ordering:** all `hls_*` and `dash_*` flags are output-private
+> options and must appear *after* `-f hls` / `-f dash` in the argument list, or
+> FFmpeg rejects them with `Unrecognized option`. `FFmpegBuilder.buildArgs()`
+> emits the output format before any extra output options, so ordering is
+> handled for you. `hlsFlags` / `dashFlags` are the escape hatches for anything
+> not modelled as a first-class option.
 
 ---
 
@@ -1089,18 +1227,31 @@ import {
 
 // Screenshot
 const args = buildScreenshotArgs('input.mp4', 'thumb.jpg', 3, '320x180');
-// → ['-y', '-ss', '3', '-i', 'input.mp4', '-s', '320x180', '-vframes', '1', 'thumb.jpg']
+// → ['-y','-ss','3','-i','input.mp4','-vframes','1','-s','320x180','thumb.jpg']
 
 // Pipe a frame as raw bytes (e.g. for on-the-fly image processing)
 const args = buildFrameBufferArgs('input.mp4', 5, 'png');
-// → [..., 'pipe:1']  ← reads from pipe, outputs raw PNG bytes
+// → ['-y','-ss','5','-i','input.mp4','-vframes','1','-f','image2pipe','-vcodec','png','pipe:1']
 
 // GIF two-pass (palettegen + paletteuse)
 const { pass1, pass2 } = buildGifArgs('input.mp4', 'palette.png', 'out.gif', 10, 320, 'bayer');
 
 // Loudnorm filter string
 const filter = buildLoudnormFilter(-23, 7, -2);
-// → 'loudnorm=I=-23:LRA=7:tp=-2'
+// → 'loudnorm=i=-23:lra=7:tp=-2'   (lowercase keys)
+
+// Two-pass loudnorm: pass the parseLoudnorm() result straight in.
+const stats = await parseLoudnorm({ input: 'audio.wav' });
+const measured = buildLoudnormFilter(-14, 11, -1.5, stats);
+// → 'loudnorm=…:measured_i=…:measured_lra=…:measured_tp=…:measured_thresh=…:linear=true'
+// `targetOffset` is optional; when absent the `offset=` option is omitted
+// entirely (emitting `offset=undefined` makes ffmpeg abort). The snake_case
+// spelling ffmpeg prints (input_i, input_lra, input_tp, input_thresh) is also
+// accepted.
+
+// Scene select filter string
+const filter = buildSceneSelectFilter(0.4);
+// → "select='gt(scene,0.4)',showinfo"
 
 // Silence detect filter string
 const filter = buildSilenceDetectFilter(-40, 1.0);
@@ -1152,11 +1303,22 @@ await ffmpeg('in.mp4').output('out.mp4')
   .addOutputOption(...setDisposition(0, 'a', 0, ['default']))
   .videoCodec('copy').audioCodec('copy').run();
 
-// Map AVS (all three types at once)
-const mapping = mapAVS(0);   // returns ['-map','0:v','-map','0:a','-map','0:s']
+// Map AVS (all three types at once). Subtitle pads are optional ('?') so a file
+// without subtitles still works.
+const mapping = mapAVS(0);   // returns ['-map','0:v','-map','0:a','-map','0:s?']
 
-// Language-aware specifier
-const eng = ss(0, 'a', 'eng');   // 0:a:language:eng
+// Stream specifier object → serialized form.
+// ss(fileIndex, type?, streamIndex?, negate?) — the third argument is a numeric
+// stream index, NOT a language tag. Serializing it yields '0:a:eng', which is
+// not a valid ffmpeg specifier. To select by language, probe first and use
+// findStreamByLanguage() to get the real index.
+const v = ss(0, 'v', 0);                 // → '0:v:0'
+const a = ss(1, 'a');                    // → '1:a'
+const notSubs = ss(0, 's', 0, true);     // → '-0:s:0'
+
+// mapStream() has two forms, and both return the same ['-map', spec] tuple:
+mapStream('0:a:1');   // → ['-map', '0:a:1']   (spec/string form)
+mapStream(0, 'v', 0); // → ['-map', '0:v:0']   (numeric form)
 ```
 
 ---
@@ -1207,9 +1369,19 @@ import {
   GraphNode, GraphStream, serializeNode, serializeLink, pad, resetLabelCounter,
 } from 'mediaforge';
 
-// Simple chain — compose video filters step by step
-const chain = videoFilterChain('scale=1280:720');
-// chain.toString() → 'scale=1280:720'
+// Fluent video filter chain — videoFilterChain() takes NO arguments.
+// Build it with its methods (all positional), then serialize:
+const chain = videoFilterChain()
+  .scale(1280, 720)
+  .unsharp(5, 5, 1.0);
+// chain.toString() → 'scale=1280:720,unsharp=lx=5:ly=5:la=1'
+ffmpeg('in.mp4').output('out.mp4').videoFilter(chain.toString()).run();
+
+// Same idea for audio
+const af = audioFilterChain()
+  .loudnorm(-23, 7, -2)
+  .highpass(80);
+// af.toString() → 'loudnorm=i=-23:lra=7:tp=-2,highpass=f=80'
 
 // Filter graph — connect multiple streams with labels
 const fg = filterGraph();
@@ -1224,8 +1396,9 @@ const node = serializeNode({ name: 'scale', positional: [640, 360], named: {} })
 // Serialize a filter link  → '[0:v]scale=640:360[vout]'
 const link = serializeLink({ inputs: [inPad], filter: { name: 'scale', positional: [640, 360], named: {} }, outputs: [outPad] });
 
-// Reset auto-label counter (labels are auto-generated as [v0], [v1] etc.)
-resetLabelCounter();
+// resetLabelCounter() is a DEPRECATED NO-OP kept for backwards compatibility.
+// Label counters are per-FilterGraph instance, so there is nothing global to
+// reset; it returns undefined.
 ```
 
 ---
@@ -1234,29 +1407,51 @@ resetLabelCounter();
 
 ## Filter System
 
-All filter functions work in two modes — chained (with a `FilterChain` first arg) or **standalone** (returning a serialized string directly):
+Video and audio filter functions are **not** uniform — only some support both calling styles:
+
+| Style | Video filters | Audio filters |
+|-------|---------------|---------------|
+| **Dual** | `crop`, `curves`, `drawbox`, `drawgrid`, `drawtext`, `fade`, `overlay`, `scale`, `vaguedenoiser`, `vignette` | `atempo`, `bass`, `equalizer`, `headphones`, `loudnorm`, `sofalizer`, `treble`, `volume` |
+| **Chained only** | `avgblurVulkan`, `boxblur`, `chromakey`, `colorSource`, `colorbalance`, `colorkey`, `concat`, `deband`, `deflicker`, `deshake`, `eq`, `format`, `fps`, `gblur`, `hflip`, `hqdn3d`, `hstack`, `hue`, `nlmeans`, `nlmeansVulkan`, `pad`, `rotate`, `select`, `setdar`, `setpts`, `setsar`, `smartblur`, `split`, `subtitles`, `thumbnail`, `tile`, `transpose`, `trim`, `unsharp`, `vflip`, `vstack`, `xstack`, `yadif`, `zoompan` | `aecho`, `afade`, `agate`, `amerge`, `amix`, `aresample`, `asetpts`, `asplit`, `atrim`, `channelmap`, `channelsplit`, `compand`, `dynaudnorm`, `highpass`, `lowpass`, `pan`, `rubberband`, `silencedetect` |
+
+**Dual** filters take options directly (standalone) or a `FilterChain` first:
+
+```ts
+import { scale, crop, loudnorm, bass } from 'mediaforge';
+
+// Standalone — returns a filter string
+scale({ w: 320, h: 180 });            // 'scale=320:180'
+crop({ w: 100, h: 50 });              // 'crop=100:50'
+loudnorm({ i: -16, lra: 11 });        // 'loudnorm=i=-16:lra=11'   (no tp unless given)
+bass({ gain: 4 });                    // 'bass=g=4'
+
+// Chained — same options, but prepended with a FilterChain
+const chain = new FilterChain();
+scale(chain, { w: 1280, h: 720 });
+```
+
+**Chained-only** filters REQUIRE a `FilterChain` as the first argument and
+mutate it, returning the chain:
+
+```ts
+import { FilterChain, unsharp, eq, hflip, subtitles, highpass, pan } from 'mediaforge';
+
+const chain = new FilterChain();
+unsharp(chain, 5, 5, 1.0);
+eq(chain, 0.1, 1.1, 1.0);
+hflip(chain);
+chain.toString();   // 'unsharp=lx=5:ly=5:la=1,eq=brightness=0.1:...,hflip'
+
+// Calling one without a chain throws
+// unsharp(5, 5, 1.0)  →  TypeError
+```
+
+`ScaleOptions` and `CropOptions` accept `w`/`h` shorthand for `width`/`height`
+(both forms produce the same output).
 
 ```ts
 import { scale, loudnorm } from 'mediaforge';
-
-// Standalone — returns a filter string
-const s = scale({ w: 320, h: 180 });          // 'scale=320:180'
-const n = loudnorm({ i: -16, lra: 11 });      // 'loudnorm=i=-16:lra=11:...'
-
-// Pass directly to .videoFilter() / .audioFilter()
-await ffmpeg('input.mp4')
-  .output('output.mp4')
-  .videoFilter(scale({ w: 1280, h: 720 }))
-  .audioFilter(loudnorm({ i: -23, lra: 7, tp: -2 }))
-  .run();
-```
-
-`ScaleOptions` and `CropOptions` accept `w`/`h` shorthand for `width`/`height`.
-
-```ts
-import { scale, crop, overlay, drawtext, fade } from 'mediaforge';
-import { volume, loudnorm, equalizer, atempo } from 'mediaforge';
-import { FilterGraph, videoFilterChain, filterGraph } from 'mediaforge';
+import { filterGraph } from 'mediaforge';
 
 // Simple video filter
 await ffmpeg('input.mp4')
@@ -1264,15 +1459,13 @@ await ffmpeg('input.mp4')
   .videoFilter(scale({ w: 1280, h: 720 }))
   .run();
 
-// Audio filter
+// Audio filter (video and audio filters can be combined in one call each)
 await ffmpeg('input.mp4')
   .output('output.mp4')
   .audioFilter(loudnorm({ i: -16, lra: 11, tp: -1.5 }))
   .run();
 
-// Complex filter graph
-const graph = filterGraph();
-// Use .complexFilter() on builder for raw filter_complex strings
+// Complex filter graph — use .complexFilter() for raw -filter_complex strings
 await ffmpeg('input.mp4')
   .complexFilter('[0:v]scale=1280:720[v];[0:a]volume=0.5[a]')
   .output('output.mp4')
@@ -1280,7 +1473,11 @@ await ffmpeg('input.mp4')
   .run();
 ```
 
-**75 built-in filters**: `scale`, `crop`, `pad`, `overlay`, `drawtext`, `fps`, `setpts`, `trim`, `format`, `vflip`, `hflip`, `rotate`, `unsharp`, `gblur`, `eq`, `hue`, `colorbalance`, `yadif`, `thumbnail`, `select`, `concat`, `split`, `tile`, `colorkey`, `chromakey`, `subtitles`, `fade`, `zoompan`, `volume`, `loudnorm`, `equalizer`, `bass`, `treble`, `afade`, `amerge`, `amix`, `pan`, `aresample`, `dynaudnorm`, `compand`, `aecho`, `highpass`, `lowpass`, `silencedetect`, `rubberband`, `atempo`, `agate`, and more.
+**76 built-in filters** (50 video + 26 audio).
+
+*Video (50):* `avgblurVulkan`, `boxblur`, `chromakey`, `colorSource`, `colorbalance`, `colorkey`, `concat`, `crop`, `curves`, `deband`, `deflicker`, `deshake`, `drawbox`, `drawgrid`, `drawtext`, `eq`, `fade`, `format`, `fps`, `gblur`, `hflip`, `hqdn3d`, `hstack`, `hue`, `levels` (alias of `colorlevels`), `nlmeans`, `nlmeansVulkan`, `overlay`, `videoPad` (the video `pad` filter), `rotate`, `scale`, `select`, `setdar`, `setpts`, `setsar`, `smartblur`, `split`, `subtitles`, `thumbnail`, `tile`, `transpose`, `trim`, `unsharp`, `vaguedenoiser`, `vflip`, `vignette`, `vstack`, `xstack`, `yadif`, `zoompan`
+
+*Audio (26):* `aecho`, `afade`, `agate`, `amerge`, `amix`, `aresample`, `asetpts`, `asplit`, `atempo`, `atrim`, `bass`, `channelmap`, `channelsplit`, `compand`, `dynaudnorm`, `equalizer`, `headphones`, `highpass`, `loudnorm`, `lowpass`, `pan`, `rubberband`, `silencedetect`, `sofalizer`, `treble`, `volume`
 
 ---
 
@@ -1324,6 +1521,15 @@ console.log(getChapterList(info)); // [{ title, startSec, endSec }]
 
 const engAudio = findStreamByLanguage(info, 'eng', 'audio');
 ```
+
+**Parser helpers**
+
+| Helper | Accepts | Notes |
+| --- | --- | --- |
+| `parseDuration(s)` | `'120.042'` **and** `'00:02:00.042'` / `'2:00'` | Handles both ffprobe JSON seconds and ffprobe text clock notation. `null` for `''`, `'N/A'`, junk. |
+| `parseFrameRate(s)` | `'30000/1001'`, `'25/1'` | `null` for `'0/0'`, `'N/A'`, junk, and negative numerators. |
+| `parseBitrate(s)` | `'4200000'` | ffprobe's numeric `bit_rate`. Decimal suffixes like `'1.5M'` are not ffprobe's format and truncate. |
+| `formatDuration(sec)` | a finite, non-negative number | Returns `HH:MM:SS.mmm`. **Throws `RangeError`** for negative, `NaN`, or `Infinity` instead of emitting `"-1:-1:-5.000"`. |
 
 ---
 
@@ -1391,7 +1597,7 @@ await new Promise((res, rej) => {
 // Deno — import from JSR
 import { ffmpeg, probe, screenshots } from "jsr:@globaltech/mediaforge";
 
-// Transcode (requires --allow-run=ffmpeg --allow-read --allow-write)
+// Transcode (requires --allow-env --allow-run=ffmpeg,ffprobe --allow-read --allow-write)
 await ffmpeg("input.mp4")
   .output("output.mp4")
   .videoCodec("libx264")
@@ -1408,7 +1614,8 @@ const { files } = await screenshots({ input: "video.mp4", folder: "./thumbs", co
 
 Deno permissions required:
 ```bash
-deno run --allow-run=ffmpeg,ffprobe --allow-read --allow-write your-script.ts
+# --allow-env is needed to read FFMPEG_PATH / FFPROBE_PATH
+deno run --allow-env --allow-run=ffmpeg,ffprobe --allow-read --allow-write your-script.ts
 ```
 
 ```ts
@@ -1439,9 +1646,46 @@ mediaforge caps --codecs
 mediaforge caps --filters
 mediaforge caps --formats
 mediaforge caps --hwaccels
+mediaforge caps              # all of the above
 
 # Show version
 mediaforge version
+
+# Help
+mediaforge --help
+```
+
+**Subcommands:** `version`, `probe <file>`, `caps`, `help` (`--help` / `-h`).
+With no arguments the CLI prints usage and exits 0.
+
+**mediaforge-specific flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--ffmpeg <path>` | Path to the ffmpeg binary (default: `FFMPEG_PATH` env or `ffmpeg`) |
+| `--ffprobe <path>` | Path to the ffprobe binary (default: `FFPROBE_PATH` env or `ffprobe`) |
+| `--hwaccel <name>` | Hardware acceleration (`cuda`, `vaapi`, `mediacodec`, `vulkan`, `qsv`) |
+| `--hwaccel-device <path>` | Device path, e.g. `/dev/dri/renderD128` for VAAPI |
+| `--progress` | Enable progress reporting on stderr |
+| `--loglevel <level>` | `quiet`\|`panic`\|`fatal`\|`error`\|`warning`\|`info`\|`verbose`\|`debug`\|`trace` |
+| `-y` / `-n` | Overwrite / never overwrite (the CLI injects `-y` unless `-n` is present) |
+| `--codecs`, `--filters`, `--formats`, `--hwaccels` | Filters for the `caps` subcommand |
+
+**Everything else is forwarded to ffmpeg verbatim**, so standard ffmpeg flags work:
+`-i`, `-ss`, `-t`, `-to`, `-f`, `-c:v`, `-c:a`, `-c:s`, `-b:v`, `-b:a`, `-ar`, `-ac`,
+`-r`, `-s`, `-crf`, `-preset`, `-pix_fmt`, `-vf`, `-af`, `-vn`, `-an`, `-sn`,
+`-map`, `-filter_complex`, and so on.
+
+```bash
+# Hardware encode with progress
+mediaforge --hwaccel cuda --hwaccel-device /dev/dri/renderD128 \
+  -i input.mp4 -c:v h264_vaapi ./out.mp4 --progress
+
+# Extract audio
+mediaforge -i input.mp4 -vn -c:a libopus -b:a 128k output.opus
+
+# Explicit binaries
+mediaforge --ffmpeg /opt/ffmpeg/bin/ffmpeg --ffprobe /opt/ffmpeg/bin/ffprobe version
 ```
 
 ---
@@ -1482,19 +1726,23 @@ console.log(registry.encoders.size);             // 80+ encoders on standard FFm
 ```
 
 ```ts
-import { FFmpegBuilder } from 'mediaforge';
-const builder = new FFmpegBuilder();
+import { FFmpegBuilder, selectBestCodec } from 'mediaforge';
 
 // Builders expose selectHwaccel() to pick the best available hardware
 const builder = new FFmpegBuilder('input.mp4');
-const hwaccel = builder.selectHwaccel(['cuda', 'vaapi', 'videotoolbox', 'none']);
-console.log(hwaccel); // 'cuda' | 'vaapi' | null (if none of them available)
+const hwaccel = builder.selectHwaccel(['cuda', 'vaapi', 'videotoolbox']);
+console.log(hwaccel); // 'cuda' | 'vaapi' | null (if none are available)
 
-// For codec selection use the standalone selectBestCodec()
-const codec = selectBestCodec(liveVersion, registry, [
+// For codec selection use the standalone selectBestCodec(), or the builder's
+// selectVideoCodec() wrapper which reuses the builder's cached version/registry.
+const codec = selectBestCodec(builder.getVersion(), registry, [
   { codec: 'h264_nvenc', featureKey: 'nvenc' },
   { codec: 'h264_vaapi' },
   { codec: 'libx264' },   // software fallback
+]);
+const picked = builder.selectVideoCodec([
+  { codec: 'h264_nvenc', featureKey: 'nvenc' },
+  { codec: 'libx264' },
 ]);
 ```
 
@@ -1506,10 +1754,14 @@ const codec = selectBestCodec(liveVersion, registry, [
 
 | FFmpeg Version | Support |
 |---------------|---------|
-| v8.x | ✅ Full |
-| v7.x | ✅ Full |
-| v6.x | ✅ Full (note: `levels` filter not available in v6; use `curves` instead) |
-| v5.x and below | ⚠️ Partial |
+| v8.x | ✅ Full — unlocks MediaCodec, Vulkan encode, AMF, VideoToolbox, AV1, Dolby Vision |
+| v7.x | ✅ Full — unlocks AV1 (nvenc/vaapi/qsv), 10-bit x264/x265/vp9/SVT-AV1 |
+| v6.x | ✅ Full baseline — every feature gate in `FEATURE_GATES` is `minMajor: 6` |
+| v5.x and below | ❌ Not supported — below every feature gate |
+
+> mediaforge's `levels()` helper serializes to FFmpeg's **`colorlevels`** filter
+> (present in v6/v7), not the unrelated `levels` filter introduced in FFmpeg 7.x.
+> See [Color Grading & Visual Filters](#color-grading-filters).
 
 Tested with Node.js 20, 22, 24.
 

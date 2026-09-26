@@ -121,7 +121,8 @@ export { writeMetadata, stripMetadata, addChapters } from './helpers/metadata.ts
 export type { WriteMetadataOptions, StripMetadataOptions, ChapterMeta, AddChaptersOptions } from './helpers/metadata.ts';
 
 // Waveform / spectrum
-export { generateWaveform, generateSpectrum } from './helpers/waveform.ts';
+export { generateWaveform, generateSpectrum, SPECTRUM_COLORS } from './helpers/waveform.ts';
+export type { SpectrumColor } from './helpers/waveform.ts';
 export type { WaveformOptions, SpectrumOptions } from './helpers/waveform.ts';
 
 // Process management

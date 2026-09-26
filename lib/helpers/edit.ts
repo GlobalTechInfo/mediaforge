@@ -57,6 +57,10 @@ export async function trimVideo(opts: TrimOptions): Promise<void> {
   if (end !== undefined && duration === undefined) {
     const s = start !== undefined ? (toSeconds(start) ?? 0) : 0;
     const e = toSeconds(end) ?? 0;
+    // A negative -t is rejected by ffmpeg; fail with a clear message instead.
+    if (e - s <= 0) {
+      throw new Error(`trimVideo: end (${e}) must be greater than start (${s})`);
+    }
     builder.duration(e - s);
   }
   if (duration !== undefined) builder.duration(duration);
@@ -467,6 +471,21 @@ export async function stackVideos(opts: StackVideosOptions): Promise<void> {
 
   const labeled = inputs.map((_, i) => `[${i}:v]`).join('');
 
+  // Probe once so the amix pad count matches the streams that actually exist.
+  // Optional `[i:a?]` pads are dropped by ffmpeg, which left amix with fewer
+  // inputs than `inputs=` and no `[audio]` label at all when nothing had audio.
+  const probeBin = resolveProbe();
+  const hasAudio: boolean[] = [];
+  for (const inp of inputs) {
+    try {
+      const info = await probeAsync(inp, { binary: probeBin });
+      hasAudio.push(getAudioStreams(info).length > 0);
+    } catch {
+      hasAudio.push(false);
+    }
+  }
+  const audioCount = hasAudio.filter(Boolean).length;
+
   let filter: string;
   if (direction === 'xstack') {
     const cols = opts.columns ?? Math.ceil(Math.sqrt(inputs.length));
@@ -491,18 +510,26 @@ export async function stackVideos(opts: StackVideosOptions): Promise<void> {
   const builder = new FFmpegBuilder(inputs[0] as string).setBinary(binary).overwrite();
   for (let i = 1; i < inputs.length; i++) builder.input(inputs[i] as string);
 
-  // Mix audio from all inputs with audio present
-  const audioInputs = inputs.map((_, i) => `[${i}:a?]`).join('');
-  const amixFilter = `${audioInputs}amix=inputs=${inputs.length}:duration=first[audio]`;
-  const fullFilter = `${filter};${amixFilter}`;
+  // complexFilter() keeps only the last call, so the video and audio graphs
+  // must be assembled into a single -filter_complex string.
+  if (audioCount > 0) {
+    const audioPads = inputs
+      .map((_, i) => (hasAudio[i] ? `[${i}:a]` : ''))
+      .join('');
+    builder.complexFilter(
+      `${filter};${audioPads}amix=inputs=${audioCount}:duration=first[audio]`,
+    );
+  } else {
+    builder.complexFilter(filter);
+  }
 
-  builder
-    .complexFilter(fullFilter)
-    .output(output)
-    .map('[v]')
-    .map('[audio]')
-    .videoCodec(videoCodec)
-    .audioCodec(audioCodec);
+  builder.output(output).map('[v]').videoCodec(videoCodec);
+
+  if (audioCount > 0) {
+    builder.map('[audio]').audioCodec(audioCodec);
+  } else {
+    builder.noAudio();
+  }
 
   if (outputArgs.length > 0) builder.addOutputOption(...outputArgs);
   await builder.run();

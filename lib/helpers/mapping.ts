@@ -68,25 +68,28 @@ export function ss(
 /**
   * Build a -map flag from a StreamSpecifier or raw string.
   * Returns `['-map', specStr]` tuple when called with a StreamSpecifier/string.
-  *
-  * @example
-  * mapStream(ss(0, 'v', 0))   → ['-map', '0:v:0']
-  * mapStream('0:a:1')         → ['-map', '0:a:1']
-  */
- export function mapStream(spec: StreamSpecifier | string): ['-map', string];
- export function mapStream(
-   spec: StreamSpecifier | string | number,
-   type?: MediaTypeChar,
-   streamIndex?: number,
- ): ['-map', string] | string {
-   if (typeof spec === 'number') {
-     // Convenience: called as mapStream(fileIndex, type, streamIndex) → returns spec string
-     const s: StreamSpecifier = { fileIndex: spec, ...(type !== undefined ? { type } : {}), ...(streamIndex !== undefined ? { streamIndex } : {}) };
-     return serializeSpecifier(s);
-   }
-   const str = typeof spec === 'string' ? spec : serializeSpecifier(spec);
-   return ['-map', str];
- }
+  * * Both overloads return the same `['-map', spec]` tuple.
+ *
+ * @example
+ * mapStream(ss(0, 'v', 0))   → ['-map', '0:v:0']
+ * mapStream('0:a:1')         → ['-map', '0:a:1']
+ * mapStream(0, 'v', 0)       → ['-map', '0:v:0']
+ */
+export function mapStream(spec: StreamSpecifier | string): ['-map', string];
+export function mapStream(fileIndex: number, type?: MediaTypeChar, streamIndex?: number): ['-map', string];
+export function mapStream(
+  spec: StreamSpecifier | string | number,
+  type?: MediaTypeChar,
+  streamIndex?: number,
+): ['-map', string] {
+  if (typeof spec === 'number') {
+    // Convenience: mapStream(fileIndex, type, streamIndex) → same tuple as the string form
+    const s: StreamSpecifier = { fileIndex: spec, ...(type !== undefined ? { type } : {}), ...(streamIndex !== undefined ? { streamIndex } : {}) };
+    return ['-map', serializeSpecifier(s)];
+  }
+  const str = typeof spec === 'string' ? spec : serializeSpecifier(spec);
+  return ['-map', str];
+}
 
 /**
  * Map all streams from an input file.

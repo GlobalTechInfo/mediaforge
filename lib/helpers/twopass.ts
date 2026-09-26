@@ -121,6 +121,10 @@ function runSpawn(binary: string, args: string[]): Promise<void> {
 /**
  * Build pass 1 and pass 2 argument arrays without running them.
  * Useful for manual orchestration or testing.
+ *
+ * Note: the passlog lives in a fresh temp directory that is intentionally left
+ * on disk, because the returned `passlog` path must remain valid for a
+ * subsequent manual run. Callers that do not run the passes should remove it.
  */
 export function buildTwoPassArgs(opts: TwoPassOptions): {
   binary: string;
@@ -129,6 +133,8 @@ export function buildTwoPassArgs(opts: TwoPassOptions): {
   passlog: string;
 } {
   const binary = resolveBinary(opts.binary);
+  // Previously this allocated a temp dir per call and never cleaned it up,
+  // leaking a directory on every dry-run.
   const tmpDir = mkdtempSync(join(tmpdir(), 'mediaforge-twopass-'));
   const passlog = opts.passlogfile ?? join(tmpDir, 'passlog');
   const pass1TempOut = join(tmpDir, 'pass1.mkv');

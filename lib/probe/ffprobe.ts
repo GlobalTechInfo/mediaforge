@@ -1,4 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import type { Buffer } from 'node:buffer';
 import { resolveProbe } from '../utils/binary.ts';
 import type {
@@ -66,48 +67,56 @@ export function probeAsync(
     const timeout = opts.timeout ?? 30000;
     const child = spawn(binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
+    // Reassemble multi-byte UTF-8 that straddles chunk boundaries.
+    const outDecoder = new StringDecoder('utf8');
+    const errDecoder = new StringDecoder('utf8');
     let stdout = '';
     let stderr = '';
     let settled = false;
 
-    const done = (err?: unknown) => {
+    child.stdout?.on('data', (chunk: Buffer) => { stdout += outDecoder.write(chunk); });
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr += errDecoder.write(chunk);
+      // Keep the tail: ffprobe reports the actionable error near the end.
+      if (stderr.length > 10000) stderr = stderr.slice(-5000);
+    });
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill();
+      reject(new ProbeError(filePath, `ffprobe timed out after ${timeout}ms`));
+    }, timeout);
+    // The child stays referenced so the loop survives until it exits; only
+    // the timer is unref'd so it cannot by itself keep the process alive.
+    if (typeof timer.unref === 'function') timer.unref();
+
+    child.on('close', (code) => {
+      // The success path must also settle: previously `settled` stayed false
+      // and the timeout was never cleared, so a completed probe left a live
+      // timer that later killed an already-reaped child.
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (code !== 0) {
+        reject(new ProbeError(filePath, stderr.slice(-1000)));
+        return;
+      }
+      try {
+        stdout += outDecoder.end();
+        resolve(parseProbeOutput(stdout, filePath));
+      } catch (e) {
+        reject(e instanceof ProbeError ? e : new ProbeError(filePath, String(e)));
+      }
+    });
+
+    child.on('error', (err) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       child.kill();
-      if (err !== undefined) {
-        reject(err instanceof ProbeError ? err : new ProbeError(filePath, String(err)));
-      }
-    };
-
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      done(new ProbeError(filePath, `ffprobe timed out after ${timeout}ms`));
-    }, timeout);
-    if (typeof timer.unref === 'function') timer.unref();
-
-    child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
-    child.stderr?.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
-      if (stderr.length > 10000) stderr = stderr.slice(-5000);
+      reject(new ProbeError(filePath, err.message));
     });
-
-    child.on('close', (code) => {
-      if (settled) return;
-      if (timedOut) return;
-      if (code !== 0) {
-        done(new ProbeError(filePath, stderr.slice(-1000)));
-        return;
-      }
-      try {
-        resolve(parseProbeOutput(stdout, filePath));
-      } catch (e) {
-        done(e);
-      }
-    });
-
-    child.on('error', (err) => done(new ProbeError(filePath, err.message)));
   });
 }
 
@@ -211,23 +220,49 @@ export class ProbeError extends Error {
  * @returns ParsedFrameRate object, or null if the string is absent/invalid.
  */
 export function parseFrameRate(frStr: string | undefined): ParsedFrameRate | null {
-  if (frStr === undefined || frStr === '' || frStr === '0/0') return null;
+  if (frStr === undefined || frStr === '' || frStr === '0/0' || frStr === 'N/A') return null;
   const parts = frStr.split('/');
   if (parts.length !== 2) return null;
   const num = parseInt(parts[0] ?? '0', 10);
   const den = parseInt(parts[1] ?? '1', 10);
-  if (den === 0) return null;
+  // Guard NaN: "1/abc" previously produced { num: 1, den: NaN, value: NaN }.
+  if (!Number.isFinite(num) || !Number.isFinite(den) || den === 0) return null;
+  // A negative numerator/denominator is not a usable frame rate (ffmpeg would
+  // reject `-r -30/1`), and a non-positive value would break rate maths.
+  if (num <= 0 || den < 0) return null;
   return { num, den, value: num / den };
 }
 
 /**
- * Parse a duration string from ffprobe (e.g. "120.042000") to a number.
- * Returns null if the value is absent or "N/A".
+ * Parse a duration string to a number of seconds.
+ *
+ * Accepts both forms ffmpeg emits:
+ * - plain seconds, e.g. "120.042000" (ffprobe `-print_format json`)
+ * - clock notation, e.g. "00:02:00.042" or "2:00" (ffprobe text output)
+ *
+ * Returns null if the value is absent, "N/A", or unparseable.
  */
 export function parseDuration(durStr: string | undefined): number | null {
   if (durStr === undefined || durStr === 'N/A' || durStr === '') return null;
-  const n = parseFloat(durStr);
-  return isNaN(n) ? null : n;
+  const raw = durStr.trim();
+  if (raw === '') return null;
+
+  // Clock notation: [-]HH:MM:SS.sss (the hours field is optional).
+  if (raw.includes(':')) {
+    const negative = raw.startsWith('-');
+    const body = negative ? raw.slice(1) : raw;
+    const fields = body.split(':');
+    if (fields.length > 3) return null;
+    let total = 0;
+    for (const field of fields) {
+      if (!/^\d+(\.\d+)?$/.test(field)) return null;
+      total = total * 60 + parseFloat(field);
+    }
+    return negative ? -total : total;
+  }
+
+  const n = parseFloat(raw);
+  return isNaN(n) || !Number.isFinite(n) ? null : n;
 }
 
 /**
@@ -319,10 +354,12 @@ export function summarizeVideoStream(s: ProbeStream): VideoStreamSummary {
  * Build a human-readable summary of an audio stream.
  */
 export function summarizeAudioStream(s: ProbeStream): AudioStreamSummary {
+  const sampleRate = parseInt(s.sample_rate ?? '0', 10);
   return {
     index: s.index,
     codec: s.codec_name ?? 'unknown',
-    sampleRate: parseInt(s.sample_rate ?? '0', 10),
+    // sample_rate can be "N/A"; parseInt would yield NaN.
+    sampleRate: Number.isFinite(sampleRate) ? sampleRate : 0,
     channels: s.channels ?? 0,
     channelLayout: s.channel_layout ?? 'unknown',
     durationSec: parseDuration(s.duration),
@@ -357,8 +394,18 @@ export function findStreamByLanguage(
 
 /**
  * Format a duration in seconds to a human-readable HH:MM:SS.mmm string.
+ *
+ * @throws {RangeError} If `seconds` is negative or not finite. The previous
+ * implementation happily produced nonsense such as `"-1:-1:-5.000"` and
+ * `"NaN:NaN:000NaN"` for these inputs.
  */
 export function formatDuration(seconds: number): string {
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds)) {
+    throw new RangeError(`formatDuration: expected a finite number, got ${String(seconds)}`);
+  }
+  if (seconds < 0) {
+    throw new RangeError(`formatDuration: expected a non-negative duration, got ${seconds}`);
+  }
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;

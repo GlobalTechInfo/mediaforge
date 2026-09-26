@@ -809,7 +809,6 @@ await run('hlsPackage single-bitrate', async () => {
     input: p('short.mp4'),
     outputDir: outDir,
     segmentDuration: 2,
-    hlsVersion: 3,
     videoCodec: 'libx264',
     videoBitrate: '500k',
     audioBitrate: '64k',

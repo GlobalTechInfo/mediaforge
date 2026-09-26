@@ -110,7 +110,8 @@ export function pipeThrough(opts: PipeOptions): PipeProcess {
     ? new ProgressParser(info => emitter.emit('progress', info))
     : null;
 
-  emitter.emit('start', args);
+  // Defer so the caller can attach listeners before 'start' fires.
+  queueMicrotask(() => emitter.emit('start', args));
 
   let closeStderr: (() => void) | undefined;
   let capturedRef: { stderrLines: string[]; close: () => void } | undefined;
@@ -119,8 +120,20 @@ export function pipeThrough(opts: PipeOptions): PipeProcess {
     closeStderr = capturedRef.close;
   }
 
-  child.on('close', (code, signal) => {
+  // Guard against double-settling: 'error' is followed by 'close', which
+  // previously emitted a second 'end'/'error' on the same emitter.
+  let settled = false;
+  let stderrClosed = false;
+  const releaseStderr = (): void => {
+    if (stderrClosed) return;
+    stderrClosed = true;
     closeStderr?.();
+  };
+
+  child.on('close', (code, signal) => {
+    releaseStderr();
+    if (settled) return;
+    settled = true;
     if (code === 0) {
       emitter.emit('end');
     } else {
@@ -129,7 +142,12 @@ export function pipeThrough(opts: PipeOptions): PipeProcess {
     }
   });
 
-  child.on('error', err => emitter.emit('error', err));
+  child.on('error', err => {
+    releaseStderr();
+    if (settled) return;
+    settled = true;
+    emitter.emit('error', err);
+  });
 
   // Pipe inputStream into stdin automatically if provided
   if (inputStream && child.stdin) {
@@ -190,11 +208,38 @@ export function streamOutput(opts: StreamOutputOptions): Readable {
   trackChild(child);
   const pass = new PassThrough();
 
-  child.stdout?.pipe(pass);
+  // stderr is piped but must still be drained. Leaving it unread lets the OS
+  // pipe buffer fill, at which point ffmpeg blocks on write and the whole
+  // transcode deadlocks. Keep only a bounded tail for diagnostics.
+  const STDERR_TAIL_LIMIT = 8192;
+  let stderrTail = '';
+  child.stderr?.setEncoding('utf8');
+  child.stderr?.on('data', (chunk: string) => {
+    stderrTail += chunk;
+    if (stderrTail.length > STDERR_TAIL_LIMIT) {
+      stderrTail = stderrTail.slice(-STDERR_TAIL_LIMIT);
+    }
+  });
+  child.stderr?.on('error', () => { /* drain errors are not actionable */ });
+
+  // `end: false` keeps the PassThrough from ending on its own when the child's
+  // stdout drains. Ending is deferred to the child's 'close' handler so a
+  // non-zero exit can still be reported as an error — otherwise a failing
+  // ffmpeg surfaced to the consumer as a clean, successful 'end'.
+  child.stdout?.pipe(pass, { end: false });
   child.on('error', err => pass.destroy(err));
-  child.on('close', (code) => {
+  child.on('close', (code, signal) => {
     if (code !== 0 && code !== null) {
-      pass.destroy(new Error(`ffmpeg exited with code ${code}`));
+      pass.destroy(new FFmpegSpawnError(code, signal, stderrTail));
+      return;
+    }
+    pass.end();
+  });
+
+  // If the consumer aborts (destroy/close), do not leave ffmpeg running.
+  pass.on('close', () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill('SIGTERM');
     }
   });
 
@@ -243,11 +288,22 @@ export function streamToFile(opts: StreamToFileOptions): Promise<void> {
     const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'mediaforge-stream-'));
     const tmpPath = path.join(tmpDir, `input.${inputFormat ?? 'tmp'}`);
     return new Promise((resolve, reject) => {
+      let settled = false;
+      const fail = (err: unknown): void => {
+        if (settled) return;
+        settled = true;
+        // Destroy the write stream so the fd is released before the directory
+        // is removed — otherwise pending writes target a deleted path.
+        try { ws.destroy(); } catch { /* already destroyed */ }
+        try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* cleanup */ }
+        reject(err);
+      };
+
       const ws = createWriteStream(tmpPath, { flags: 'wx' });
-      stream.pipe(ws);
-      stream.on('error', (err) => { try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* cleanup */ } reject(err); });
-      ws.on('error', (err) => { try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* cleanup */ } reject(err); });
+      stream.on('error', fail);
+      ws.on('error', fail);
       ws.on('close', () => {
+        if (settled) return;
         const args: string[] = ['-y'];
         if (inputFormat) args.push('-f', inputFormat);
         args.push('-i', tmpPath, ...outputArgs, output);
@@ -258,14 +314,24 @@ export function streamToFile(opts: StreamToFileOptions): Promise<void> {
         if (child.stderr) {
           capturedRef = captureStderr(child.stderr, emitter);
         }
-        child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
+        const done = (code: number | null, signal: NodeJS.Signals | null): void => {
+          if (settled) return;
+          settled = true;
           capturedRef?.close();
           try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /**/ }
           if (code === 0) resolve();
           else reject(new FFmpegSpawnError(code, signal, capturedRef?.stderrLines.join('\n') ?? ''));
+        };
+        child.on('close', done);
+        child.on('error', (err: Error) => {
+          if (settled) return;
+          settled = true;
+          capturedRef?.close();
+          try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /**/ }
+          reject(err);
         });
-        child.on('error', (err: Error) => { try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /**/ } reject(err); });
       });
+      stream.pipe(ws);
     });
   }
 
@@ -277,18 +343,35 @@ export function streamToFile(opts: StreamToFileOptions): Promise<void> {
     const child = spawn(binary, args, { stdio: ['pipe', 'ignore', 'pipe'] });
     trackChild(child);
     const emitter = new FFmpegEmitter();
+    let settled = false;
     let capturedRef: { stderrLines: string[]; close: () => void } | undefined;
     if (child.stderr) {
       capturedRef = captureStderr(child.stderr, emitter);
     }
-    stream.pipe(child.stdin!);
-    stream.on('error', (err: Error) => child.stdin?.destroy(err));
+    const stdin = child.stdin;
+    if (stdin === null) {
+      capturedRef?.close();
+      reject(new Error('streamToFile: failed to open ffmpeg stdin'));
+      return;
+    }
+    // An EPIPE on stdin is expected when ffmpeg exits before consuming the
+    // whole stream. Without a handler it surfaces as an unhandled 'error'.
+    stdin.on('error', () => { /* handled by the close/exit paths below */ });
+    stream.pipe(stdin);
+    stream.on('error', (err: Error) => stdin.destroy(err));
     child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
+      if (settled) return;
+      settled = true;
       capturedRef?.close();
       if (code === 0) resolve();
       else reject(new FFmpegSpawnError(code, signal, capturedRef?.stderrLines.join('\n') ?? ''));
     });
-    child.on('error', reject);
+    child.on('error', (err: Error) => {
+      if (settled) return;
+      settled = true;
+      capturedRef?.close();
+      reject(err);
+    });
   });
 }
 

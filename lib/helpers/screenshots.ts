@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { spawnFFmpeg } from '../process/spawn.ts';
 import { resolveBinary } from '../utils/binary.ts';
-import { probeAsync } from '../probe/ffprobe.ts';
+import { probeAsync, parseDuration } from '../probe/ffprobe.ts';
 import { toSecondsStrict as toSeconds } from '../utils/time.ts';
 
 export interface ScreenshotOptions {
@@ -88,7 +88,9 @@ export async function screenshots(opts: ScreenshotOptions): Promise<ScreenshotRe
       throw new Error(`Count must be a positive number, got ${count}`);
     }
     const info = await probeAsync(input);
-    const duration = info.format?.duration ? parseFloat(info.format.duration) : null;
+    // parseFloat('N/A') is NaN, and `NaN <= 0` is false — the old check let it
+    // through and produced `-ss NaN` for every timestamp.
+    const duration = parseDuration(info.format?.duration);
 
     if (duration === null || duration <= 0) {
       throw new Error(`Cannot determine duration of "${input}" for count-based screenshots`);

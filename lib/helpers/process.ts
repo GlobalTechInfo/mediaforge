@@ -5,25 +5,31 @@ import type { ChildProcess } from 'node:child_process';
 const isWindows = process.platform === 'win32';
 
 const _spawnedPids = new Set<number>();
-const _spawned = new WeakSet<ChildProcess>();
-const _spawnedList: ChildProcess[] = [];
+// A Set (not an array) that holds only LIVE children. The previous
+// implementation appended every child to an array and never removed it, so a
+// long-running process leaked one entry per encode, and getSpawnedCount() had
+// to scan the whole history to filter out dead entries.
+const _spawned = new Set<ChildProcess>();
 
 export function trackChild(child: ChildProcess): void {
   _spawned.add(child);
-  _spawnedList.push(child);
   if (child.pid !== undefined) {
     _spawnedPids.add(child.pid);
   }
-  child.on('close', () => {
+  const release = (): void => {
     _spawned.delete(child);
     if (child.pid !== undefined) {
       _spawnedPids.delete(child.pid);
     }
-  });
+  };
+  // 'close' is the reliable terminal event; 'exit' covers the case where the
+  // stdio streams are inherited and never close.
+  child.once('close', release);
+  child.once('exit', release);
 }
 
 export function getSpawnedCount(): number {
-  return _spawnedList.filter(c => _spawned.has(c)).length;
+  return _spawned.size;
 }
 
 /**
@@ -78,9 +84,9 @@ export function autoKillOnExit(child: ChildProcess, signal: NodeJS.Signals = 'SI
     if (!isWindows) process.kill(process.pid!, safeSignal);
   };
 
-  process.once('exit',    handler);
-  process.once('SIGINT',  handler);
-  process.once('SIGTERM', handler);
+  process.on('exit',    handler);
+  process.on('SIGINT',  handler);
+  process.on('SIGTERM', handler);
   if (typeof (globalThis as Record<string, unknown>)['addEventListener'] === 'function') {
     try {
       ((globalThis as Record<string, unknown>)['addEventListener'] as (...args: unknown[]) => unknown)('beforeunload', handler);
@@ -91,9 +97,10 @@ export function autoKillOnExit(child: ChildProcess, signal: NodeJS.Signals = 'SI
   const cleanup = () => {
     if (cleaned) return;
     cleaned = true;
-    process.off('exit',    handler);
-    process.off('SIGINT',  handler);
-    process.off('SIGTERM', handler);
+    // 'on' is used above, so remove every registration, not just the first.
+    process.removeListener('exit',    handler);
+    process.removeListener('SIGINT',  handler);
+    process.removeListener('SIGTERM', handler);
     if (typeof (globalThis as Record<string, unknown>)['removeEventListener'] === 'function') {
       try {
         ((globalThis as Record<string, unknown>)['removeEventListener'] as (...args: unknown[]) => unknown)('beforeunload', handler);
@@ -110,10 +117,8 @@ export function autoKillOnExit(child: ChildProcess, signal: NodeJS.Signals = 'SI
  * Kill all tracked ffmpeg processes (only those spawned by this library).
  */
 export function killAllFFmpeg(signal: NodeJS.Signals = 'SIGTERM'): void {
-  const snapshot = [..._spawnedList];
-  for (const child of snapshot) {
-    if (_spawned.has(child)) {
-      try { child.kill(signal); } catch { /* ok */ }
-    }
+  // Copy first: kill() can synchronously emit 'close', which mutates the set.
+  for (const child of [..._spawned]) {
+    try { child.kill(signal); } catch { /* ok */ }
   }
 }
