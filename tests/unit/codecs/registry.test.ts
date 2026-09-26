@@ -5,6 +5,12 @@
 
 import { describe, it, before } from 'node:test';
 import * as assert from 'node:assert/strict';
+import { selectBestCodec } from '../../../lib/compat/guards.ts';
+import { probeVersion } from '../../../lib/utils/version.ts';
+
+// A fixed version, so a feature gate never depends on the ffmpeg the suite
+// happens to be running against.
+const version = probeVersion('ffmpeg');
 
 let CapabilityRegistry: any;
 let registry: any;
@@ -46,24 +52,91 @@ describe('CapabilityRegistry — individual encoder names', () => {
     assert.strictEqual(registry.canEncode('fake_encoder_xyz'), false);
   });
 
-  it('encoders set is populated', () => {
-    assert.ok(registry.encoders.size > 0, 'encoders set should not be empty');
+  it('encoders set is populated with real encoder names', () => {
+    assert.ok(registry.encoders.size > 50, `only ${registry.encoders.size} encoders parsed`);
+    assert.ok(registry.encoders.has('libx264'), 'libx264 missing from the encoder list');
+    assert.ok(registry.encoders.has('aac'), 'aac missing from the encoder list');
+    assert.ok(!registry.encoders.has(''), 'the encoder list has an empty entry');
   });
 
-  it('encoders contains libx264', () => {
-    assert.ok(registry.encoders.has('libx264'));
+  it('encoders set is disjoint from a name no build has', () => {
+    assert.ok(!registry.encoders.has('fake_encoder_xyz'));
   });
 });
 
 describe('CapabilityRegistry — selectBestCodec integration', () => {
-  it('selectVideoCodec picks libx264 when hardware unavailable', async () => {
-    const { FFmpegBuilder } = await import('../../../dist/esm/FFmpeg.js');
-    const codec = await (new FFmpegBuilder('ffmpeg')).selectVideoCodec([
-      { codec: 'h264_nvenc', featureKey: 'nvenc' },
-      { codec: 'h264_vaapi' },
-      { codec: 'libx264' },
-    ]);
-    // libx264 is always available in standard FFmpeg builds
-    assert.ok(typeof codec === 'string', `expected string, got ${typeof codec}: ${codec}`);
+  // A stub registry, so the answer depends on the selection order under test
+  // rather than on which GPU encoders the machine running the suite happens to
+  // have. A host with VAAPI installed would otherwise pick h264_vaapi here.
+  function stubRegistry(available: string[]) {
+    return {
+      hasCodec: (c: string) => available.includes(c),
+      canEncode: (c: string) => available.includes(c),
+      canDecode: (c: string) => available.includes(c),
+    } as any;
+  }
+
+  function builderWith(available: string[]) {
+    return { selectVideoCodec: (c: any[]) =>
+      selectBestCodec(version, stubRegistry(available), c) } as any;
+  }
+
+  it('picks the first candidate the registry can encode', () => {
+    // Hardware first, software last: with all three present, hardware wins.
+    assert.strictEqual(
+      builderWith(['h264_nvenc', 'h264_vaapi', 'libx264']).selectVideoCodec([
+        { codec: 'h264_nvenc' },
+        { codec: 'h264_vaapi' },
+        { codec: 'libx264' },
+      ]),
+      'h264_nvenc',
+    );
+  });
+
+  it('skips unavailable candidates down the priority list', () => {
+    // Only the software encoder exists, so the two hardware entries must be
+    // passed over rather than chosen blindly.
+    assert.strictEqual(
+      builderWith(['libx264']).selectVideoCodec([
+        { codec: 'h264_nvenc' },
+        { codec: 'h264_vaapi' },
+        { codec: 'libx264' },
+      ]),
+      'libx264',
+    );
+  });
+
+  it('returns null when no candidate is available', () => {
+    assert.strictEqual(
+      builderWith([]).selectVideoCodec([
+        { codec: 'h264_nvenc' },
+        { codec: 'h264_vaapi' },
+        { codec: 'libx264' },
+      ]),
+      null,
+    );
+  });
+
+  it('returns null for an empty candidate list', () => {
+    assert.strictEqual(builderWith(['libx264']).selectVideoCodec([]), null);
+  });
+
+  it('a version-gated candidate is rejected before the probe runs', () => {
+    // `nvenc` requires a modern ffmpeg; on a 4.x build the gate refuses it even
+    // though the encoder name is present, so the next candidate must win.
+    const old = { ...version, major: 4, minor: 4 };
+    const probed: string[] = [];
+    const spy = {
+      hasCodec: (c: string) => { probed.push(c); return true; },
+      canEncode: () => true,
+    } as any;
+    assert.strictEqual(
+      selectBestCodec(old, spy, [
+        { codec: 'h264_nvenc', featureKey: 'nvenc' },
+        { codec: 'libx264' },
+      ]),
+      'libx264',
+    );
+    assert.ok(!probed.includes('h264_nvenc'), 'the gated candidate was probed anyway');
   });
 });

@@ -51,23 +51,23 @@ describe('extractFrames helpers', () => {
 describe('concatWithTransitions helpers', () => {
 
   it('buildConcatTransitionArgs returns args array', () => {
-    const args = buildConcatTransitionArgs(['a.mp4', 'b.mp4'], 'out.mp4', 'crossfade', 1);
+    const args = buildConcatTransitionArgs(['a.mp4', 'b.mp4'], 'out.mp4', 'fade', 1);
     assert.ok(Array.isArray(args));
   });
 
   it('buildConcatTransitionArgs inputs two files', () => {
-    const args = buildConcatTransitionArgs(['a.mp4', 'b.mp4'], 'out.mp4', 'crossfade', 1);
+    const args = buildConcatTransitionArgs(['a.mp4', 'b.mp4'], 'out.mp4', 'fade', 1);
     const inputCount = args.filter(a => a === '-i').length;
     assert.strictEqual(inputCount, 2);
   });
 
   it('buildConcatTransitionArgs includes xfade filter', () => {
-    const args = buildConcatTransitionArgs(['a.mp4', 'b.mp4'], 'out.mp4', 'xfade', 1);
+    const args = buildConcatTransitionArgs(['a.mp4', 'b.mp4'], 'out.mp4', 'fade', 1);
     assert.ok(args.some(a => a.includes('xfade=transition')));
   });
 
   it('buildConcatTransitionArgs includes output', () => {
-    const args = buildConcatTransitionArgs(['a.mp4', 'b.mp4'], 'out.mp4', 'crossfade', 1);
+    const args = buildConcatTransitionArgs(['a.mp4', 'b.mp4'], 'out.mp4', 'fade', 1);
     assert.ok(args.includes('out.mp4'));
   });
 
@@ -77,7 +77,7 @@ describe('concatWithTransitions helpers', () => {
   });
 
   it('buildConcatTransitionArgs with resolution', () => {
-    const args = buildConcatTransitionArgs(['a.mp4', 'b.mp4'], 'out.mp4', 'crossfade', 1, 'libx264', 'aac', '30', '1920x1080');
+    const args = buildConcatTransitionArgs(['a.mp4', 'b.mp4'], 'out.mp4', 'fade', 1, 'libx264', 'aac', '30', '1920x1080');
     assert.ok(args.some(a => a.includes('scale=1920x1080')));
   });
 });
@@ -126,9 +126,13 @@ describe('detectScenes helpers', () => {
     assert.ok(filter.includes('gt(scene,0.3)'));
   });
 
-  it('buildSceneSelectFilter includes showinfo', () => {
+  it('buildSceneSelectFilter uses metadata=print, which is where scene_score is reported', () => {
     const filter = buildSceneSelectFilter();
-    assert.ok(filter.includes('showinfo'));
+    // showinfo does not print the scene score, so detectScenes() could never
+    // match a line and always returned []. metadata=print emits
+    // lavfi.scene_score for each selected frame.
+    assert.ok(filter.includes('metadata=print'));
+    assert.ok(!filter.includes('showinfo'));
   });
 });
 

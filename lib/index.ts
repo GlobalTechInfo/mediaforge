@@ -50,21 +50,29 @@ export { isFeatureExpected, availableFeatures, unavailableFeatures, FEATURE_GATE
 export { FilterChain, serializeNode, serializeLink, pad } from './types/filters.ts';
 export { FilterGraph, GraphNode, GraphStream, VideoFilterChain, AudioFilterChain, videoFilterChain, audioFilterChain, filterGraph, resetLabelCounter } from './filters/complex.ts';
 // Video filters
-export { scale, crop, pad as videoPad, overlay, drawtext, fps, setpts, trim, format, setsar, setdar, vflip, hflip, rotate, transpose, unsharp, gblur, boxblur, eq, hue, colorbalance, yadif, hqdn3d, nlmeans, thumbnail, select, concat, split, tile, colorkey, chromakey, subtitles, avgblurVulkan, nlmeansVulkan, fade, zoompan, curves, levels, deband, deshake, deflicker, smartblur, hstack, vstack, xstack, colorSource, drawbox, drawgrid, vignette, vaguedenoiser } from './filters/video/index.ts';
+export { scale, crop, pad as videoPad, overlay, drawtext, fps, setpts, trim, format, setsar, setdar, vflip, hflip, rotate, transpose, unsharp, gblur, boxblur, eq, hue, colorbalance, yadif, hqdn3d, nlmeans, thumbnail, select, concat, split, tile, colorkey, chromakey, subtitles, avgblurVulkan, nlmeansVulkan, fade, zoompan, curves, levels, deband, deshake, deflicker, smartblur, hstack, vstack, xstack, colorSource, drawbox, drawgrid, vignette, vaguedenoiser, delogo } from './filters/video/index.ts';
 // Audio filters
 export { volume, loudnorm, equalizer, bass, treble, afade, asetpts, atrim, amerge, amix, pan, channelmap, channelsplit, aresample, dynaudnorm, compand, aecho, highpass, lowpass, asplit, silencedetect, rubberband, atempo, agate, headphones, sofalizer } from './filters/audio/index.ts';
 export type { FilterNode, GraphPad, GraphLink } from './types/filters.ts';
-export type { CurvesOptions, LevelsOptions, XstackOptions } from './filters/video/index.ts';
+export type { CurvesOptions, LevelsOptions, XstackOptions, DelogoOptions } from './filters/video/index.ts';
 
 // Phase 4 — Compat & Advanced
 export { probe, probeAsync, ProbeError, parseFrameRate, parseDuration, parseBitrate, getVideoStreams, getAudioStreams, getSubtitleStreams, getDefaultVideoStream, getDefaultAudioStream, getMediaDuration, durationToMicroseconds, summarizeVideoStream, summarizeAudioStream, getStreamLanguage, findStreamByLanguage, formatDuration, isHdr, isInterlaced, getChapterList } from './probe/ffprobe.ts';
 export { twoPassEncode, buildTwoPassArgs } from './helpers/twopass.ts';
-export { hlsPackage, adaptiveHls, dashPackage } from './helpers/hls.ts';
+export {
+  hlsPackage, adaptiveHls, dashPackage, abrLadder,
+  buildVarStreamMap, buildAbrLadderArgs, buildAbrLadderFilter, validateAbrVariants,
+} from './helpers/hls.ts';
+export type { AbrVariant, AbrLadderOptions } from './helpers/hls.ts';
 export { mapStream, mapAll, mapAllVideo, mapAllAudio, mapAllSubtitles, mapVideo, mapAudio, mapSubtitle, mapLabel, negateMap, setStreamMetadata, setMetadata, setDisposition, streamCodec, copyStream, remuxAll, mapDefaultStreams, mapAVS, copyAudioAndSubs, serializeSpecifier, ss } from './helpers/mapping.ts';
 export { guardVersion, guardFeatureVersion, guardCodec, guardFilter, guardHwaccel, guardCodecFull, assertCodec, assertHwaccel, assertFeatureVersion, GuardError, selectBestCodec, selectBestHwaccel } from './compat/guards.ts';
 export type { ProbeResult, ProbeStream, ProbeFormat, ProbeChapter, ParsedFrameRate, VideoStreamSummary, AudioStreamSummary, StreamCodecType, StreamDisposition } from './types/probe.ts';
 export type { TwoPassOptions } from './helpers/twopass.ts';
 export type { HlsOptions, HlsVariant, AdaptiveHlsOptions, DashOptions } from './helpers/hls.ts';
+
+export type { FpsMode, ColorProperties, ColorPropertyKey } from './FFmpeg.ts';
+export { FPS_MODES } from './FFmpeg.ts';
+export { COLOR_PROPERTY_KEYS } from './FFmpeg.ts';
 export type { StreamSpecifier, MediaTypeChar } from './helpers/mapping.ts';
 export type { GuardResult, CodecCandidate } from './compat/guards.ts';
 
@@ -110,11 +118,55 @@ export type { NormalizeOptions, NormalizeResult, AdjustVolumeOptions, SilenceSeg
 export { addWatermark, addTextWatermark } from './helpers/watermark.ts';
 export type { WatermarkOptions, WatermarkPosition, TextWatermarkOptions } from './helpers/watermark.ts';
 
-// Subtitle burn/extract
-export { burnSubtitles, extractSubtitles } from './helpers/subtitles.ts';
+// Subtitle burn/extract/convert
+export {
+  burnSubtitles, extractSubtitles, convertSubtitles, fixSubtitleDuration,
+  subtitleCodecFor, subtitleExtensionFor,
+} from './helpers/subtitles.ts';
+export type {
+  SubtitleFormat, ConvertSubtitlesOptions, FixSubtitleDurationOptions,
+} from './helpers/subtitles.ts';
 export { trimVideo, changeSpeed, buildAtempoChain, extractAudio, replaceAudio, mixAudio, loopVideo, deinterlace, cropToRatio, stackVideos, generateSprite, applyLUT, stabilizeVideo, streamToUrl } from './helpers/edit.ts';
 export type { TrimOptions, ChangeSpeedOptions, ExtractAudioOptions, ReplaceAudioOptions, MixAudioOptions, LoopVideoOptions, DeinterlaceOptions, CropToRatioOptions, StackVideosOptions, SpriteOptions, ApplyLutOptions, StabilizeOptions, StreamToUrlOptions } from './helpers/edit.ts';
 export type { BurnSubtitlesOptions, ExtractSubtitlesOptions } from './helpers/subtitles.ts';
+
+// Quality measurement (VMAF / SSIM / PSNR)
+export {
+  buildVmafFilter, buildSsimFilter, buildPsnrFilter,
+  parseVmafLog, parseStatsFile, measureQuality,
+} from './helpers/quality.ts';
+export type {
+  QualityMetric, QualityScore, VmafFilterOptions, SsimFilterOptions,
+  PsnrFilterOptions, MeasureQualityOptions,
+} from './helpers/quality.ts';
+
+// HDR → SDR tone mapping
+export {
+  buildToneMapFilter, toneMapHdrToSdr, HDR_SOURCE_PROPERTIES, SDR_TARGET_PROPERTIES,
+  TONE_MAP_ALGORITHMS,
+} from './helpers/tone.ts';
+export type {
+  ToneMapAlgorithm, ToneMapOutput, ToneMapFilterOptions, ToneMapOptions,
+} from './helpers/tone.ts';
+
+// Temporal processing (interpolation, scene cuts, silence removal, segments)
+export {
+  buildInterpolateFilter, interpolateFrames,
+  buildSceneCutArgs, cutToScenes,
+  buildSilenceRemoveFilter, removeSilence,
+  buildSegmentArgs, writeSegments,
+} from './helpers/temporal.ts';
+export type {
+  InterpolationMethod, McMode, MeMode, InterpolateOptions, CutToScenesOptions,
+  RemoveSilenceOptions, SegmentOutputOptions,
+} from './helpers/temporal.ts';
+
+// Hardware filter graphs (hwupload / hwdownload / scale_cuda|vaapi|qsv)
+export {
+  buildHwUploadFilter, buildHwDownloadFilter, buildHwScaleFilter,
+  buildHwFilterChain, transcodeWithHwFilters, HWACCELS,
+} from './helpers/hw.ts';
+export type { Hwaccel, HwPixelFormat, HwTranscodeOptions } from './helpers/hw.ts';
 
 // Metadata write/strip
 export { writeMetadata, stripMetadata, addChapters } from './helpers/metadata.ts';
@@ -130,6 +182,7 @@ export { renice, autoKillOnExit, killAllFFmpeg } from './helpers/process.ts';
 
 // Arg builders (testable without ffmpeg)
 export { buildHlsArgs, buildDashArgs } from './helpers/hls.ts';
+export type { BuildHlsOptions, BuildDashOptions } from './helpers/hls.ts';
 export { buildWatermarkFilter, buildTextWatermarkFilter } from './helpers/watermark.ts';
 export { buildBurnSubtitlesFilter } from './helpers/subtitles.ts';
 export { buildWaveformFilter, buildSpectrumFilter } from './helpers/waveform.ts';
@@ -139,3 +192,8 @@ export { buildGifArgs, buildGifPalettegenFilter, buildGifPaletteuseFilter } from
 export { buildScreenshotArgs, buildFrameBufferArgs, buildTimestampFilename, buildExtractFramesArgs } from './helpers/screenshots.ts';
 export { buildConcatTransitionArgs } from './helpers/concat.ts';
 export { buildPipeThroughArgs, buildStreamOutputArgs } from './helpers/streams.ts';
+
+// CLI task table — exported so the subcommand surface can be inspected and
+// driven programmatically, exactly like the other builders above.
+export { CLI_TASKS, parseTaskArgs, taskHelpText, taskDetail } from './cli/tasks.ts';
+export type { CliTask, CliFlags } from './cli/tasks.ts';

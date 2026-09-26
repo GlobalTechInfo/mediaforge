@@ -17,6 +17,7 @@ import process from 'node:process';
 import { parseVersionOutput } from '../utils/version.ts';
 import { CapabilityRegistry } from '../codecs/registry.ts';
 import { resolveBinary, resolveProbe } from '../utils/binary.ts';
+import { CLI_TASKS, parseTaskArgs, taskHelpText, taskDetail } from './tasks.ts';
 
 import { execFileSync } from 'node:child_process';
 
@@ -104,7 +105,12 @@ EXAMPLES
 
   # Probe a file
   mediaforge probe input.mp4
-`.trim());
+
+  # Task commands — run 'mediaforge help' for the full list
+  mediaforge trim input.mp4 out.mp4 --start 5 --end 20
+  mediaforge hls input.mp4 --outdir ./hls
+  mediaforge quality reference.mp4 encoded.mp4 --metric ssim --min 0.98
+`.trim() + '\n\n' + taskHelpText());
 }
 
 // ─── Subcommand: version ──────────────────────────────────────────────────────
@@ -213,6 +219,7 @@ function cmdProbe(_binary: string, file: string, ffprobeOverride?: string): void
       '-print_format', 'json',
       '-show_format',
       '-show_streams',
+      '-show_chapters',
       file,
     ], {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -293,6 +300,46 @@ async function main(): Promise<void> {
   if (subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
     printUsage();
     return;
+  }
+
+  // ── Task commands (mediaforge trim/hls/chapters/…) ─────────────────────────
+  const task = subcommand !== undefined ? CLI_TASKS[subcommand] : undefined;
+  if (task) {
+    if (rest.includes('--help')) {
+      console.log(taskDetail(subcommand!));
+      return;
+    }
+    const { positional, flags } = parseTaskArgs(rest.slice(1));
+    // A misspelled flag would otherwise be silently dropped and the command
+    // would run with its defaults, which is far worse than a hard error.
+    const known = new Set(Object.keys(task.flags));
+    const unknown = Object.keys(flags).filter(f => !known.has(f));
+    if (unknown.length > 0) {
+      const hint = unknown.length === 1 ? 'flag' : 'flags';
+      console.error(
+        `Error: unknown ${hint} ${unknown.map(f => `--${f}`).join(', ')} for "${subcommand}"`,
+      );
+      console.error(`Known flags: ${[...known].map(f => `--${f}`).join(', ') || '(none)'}\n`);
+      console.error(taskDetail(subcommand!));
+      process.exit(1);
+    }
+    try {
+      await task.run(positional, flags);
+    } catch (err) {
+      console.error(`\nError: ${(err as Error).message}`);
+      console.error(`\n${taskDetail(subcommand!)}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (subcommand !== undefined && subcommand.startsWith('-')) {
+    // A leading flag with no subcommand is the raw passthrough path.
+  } else if (subcommand !== undefined) {
+    console.error(`Error: unknown command "${subcommand}"`);
+    console.error(`\n${taskHelpText()}`);
+    console.error('\nRun `mediaforge help` for usage.');
+    process.exit(1);
   }
 
   const ffmpegArgs: string[] = [];

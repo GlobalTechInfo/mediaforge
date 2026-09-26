@@ -14,31 +14,41 @@
     ]
   },
   "tasks": {
-    "test": "deno test --allow-env --allow-run --allow-write --allow-read --allow-sys=uid --ignore=deno-tests/battle.test.ts deno-tests/",
+    "test": "deno test --allow-env --allow-run --allow-write --allow-read --allow-sys=uid --ignore=deno-tests/battle.test.ts --ignore=deno-tests/newfeatures.test.ts --ignore=deno-tests/cli.test.ts deno-tests/",
     "test:unit": "deno test --allow-env --allow-run --allow-write --allow-read --allow-sys=uid deno-tests/unit/",
     "test:integration": "deno test --allow-env --allow-run --allow-write --allow-read --allow-sys=uid deno-tests/integration/",
-    "check": "deno check lib/",
-    "battle": "deno run --allow-env --allow-run --allow-write --allow-read --allow-sys=uid deno-tests/battle.test.ts"
+    "check": "deno check lib/ deno-tests/ runtime-tests/",
+    "battle": "deno run --allow-env --allow-run --allow-write --allow-read --allow-sys=uid deno-tests/battle.test.ts",
+    "battle:new": "deno run --allow-env --allow-run --allow-write --allow-read --allow-sys=uid deno-tests/newfeatures.test.ts",
+    "battle:cli": "deno run --allow-env --allow-run --allow-write --allow-read --allow-sys=uid deno-tests/cli.test.ts",
+    "battle:runtime": "deno run --allow-env --allow-run --allow-write --allow-read --allow-sys=uid runtime-tests/battle.ts",
+    "battle:all": "deno task battle && deno task battle:new && deno task battle:cli && deno task battle:runtime"
   },
   "test": {
     "include": [
       "deno-tests/"
+    ],
+    "exclude": [
+      "**/tmp*/"
     ]
   },
   "check": {
     "include": [
       "lib/",
-      "deno-tests/"
+      "deno-tests/",
+      "runtime-tests/"
     ],
     "exclude": [
       "tests/",
       "dist/",
-      "node_modules/"
+      "node_modules/",
+      "**/tmp*/"
     ]
   },
   "lint": {
     "include": [
-      "lib/"
+      "lib/",
+      "runtime-tests/"
     ],
     "exclude": [
       "deno-tests",
@@ -59,7 +69,11 @@
       "deno-tests",
       "tests/**",
       "dist/**",
-      "node_modules/**"
+      "node_modules/**",
+      "runtime-tests/**",
+      "scripts/**",
+      "battle*.test.ts",
+      "ts-prune.ignore"
     ]
   }
 }

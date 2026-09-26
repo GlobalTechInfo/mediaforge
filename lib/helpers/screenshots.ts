@@ -170,9 +170,35 @@ export function buildFrameBufferArgs(input: string, timestamp: number, format: s
   return args;
 }
 
+/**
+ * Expand a `frame_%04d.jpg`-style pattern for a 0-based frame index.
+ *
+ * The index is used as given: ffmpeg numbers its own `%03d` outputs from 0,
+ * so asking for frame 6 has to name frame 6, not frame 7.
+ *
+ * `ext` is the extension to end up with, written with or without its dot, and
+ * the pattern may or may not already carry it. Only a real extension is stripped
+ * from the pattern, so `frame_%04d.jpg` + `jpg` gives `frame_0006.jpg` rather
+ * than `frame_0006..jpg`, and `frame_%04d` + `png` gives `frame_0006.png`.
+ *
+ * The index is padded to the width the placeholder declares, so `%03d` gives
+ * `005` and a bare `%d` falls back to four digits.
+ *
+ * A pattern with no `%d` placeholder at all still gets the index, zero-padded
+ * to four digits, inserted before the extension: without that, `plain.png` and
+ * `plain.png` would name every frame the same and each one would overwrite the
+ * last.
+ */
 export function buildTimestampFilename(pattern: string, index: number, ext: string): string {
-  const base = path.basename(pattern, ext);
-  return base.replace(/%0?\d*d/, String(index + 1).padStart(4, '0')) + ext;
+  const suffix = ext === '' ? '' : ext.startsWith('.') ? ext : `.${ext}`;
+  // path.basename() would strip a bare `ext` as a literal suffix, which eats the
+  // dot of `frame_%04d.jpg` when asked for `jpg`.
+  const base = path.basename(pattern, suffix);
+  const padded = String(index).padStart(4, '0');
+  const expanded = /%0?\d*d/.test(base)
+    ? base.replace(/%0?(\d*)d/, (_match, width: string) => String(index).padStart(Number(width) || 4, '0'))
+    : `${base}${padded}`;
+  return expanded.endsWith(suffix) ? expanded : expanded + suffix;
 }
 
 // ─── extractFrames ─────────────────────────────────────────────────────────────

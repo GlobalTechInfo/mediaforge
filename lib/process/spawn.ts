@@ -59,7 +59,14 @@ export class FFmpegSpawnError extends Error {
  * });
  */
 export function spawnFFmpeg(opts: SpawnOptions): FFmpegProcess {
-  const { binary, args, parseProgress = false, totalDurationUs, cwd, timeout } = opts;
+  const { binary, parseProgress = false, totalDurationUs, cwd, timeout } = opts;
+  // ffmpeg only writes the key=value progress blocks when it is asked to, and
+  // they have to land on stderr for the parser to see them. A caller that
+  // enabled `parseProgress` almost certainly meant to receive them, so add the
+  // flag here unless the argv already carries it.
+  const args = parseProgress && !opts.args.includes('-progress')
+    ? [...opts.args, '-progress', 'pipe:2']
+    : opts.args;
 
   let child: ChildProcess;
   try {

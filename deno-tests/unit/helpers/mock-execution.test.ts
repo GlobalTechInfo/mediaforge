@@ -173,10 +173,56 @@ describe('stream output edge cases', () => {
 
 // ─── screenshot buildTimestampFilename variations ────────────────────────────
 describe('screenshot filename patterns', () => {
-  it('pattern with no format specifier stays as-is + index appended', async () => {
+  // The index is used as given: ffmpeg numbers its own `%0Nd` outputs from 0,
+  // so asking for frame 6 has to name frame 6, not frame 7. The extension is
+  // normalised to exactly one leading dot, and the placeholder keeps the width
+  // it was written with.
+  const cases: Array<[string, number, string, string]> = [
+    ['screenshot_%04d.png', 4, '.png', 'screenshot_0004.png'],
+    ['screenshot_%04d.png', 4, 'png', 'screenshot_0004.png'],
+    ['frame_%03d.png', 7, '.png', 'frame_007.png'],
+    ['frame_%05d.png', 42, '.png', 'frame_00042.png'],
+    ['frame_%d.png', 9, '.png', 'frame_0009.png'],
+    // `path.basename` semantics: directories are stripped from the result.
+    ['out/dir/frame_%02d.png', 1, '.png', 'frame_01.png'],
+    // A pattern that already ends in the requested extension keeps just that
+    // one; a different extension is left in place and the new one is appended.
+    ['shot_%02d.jpg', 3, '.jpg', 'shot_03.jpg'],
+    ['shot_%02d.jpg', 3, 'jpg', 'shot_03.jpg'],
+    ['shot_%02d.jpeg', 3, '.jpg', 'shot_03.jpeg.jpg'],
+    // No placeholder: the index is still inserted before the extension, so
+    // two frames can never end up with the same name.
+    ['plain.png', 2, '.png', 'plain0002.png'],
+    ['shot.jpg', 3, '.jpg', 'shot0003.jpg'],
+  ];
+
+  it('formats each pattern the way ffmpeg will read it back', async () => {
     const { buildTimestampFilename } = await import('../../../lib/helpers/screenshots.ts');
-    const name = buildTimestampFilename('screenshot_%04d.png', 4, '.png');
-    assert.strictEqual(name, 'screenshot_0005.png');
+    for (const [pattern, index, ext, want] of cases) {
+      assert.strictEqual(buildTimestampFilename(pattern, index, ext), want, pattern);
+    }
+  });
+
+  it('omits the extension entirely when asked for none', async () => {
+    const { buildTimestampFilename } = await import('../../../lib/helpers/screenshots.ts');
+    assert.strictEqual(buildTimestampFilename('frame_%02d', 5, ''), 'frame_05');
+  });
+
+  it('gives a placeholder-free pattern a distinct name per index', async () => {
+    const { buildTimestampFilename } = await import('../../../lib/helpers/screenshots.ts');
+    // Without this, `plain.png` would name every extracted frame and each run
+    // would silently overwrite the previous one.
+    const names = new Set([0, 1, 2].map((i) => buildTimestampFilename('plain.png', i, '.png')));
+    assert.strictEqual(names.size, 3, `names collided: ${[...names].join(', ')}`);
+  });
+
+  it('never leaves two dots where a single extension belongs', async () => {
+    const { buildTimestampFilename } = await import('../../../lib/helpers/screenshots.ts');
+    for (const ext of ['.jpg', 'jpg']) {
+      const name = buildTimestampFilename('f_%02d.jpg', 1, ext);
+      assert.strictEqual(name, 'f_01.jpg');
+      assert.ok(!name.includes('..'), `double dot in ${name}`);
+    }
   });
 });
 

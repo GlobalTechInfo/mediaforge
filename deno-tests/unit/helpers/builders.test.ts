@@ -382,14 +382,27 @@ describe('screenshot builders', () => {
     assert.ok(args.includes('mjpeg'));
   });
 
-  it('buildTimestampFilename replaces %04d with padded index', () => {
-    const name = buildTimestampFilename('screenshot_%04d.png', 0, '.png');
-    assert.strictEqual(name, 'screenshot_0001.png');
+  it('buildTimestampFilename replaces %04d with the index as given', () => {
+    // The index is 0-based, matching ffmpeg's own %03d output, so index 0 is
+    // frame 0 — not frame 1.
+    assert.strictEqual(buildTimestampFilename('screenshot_%04d.png', 0, '.png'), 'screenshot_0000.png');
+    assert.strictEqual(buildTimestampFilename('screenshot_%04d.png', 1, '.png'), 'screenshot_0001.png');
   });
 
-  it('buildTimestampFilename index 9 pads to 0010', () => {
-    const name = buildTimestampFilename('thumb_%04d.png', 9, '.png');
-    assert.strictEqual(name, 'thumb_0010.png');
+  it('buildTimestampFilename pads to the width the placeholder declares', () => {
+    assert.strictEqual(buildTimestampFilename('thumb_%04d.png', 9, '.png'), 'thumb_0009.png');
+    assert.strictEqual(buildTimestampFilename('thumb_%04d.png', 12345, '.png'), 'thumb_12345.png');
+    assert.strictEqual(buildTimestampFilename('thumb_%02d.png', 9, '.png'), 'thumb_09.png');
+    // A bare %d has no width to honour, so it falls back to four digits.
+    assert.strictEqual(buildTimestampFilename('thumb_%d.png', 9, '.png'), 'thumb_0009.png');
+  });
+
+  it('buildTimestampFilename normalises the extension to exactly one dot', () => {
+    for (const ext of ['.jpg', 'jpg']) {
+      const name = buildTimestampFilename('frame_%04d.jpg', 6, ext);
+      assert.strictEqual(name, 'frame_0006.jpg', ext);
+      assert.ok(!name.includes('..'), `double dot in ${name}`);
+    }
   });
 });
 

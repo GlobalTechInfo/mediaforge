@@ -69,7 +69,7 @@ describe('packaging helpers create their output directories', () => {
 
   it('hlsPackage emits -hls_version only when asked, and validates it', () => {
     const withV = hlsPackage({ input: 'a.mp4', outputDir: 'o', hlsVersion: 6 });
-    assert.ok(JSON.stringify((withV as unknown as { buildArgs(): string[] }).buildArgs()).includes('-hls_version'));
+    assert.ok(JSON.stringify((withV as unknown as { buildArgs(): string[] }).buildArgs()).includes('-hls_version'), `expected ${JSON.stringify((withV as unknown as { buildArgs(): string[] }).buildArgs())} to include ${'-hls_version'}; got ${JSON.stringify((withV as unknown as { buildArgs(): string[] }).buildArgs())}`);
     assert.throws(() => hlsPackage({ input: 'a.mp4', outputDir: 'o', hlsVersion: 2 }), /between 3 and 8/);
     assert.throws(() => hlsPackage({ input: 'a.mp4', outputDir: 'o', hlsVersion: 99 }), /between 3 and 8/);
   });
@@ -85,9 +85,9 @@ describe('packaging helpers create their output directories', () => {
 
   it('dashPackage creates the parent dir of the manifest', { skip: !FFMPEG }, async () => {
     const dir = path.join(TMP, 'dash_new_dir');
-    assert.ok(!fs.existsSync(dir));
+    assert.ok(!fs.existsSync(dir), `assertion failed: ${!fs.existsSync(dir)}`);
     await dashPackage({ input: FIXTURE, output: path.join(dir, 'out.mpd'), videoCodec: 'libx264', audioCodec: 'aac', videoBitrate: '200k', audioBitrate: '64k' }).run();
-    assert.ok(fs.existsSync(path.join(dir, 'out.mpd')));
+    assert.ok(fs.existsSync(path.join(dir, 'out.mpd')), `assertion failed: ${fs.existsSync(path.join(dir, 'out.mpd'))}`);
   });
 });
 
@@ -95,7 +95,7 @@ describe('packaging helpers create their output directories', () => {
 describe('showspectrum color is validated as a palette name', () => {
   it('accepts the documented palettes', () => {
     for (const c of SPECTRUM_COLORS) {
-      assert.ok(buildSpectrumFilter(320, 180, c, 25).includes(`color=${c}`));
+      assert.ok(buildSpectrumFilter(320, 180, c, 25).includes(`color=${c}`), `expected ${buildSpectrumFilter(320, 180, c, 25)} to include ${`color=${c}`}; got ${buildSpectrumFilter(320, 180, c, 25)}`);
     }
   });
 
@@ -106,8 +106,8 @@ describe('showspectrum color is validated as a palette name', () => {
   });
 
   it('"green" is a palette while "red" is not — the trap the enum creates', () => {
-    assert.ok(SPECTRUM_COLORS.includes('green' as never));
-    assert.ok(!SPECTRUM_COLORS.includes('red' as never));
+    assert.ok(SPECTRUM_COLORS.includes('green' as never), `expected ${SPECTRUM_COLORS} to include ${'green' as never}; got ${SPECTRUM_COLORS}`);
+    assert.ok(!SPECTRUM_COLORS.includes('red' as never), `expected ${!SPECTRUM_COLORS} to include ${'red' as never}; got ${!SPECTRUM_COLORS}`);
   });
 });
 
@@ -115,22 +115,22 @@ describe('showspectrum color is validated as a palette name', () => {
 describe('buildLoudnormFilter measured handling', () => {
   it('accepts the camelCase parseLoudnorm() result', () => {
     const f = buildLoudnormFilter(-16, 11, -1, { inputI: -20, inputLra: 8, inputTp: -3, inputThresh: -30 });
-    assert.ok(f.includes('measured_i=-20'));
-    assert.ok(f.includes('measured_thresh=-30'));
+    assert.ok(f.includes('measured_i=-20'), `expected ${f} to include ${'measured_i=-20'}; got ${f}`);
+    assert.ok(f.includes('measured_thresh=-30'), `expected ${f} to include ${'measured_thresh=-30'}; got ${f}`);
     assert.ok(!f.includes('undefined'), f);
   });
 
   it('accepts the snake_case spelling ffmpeg prints', () => {
     const f = buildLoudnormFilter(-16, 11, -1, { input_i: -20, input_lra: 8, input_tp: -3, input_thresh: -30 });
-    assert.ok(f.includes('measured_i=-20'));
-    assert.ok(f.includes('measured_thresh=-30'));
+    assert.ok(f.includes('measured_i=-20'), `expected ${f} to include ${'measured_i=-20'}; got ${f}`);
+    assert.ok(f.includes('measured_thresh=-30'), `expected ${f} to include ${'measured_thresh=-30'}; got ${f}`);
     assert.ok(!f.includes('undefined'), f);
   });
 
   it('omits offset entirely when targetOffset is absent', () => {
     const f = buildLoudnormFilter(-16, 11, -1, { inputI: -20, inputLra: 8, inputTp: -3, inputThresh: -30 });
     assert.ok(!f.includes('offset='), f);
-    assert.ok(f.includes('linear=true'));
+    assert.ok(f.includes('linear=true'), `expected ${f} to include ${'linear=true'}; got ${f}`);
   });
 
   it('emits offset when supplied', () => {

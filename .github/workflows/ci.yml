@@ -44,21 +44,77 @@ jobs:
         if: matrix.node == '22'
         run: npm run coverage
 
-      - name: Upload coverage to Codecov (Node 22 only)
+      - name: Run battle tests with coverage (Node 22 only)
+        if: matrix.node == '22'
+        run: npm run coverage:battle
+
+      - name: Library coverage must stay above 98% (Node 22 only)
+        if: matrix.node == '22'
+        run: npm run coverage:gate
+
+      - name: Upload unit coverage to Codecov (Node 22 only)
         if: matrix.node == '22'
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./lcov.info
+          flags: unit
+          fail_ci_if_error: false
+
+      - name: Upload battle coverage to Codecov (Node 22 only)
+        if: matrix.node == '22'
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./.battle/lcov.info
+          flags: battle
           fail_ci_if_error: false
 
       - name: Run all tests (Node 20)
         if: matrix.node == '20'
         run: npm run test
         
-      - name: Run battle test (Node 20)
+      - name: Run battle tests (Node 20)
         if: matrix.node == '20'
-        run: npm run battle
+        run: npm run battle:all
+
+      - name: Type coverage must stay above 99%
+        if: matrix.node == '22'
+        run: npm run type-coverage
+
+      - name: No dead exports
+        if: matrix.node == '22'
+        run: npm run check:dead
+
+      - name: Every test file is wired to a script
+        if: matrix.node == '22'
+        run: npm run check:scripts
+
+  bun:
+    name: Bun — ubuntu-latest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install FFmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Runtime portability battle test (lib/ under Bun)
+        run: bun run runtime-tests/battle.ts
 
   deno:
     name: Deno — ubuntu-latest
@@ -76,7 +132,7 @@ jobs:
       - name: Install FFmpeg
         run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
 
-      - name: Type check (lib/ only)
+      - name: Type check (lib/, deno-tests/, runtime-tests/)
         run: deno task check
 
       - name: Lint
@@ -84,6 +140,15 @@ jobs:
         
       - name: Battle test
         run: deno task battle
+
+      - name: Battle test — 2.1.0 feature set
+        run: deno task battle:new
+
+      - name: Battle test — CLI task table
+        run: deno task battle:cli
+
+      - name: Runtime portability battle test (lib/ under Deno)
+        run: deno task battle:runtime
 
       - name: Unit tests
         run: deno task test:unit

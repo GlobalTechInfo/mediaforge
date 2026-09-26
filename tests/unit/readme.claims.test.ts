@@ -158,7 +158,7 @@ describe('README: arg builders', () => {
 
   it('buildSilenceDetectFilter and buildSceneSelectFilter', () => {
     assert.equal(m.buildSilenceDetectFilter(-40, 1.0), 'silencedetect=noise=-40dB:d=1');
-    assert.equal(m.buildSceneSelectFilter(0.4), "select='gt(scene,0.4)',showinfo");
+    assert.equal(m.buildSceneSelectFilter(0.4), "select='gt(scene,0.4)',metadata=print");
   });
 });
 
@@ -368,7 +368,7 @@ describe('README: progress events', () => {
   it('start event is observable after listeners attach', async () => {
     const proc = m.spawnFFmpeg({ binary: 'true', args: [] });
     const args = await new Promise<string[]>((res) => proc.emitter.on('start', res));
-    assert.ok(Array.isArray(args));
+    assert.ok(Array.isArray(args), `assertion failed: ${Array.isArray(args)}`);
     await new Promise((res) => proc.emitter.on('end', res));
   });
 
@@ -376,7 +376,7 @@ describe('README: progress events', () => {
     const [p] = m.parseAllProgress('frame=N/A\nout_time_us=N/A\nprogress=continue\n', 10_000_000);
     assert.equal(p.frame, 0);
     assert.equal(p.outTimeUs, 0);
-    assert.ok(Number.isFinite(p.percent!));
+    assert.ok(Number.isFinite(p.percent!), `assertion failed: ${Number.isFinite(p.percent!)}`);
   });
 });
 
@@ -397,7 +397,7 @@ describe('README: environment variables', () => {
   it('documents both env vars the library reads', () => {
     const src = readFileSync(new URL('../../lib/utils/binary.ts', import.meta.url), 'utf8');
     for (const v of ['FFMPEG_PATH', 'FFPROBE_PATH']) {
-      assert.ok(src.includes(v));
+      assert.ok(src.includes(v), `expected ${src} to include ${v}; got ${src}`);
       assert.ok(README.includes(v), `${v} undocumented`);
     }
   });

@@ -109,6 +109,12 @@ Requires `ffmpeg` (and `ffprobe`) to be installed and on `PATH`, or set `FFMPEG_
 - [Analysis Helpers](#analysis-helpers)
 - [Hardware Codec Helpers](#hardware-codecs-v3)
 - [Audio Filters](#audio-filters)
+- [Quality Metrics](#quality-metrics)
+- [HDR → SDR Tone Mapping](#hdr-sdr-tone-mapping)
+- [Temporal Editing](#temporal-editing)
+- [Hardware Filter Chains](#hardware-filter-chains)
+- [Subtitle Conversion](#subtitle-conversion)
+- [ABR Ladder](#abr-ladder)
 - [Named Presets](#named-presets)
 - [HLS & DASH Packaging](#hls-dash-packaging)
 - [Two-Pass Encoding](#two-pass-encoding)
@@ -201,6 +207,14 @@ await ffmpeg('input.mp4')
 | `.pixelFormat(fmt)` | Set pixel format (`-pix_fmt`) |
 | `.noVideo()` | Disable video stream (`-vn`) |
 | `.videoFilter(f)` | Set `-vf` filter chain — call **once**, see note below |
+| `.preset(value)` | Encoder speed/quality preset (`-preset`, e.g. `slow`, `fast`) |
+| `.profile(value)` | H.264/H.265 profile (`-profile:v`, e.g. `high`, `main`) |
+| `.level(value)` | Codec level (`-level:v`, e.g. `4.0`) |
+| `.movflags(flags)` | MP4/MOV container flags (`-movflags`, e.g. `+faststart`) |
+| `.keyframeInterval(frames)` | Max GOP size (`-g`); the keyframe interval HLS needs |
+| `.fpsMode(mode)` | `cfr` \| `vfr` \| `passthrough` \| `auto`. Emits `-vsync` on ffmpeg < 5.1 and `-fps_mode` from 5.1 on |
+| `.rateControl(opts)` | VBV bounds: `{ min?, max, bufferSize? }` → `-minrate` / `-maxrate` / `-bufsize`. `bufferSize` defaults to `max`; `max` is required |
+| `.setColorProperties(props)` | Tag output colour (`-color_primaries`, `-color_trc`, `-colorspace`, `-color_range`). Throws on an unknown key or an empty object |
 
 #### Audio
 
@@ -412,7 +426,7 @@ await new Promise((res, rej) => {
 await concatWithTransitions({
   inputs: ['intro.mp4', 'segment1.mp4', 'segment2.mp4', 'outro.mp4'],
   output: 'seamless.mp4',
-  transition: 'crossfade',
+  transition: 'fade',
   duration: 1,        // 1 second transition between each clip
 });
 ```
@@ -645,7 +659,9 @@ await generateSpectrum({
 > still accepted so existing code keeps type-checking, but they have no effect
 > and passing them logs a deprecation warning. Remove them for forward
 > compatibility. The `videoFilter`-style builder `buildWaveformFilter()` takes
-> the colour verbatim (no `#` stripping).
+> the colour verbatim (no `#` stripping), and its `streamIndex` defaults to the
+> first audio stream, so a four-argument call still produces a usable filter
+> rather than `[0:a:undefined]`.
 
 ---
 
@@ -903,6 +919,7 @@ await ffmpeg('in.mp4').output('out.mp4').videoFilter(chain.toString()).run();
 | `drawgrid(opts?)` | dual | Draw a grid overlay |
 | `vignette(opts?)` | dual | Apply vignette effect |
 | `vaguedenoiser(opts?)` | dual | Wavelet-based denoising |
+| `delogo(opts?)` | dual | Blur out a rectangular region (station logo, clock) |
 
 > **`levels()` is a deprecated alias.** It is the same function as
 > `colorlevels()`, and it serializes to FFmpeg's **`colorlevels`** filter — not
@@ -1070,6 +1087,239 @@ await ffmpeg('stereo.mp3').output('mono.mp3')
 > // ✓ RIGHT — one joined filter
 > ffmpeg('in.mp4').output('out.mp4').audioFilter('volume=2,alimiter');
 > ```
+
+---
+
+<a name="quality-metrics"></a>
+
+## Quality Metrics
+
+Measure how much an encode lost, and gate a pipeline on it. `ssim` and `psnr`
+work on any ffmpeg build; `vmaf` needs one compiled with libvmaf.
+
+```ts
+import { measureQuality, buildVmafFilter, parseStatsFile } from 'mediaforge';
+
+// Compare an encode against its source
+const score = await measureQuality({
+  reference: 'source.mp4',
+  distorted: 'encode.mp4',
+  metric: 'vmaf',            // 'vmaf' | 'ssim' | 'psnr'
+});
+console.log(score.value, score.frames);   // 94.21 over 300 frames
+
+// Gate a build: throws when the score is below `minScore`
+await measureQuality({ reference: 'a.mp4', distorted: 'b.mp4', minScore: 90 });
+```
+
+A perfect encode scores `Infinity` on PSNR (ffmpeg reports `psnr_avg:inf`);
+that is a real result, and it clears any minimum.
+
+The filter strings and the log parsers are exported separately, so you can
+inspect or unit-test them without running an encoder:
+
+```ts
+buildVmafFilter({ target: 90, model: 'version=v0.6.1' });
+// "libvmaf=log_fmt=json:target=90:model='version=v0.6.1'"
+
+buildSsimFilter({ statsFile: 'out.log' });   // "ssim=stats_file='out.log'"
+buildPsnrFilter();                            // "psnr"
+parseStatsFile(logContents, 'psnr');
+```
+
+---
+
+<a name="hdr-tone-mapping"></a>
+
+## HDR → SDR Tone Mapping
+
+```ts
+import { toneMapHdrToSdr, buildToneMapFilter } from 'mediaforge';
+
+await toneMapHdrToSdr({
+  input: 'hdr.mp4',
+  output: 'sdr.mp4',
+  algorithm: 'hable',   // hable | mobius | reinhard | clip | linear | spline
+  peak: 1000,           // source peak luminance, nits
+  targetPeak: 100,
+  desaturation: 0.6,
+});
+```
+
+The input is probed first and a non-HDR source is refused — tone mapping an
+already-SDR file is almost always a mistake. Pass `requireHdrInput: false` to
+force it anyway. The output is tagged BT.709 so players do not re-apply an HDR
+display transform on top of the result.
+
+`buildToneMapFilter()` returns the filter chain on its own:
+
+```
+zscale=t=linear:npl=1000:p=bt2020:t=smpte2084:r=tv:m=bt2020nc,
+tonemap=tonemap=hable:peak=1000:desat=0.6,
+zscale=t=bt709:p=bt709:m=bt709:r=tv
+```
+
+> **zscale uses short option names.** `t` is transfer, `p` primaries, `m`
+> matrix, `r` range — and `w`/`h` are pixel size. `width=bt2020` would be read
+> as a pixel size and rejected with `Invalid size 'bt2020'`.
+
+---
+
+<a name="temporal-editing"></a>
+
+## Temporal Editing
+
+### Frame interpolation
+
+Real motion-compensated interpolation — the correct way to make slow motion or
+convert 24 → 60, rather than duplicating frames.
+
+```ts
+import { interpolateFrames, buildInterpolateFilter } from 'mediaforge';
+
+await interpolateFrames({
+  input: 'in.mp4', output: 'slow.mp4',
+  fps: 60,
+  method: 'mci',      // 'mci' (motion-compensated) | 'blend' | 'dup'
+  mcMode: 'obmc',     // mci only: 'obmc' | 'aobmc'
+  meMode: 'bidir',    // mci only: 'bidir' | 'bilat'
+});
+
+buildInterpolateFilter({ fps: 60 });
+// "minterpolate=fps=60:mi_mode=mci:mc_mode=obmc:me_mode=bidir:mb_size=8"
+```
+
+`mb_size` / `mc_mode` are only emitted for `mci`; ffmpeg rejects them for
+`blend` and `dup`.
+
+### Auto-editing on scene changes
+
+```ts
+import { detectScenes, cutToScenes, buildSceneCutArgs } from 'mediaforge';
+
+const scenes = await detectScenes({ input: 'in.mp4', threshold: 0.4 });
+// [{ timestamp: 12.4, sceneNumber: 1 }, …]
+
+// Use the cuts as an edit decision list
+await cutToScenes({ input: 'in.mp4', output: 'out.mp4', threshold: 0.4, trimStart: 0.2 });
+```
+
+The windows are `[0, s0], [s0, s1], …` — the clip before the first boundary
+runs from the start of the file, not from the boundary. `trimStart` shortens
+each window from its end, which drops the static tail that usually follows a
+hard cut. `buildSceneCutArgs()` returns the exact `-ss`/`-to` pairs.
+
+### Silence removal
+
+```ts
+import { detectSilence, removeSilence } from 'mediaforge';
+
+const silences = await detectSilence({ input: 'in.mp3', threshold: -50, duration: 0.5 });
+await removeSilence({ input: 'in.mp3', output: 'out.mp3', threshold: -50, minDuration: 0.5 });
+```
+
+### Fixed-length segments
+
+```ts
+import { writeSegments, buildSegmentArgs } from 'mediaforge';
+
+await writeSegments({ input: 'in.mp4', outputPattern: 'out/seg%03d.ts', segmentTime: 2 });
+```
+
+The segment muxer can only cut on keyframes, so keyframes are forced at the
+segment boundaries — without that a 2 s file with `segmentTime: 1` quietly
+comes out as a single segment. The output directory is created for you.
+
+---
+
+<a name="hardware-filters"></a>
+
+## Hardware Filter Chains
+
+Build upload → GPU work → download chains so frames only cross the bus once.
+
+```ts
+import {
+  buildHwUploadFilter, buildHwScaleFilter,
+  buildHwDownloadFilter, buildHwFilterChain, HWACCELS,
+} from 'mediaforge';
+
+buildHwFilterChain({
+  accel: 'cuda',
+  gpuFilters: [buildHwScaleFilter({ accel: 'cuda', width: 1280, height: 720 })],
+  cpuFilters: ['drawtext=text=hi'],
+  downloadFormat: 'nv12',
+});
+// "hwupload,scale_cuda=w=1280:h=720,hwdownload=format=nv12,drawtext=text=hi"
+```
+
+`buildHwScaleFilter` throws for accelerations ffmpeg has no GPU scaler for
+(videotoolbox, the D3D/DXVA paths) rather than quietly emitting a software
+`scale` you would think is accelerated — use `buildHwDownloadFilter()` plus a
+software scale there. `buildHwFilterChain` also refuses an empty `gpuFilters`,
+since uploading and downloading with no GPU work in between is always slower
+than staying in software.
+
+---
+
+<a name="subtitle-conversion"></a>
+
+## Subtitle Conversion
+
+```ts
+import { convertSubtitles, fixSubtitleDuration, subtitleCodecFor } from 'mediaforge';
+
+// Convert an embedded track
+await convertSubtitles({ input: 'in.mkv', output: 'out.srt', format: 'srt' });
+
+// Rescale cue timings after a VFR → CFR or speed change
+await fixSubtitleDuration({ input: 'in.mkv', output: 'out.srt' });
+
+// Shift every cue later (mutually exclusive with fixDuration)
+await convertSubtitles({ input: 'in.mkv', output: 'out.srt', shiftSeconds: 1.5 });
+
+// Convert and burn in one pass
+await convertSubtitles({ input: 'in.mkv', output: 'out.mp4', burn: true });
+
+subtitleCodecFor('vtt');   // "webvtt" — ffmpeg has no bare "vtt" codec
+```
+
+---
+
+<a name="abr-ladder"></a>
+
+## ABR Ladder
+
+A multi-bitrate HLS ladder in a single ffmpeg pass using `-var_stream_map`.
+Preferred over `adaptiveHls()` for anything needing per-language audio variants,
+because the native mechanism handles the stream grouping that N-output +
+`master_pl_name` cannot.
+
+```ts
+import { abrLadder, buildAbrLadderArgs, validateAbrVariants } from 'mediaforge';
+
+await abrLadder({
+  input: 'in.mp4',
+  outputPattern: 'out/v%v/index.m3u8',       // must contain %v
+  variants: [
+    { name: '1080p', resolution: '1920x1080', videoBitrate: '5M', audioBitrate: '192k' },
+    { name: '720p',  resolution: '1280x720',  videoBitrate: '2500k' },
+    { name: '360p',  resolution: '640x360',   videoBitrate: '800k' },
+  ],
+  segmentDuration: 6,
+}).run();
+```
+
+**Variants must have even dimensions.** HLS/MPEG-TS only carries even sizes in
+yuv420p, and ffmpeg accepts the odd value here and then dies deep in the encoder
+with `maybe incorrect parameters such as bit_rate, rate, width or height`, so
+`validateAbrVariants()` rejects it up front — from every entry point.
+
+`masterPlaylist` is passed to ffmpeg as a **bare filename**, not a path: ffmpeg
+resolves `-master_pl_name` against the output directory and prepends it even to
+an absolute path.
+
+---
 
 ---
 
@@ -1251,7 +1501,9 @@ const measured = buildLoudnormFilter(-14, 11, -1.5, stats);
 
 // Scene select filter string
 const filter = buildSceneSelectFilter(0.4);
-// → "select='gt(scene,0.4)',showinfo"
+// → "select='gt(scene,0.4)',metadata=print"
+// (showinfo does not print the scene score; metadata=print emits
+//  lavfi.scene_score for each selected frame, which is what detectScenes reads)
 
 // Silence detect filter string
 const filter = buildSilenceDetectFilter(-40, 1.0);
@@ -1262,6 +1514,21 @@ const meta = buildChapterContent([
   { title: 'Intro', startSec: 0, endSec: 30 },
   { title: 'Main',  startSec: 30, endSec: 180 },
 ]);
+
+// Expand a frame-numbered filename pattern
+buildTimestampFilename('frame_%04d.jpg', 6, 'jpg');   // → 'frame_0006.jpg'
+buildTimestampFilename('frame_%03d.png', 6, 'png');   // → 'frame_006.png'
+buildTimestampFilename('frame_%d.png', 6, 'png');     // → 'frame_0006.png'
+// The index is 0-based, as ffmpeg's own `%03d` output is, and is padded to the
+// width the placeholder declares (a bare `%d` falls back to four digits). `ext`
+// may be written with or without its dot and the pattern may or may not already
+// carry it, so `frame_%04d` + `png` and `frame_%04d.png` + `png` both give
+// `frame_0006.png`.
+//
+// A pattern with no `%d` placeholder still gets the index, inserted before the
+// extension and zero-padded to four digits:
+buildTimestampFilename('clip.jpg', 9, 'jpg');         // → 'clip0009.jpg'
+// Without that, every extracted frame would be written to the same name.
 ```
 
 ---
@@ -1411,7 +1678,7 @@ Video and audio filter functions are **not** uniform — only some support both 
 
 | Style | Video filters | Audio filters |
 |-------|---------------|---------------|
-| **Dual** | `crop`, `curves`, `drawbox`, `drawgrid`, `drawtext`, `fade`, `overlay`, `scale`, `vaguedenoiser`, `vignette` | `atempo`, `bass`, `equalizer`, `headphones`, `loudnorm`, `sofalizer`, `treble`, `volume` |
+| **Dual** | `crop`, `curves`, `delogo`, `drawbox`, `drawgrid`, `drawtext`, `fade`, `overlay`, `scale`, `vaguedenoiser`, `vignette` | `atempo`, `bass`, `equalizer`, `headphones`, `loudnorm`, `sofalizer`, `treble`, `volume` |
 | **Chained only** | `avgblurVulkan`, `boxblur`, `chromakey`, `colorSource`, `colorbalance`, `colorkey`, `concat`, `deband`, `deflicker`, `deshake`, `eq`, `format`, `fps`, `gblur`, `hflip`, `hqdn3d`, `hstack`, `hue`, `nlmeans`, `nlmeansVulkan`, `pad`, `rotate`, `select`, `setdar`, `setpts`, `setsar`, `smartblur`, `split`, `subtitles`, `thumbnail`, `tile`, `transpose`, `trim`, `unsharp`, `vflip`, `vstack`, `xstack`, `yadif`, `zoompan` | `aecho`, `afade`, `agate`, `amerge`, `amix`, `aresample`, `asetpts`, `asplit`, `atrim`, `channelmap`, `channelsplit`, `compand`, `dynaudnorm`, `highpass`, `lowpass`, `pan`, `rubberband`, `silencedetect` |
 
 **Dual** filters take options directly (standalone) or a `FilterChain` first:
@@ -1473,9 +1740,9 @@ await ffmpeg('input.mp4')
   .run();
 ```
 
-**76 built-in filters** (50 video + 26 audio).
+**77 built-in filters** (51 video + 26 audio).
 
-*Video (50):* `avgblurVulkan`, `boxblur`, `chromakey`, `colorSource`, `colorbalance`, `colorkey`, `concat`, `crop`, `curves`, `deband`, `deflicker`, `deshake`, `drawbox`, `drawgrid`, `drawtext`, `eq`, `fade`, `format`, `fps`, `gblur`, `hflip`, `hqdn3d`, `hstack`, `hue`, `levels` (alias of `colorlevels`), `nlmeans`, `nlmeansVulkan`, `overlay`, `videoPad` (the video `pad` filter), `rotate`, `scale`, `select`, `setdar`, `setpts`, `setsar`, `smartblur`, `split`, `subtitles`, `thumbnail`, `tile`, `transpose`, `trim`, `unsharp`, `vaguedenoiser`, `vflip`, `vignette`, `vstack`, `xstack`, `yadif`, `zoompan`
+*Video (51):* `avgblurVulkan`, `boxblur`, `chromakey`, `colorSource`, `colorbalance`, `colorkey`, `concat`, `crop`, `curves`, `deband`, `deflicker`, `delogo`, `deshake`, `drawbox`, `drawgrid`, `drawtext`, `eq`, `fade`, `format`, `fps`, `gblur`, `hflip`, `hqdn3d`, `hstack`, `hue`, `levels` (alias of `colorlevels`), `nlmeans`, `nlmeansVulkan`, `overlay`, `videoPad` (the video `pad` filter), `rotate`, `scale`, `select`, `setdar`, `setpts`, `setsar`, `smartblur`, `split`, `subtitles`, `thumbnail`, `tile`, `transpose`, `trim`, `unsharp`, `vaguedenoiser`, `vflip`, `vignette`, `vstack`, `xstack`, `yadif`, `zoompan`
 
 *Audio (26):* `aecho`, `afade`, `agate`, `amerge`, `amix`, `aresample`, `asetpts`, `asplit`, `atempo`, `atrim`, `bass`, `channelmap`, `channelsplit`, `compand`, `dynaudnorm`, `equalizer`, `headphones`, `highpass`, `loudnorm`, `lowpass`, `pan`, `rubberband`, `silencedetect`, `sofalizer`, `treble`, `volume`
 
@@ -1628,6 +1895,31 @@ await ffmpeg("input.mp4")
   .run();
 ```
 
+### Runtime portability
+
+Every feature in this library is exercised on **Node, Deno and Bun** by a single
+shared suite, `runtime-tests/battle.ts`, which imports `lib/index.ts` directly
+(so there is no build step and no `dist/` to go stale):
+
+```bash
+npm run battle:runtime      # Node   (tsx)
+deno task battle:runtime    # Deno
+bun run runtime-tests/battle.ts   # Bun
+
+npm run battle:runtimes     # all three in sequence
+```
+
+It runs the same real-ffmpeg checks on each runtime: quality metrics, tone
+mapping, frame interpolation, scene cutting, silence removal, segmenting,
+subtitle conversion, ABR ladders, `delogo`, the hardware filter builders, the
+encode controls, and the whole CLI task table. The CLI end-to-end section
+(DRIVING THE BINARY) is skipped on Deno, which imports the TypeScript source and
+has no `dist/` to execute; Node and Bun run it in full.
+
+Because the suite is deliberately runtime-agnostic — it reaches Deno and Bun
+globals only through a small `RUNTIME` adapter — a regression that only appears
+on one runtime is a real portability bug, not a test artefact.
+
 ---
 
 <a name="cli"></a>
@@ -1657,6 +1949,133 @@ mediaforge --help
 
 **Subcommands:** `version`, `probe <file>`, `caps`, `help` (`--help` / `-h`).
 With no arguments the CLI prints usage and exits 0.
+
+### Task commands
+
+The raw ffmpeg passthrough above is fine for one-off encodes, but it hides the
+helpers this library actually ships. The other half of the CLI is a set of **52 task
+commands** that cover the whole library surface: 31 editing commands, plus the
+filter, graph, codec, mapping, preset, analysis, hardware and arg-printing commands
+that give every exported helper a CLI entry point.
+
+```bash
+mediaforge trim input.mp4 out.mp4 --start 5 --end 30
+mediaforge hls input.mp4 --outdir ./hls --segment 6
+mediaforge chapters input.mp4 out.mp4 --chapters "Intro:0,Main:120"
+mediaforge quality encode.mp4 --reference source.mp4 --metric vmaf --min 90
+mediaforge tonemap hdr.mp4 sdr.mp4 --algorithm hable
+```
+
+Run `mediaforge help` for the list, or `mediaforge <task> --help` for one task.
+A misspelled flag is a hard error, not a silent default.
+
+| Task | What it does |
+|------|--------------|
+| `trim <in> <out>` | Cut a range (`--start` / `--end` / `--duration`) |
+| `speed <in> <out>` | Change playback speed, pitch-corrected audio (`--factor`) |
+| `volume <in> <out>` | Scale volume (`--gain`) |
+| `normalize <in> <out>` | Two-pass EBU R128 loudness (`--target` LUFS) |
+| `extract <in> <out>` | Pull out the audio track |
+| `replace-audio <video> <audio> <out>` | Swap a video's audio |
+| `concat <out> --inputs a,b` | Concatenate, stream-copying when possible (`--reencode` to force) |
+| `transitions <out> --inputs a,b` | Join with xfade transitions (`--transition`, `--duration`) |
+| `hls <in> --outdir d` | Single-bitrate HLS (`--segment`, `--bitrate`, `--hls-version`) |
+| `abr <in> --out v%v/i.m3u8 --variants …` | Multi-bitrate ladder (`--variants name=WxH:bitrate,…`) |
+| `dash <in> <out.mpd>` | DASH manifest (`--segment`, `--bitrate`) |
+| `segments <in> --pattern "seg%03d.ts"` | Fixed-length segments (`--segment`) |
+| `chapters <in> <out> --chapters …` | Mux chapter markers (`Intro:0,Main:120`) |
+| `metadata <in> <out> --set k=v` | Write tags, or `--strip` to remove them |
+| `thumbnail <in> <out>` | One frame to an image (`--at`, `--size`, `--format`) |
+| `sprite <in> <out.png>` | Thumbnail sprite sheet (`--columns`, `--count`, `--width`) |
+| `frames <in> --outdir d` | Frame sequence (`--fps`, `--format`) |
+| `gif <in> <out.gif>` | Animated GIF (`--fps`, `--width`, `--colors`) |
+| `watermark <in> <logo> <out>` | Overlay a watermark (`--position`, `--opacity`, `--margin`) |
+| `text <in> <out> --text "…"` | Burn in text (`--position`, `--size`, `--color`, `--font`) |
+| `subtitles <in> <out>` | Burn (`--file`) or convert (`--convert`, `--shift`, `--fix-duration`) |
+| `quality <ref> <dist>` | VMAF / SSIM / PSNR, with `--min` as a CI gate |
+| `tonemap <in> <out>` | HDR → SDR (`--algorithm`, `--peak`, `--desat`, `--force`) |
+| `interpolate <in> <out> --fps 60` | Motion-compensated frame interpolation (`--method mci\|blend\|dup`) |
+| `silence <in> <out>` | Cut silence (`--threshold`, `--min`, `--video`) or `--detect` to report it |
+| `scenes <in> [out]` | Report scene changes, or `--cut` to auto-edit on them |
+| `waveform <in> <out.png>` | Waveform image (`--width`, `--height`, `--color`, `--scale`) |
+| `spectrum <in> <out>` | Spectrum video (`--palette`, `--width`, `--height`) |
+| `delogo <in> <out>` | Blur a region (`--x`, `--y`, `--width`, `--height`) |
+| `twopass <in> <out> --bitrate 2M` | Two-pass bitrate-targeted encode |
+| `to-bitrate <in> <out> --bitrate 2M` | Re-encode to a target bitrate (`--crf`, `--preset`, `--maxrate`, `--bufsize`) |
+| `filter <name> [k=v…] <in> <out>` | Any of the 77 built-in filters by name (`--list`, `--print`, `--chain`, `--audio`) |
+| `graph <in> <out> --pipeline …` | Build a `-filter_complex` from a JSON step list (`--print`, `--map`) |
+| `codec <name> [k=v…]` | Print the encoder args a codec builder produces (`--list`) |
+| `map <in> <out>` | Build `-map` args from the stream DSL (`--all`, `--remux`, `--default`, `--av`, `--print`, …) |
+| `preset [name] <in> <out>` | List, inspect or apply a named encode preset (`--list`, `--print`, `--size`, `--crf`) |
+| `analyze <file>` | Structured media report: streams, chapters, HDR, interlacing (`--json`) |
+| `features` | ffmpeg feature gates for the installed binary (`--ffmpeg-version`, `--missing`) |
+| `hwaccel <name> <in> <out>` | GPU upload/scale/download transcode (`--list`, `--check`, `--print`, `--width`, `--height`) |
+| `args <op> [k=v…]` | Print the exact argv any arg builder produces (`--list`) |
+| `stack <out> <in…>` | hstack / vstack several clips (`--direction`, `--shortest`) |
+| `mix <out> <in…>` | Mix audio tracks (`--weights`, `--duration`, `--bitrate`, `--codec`) |
+| `loop <in> <out>` | Repeat a clip (`--times`, `--duration`, `--codec`) |
+| `deinterlace <in> <out>` | yadif deinterlacing (`--mode`, `--parity`, `--deint`) |
+| `stabilize <in> <out>` | vidstab stabilisation (`--smoothing`, `--max-shift`, `--max-angle`, `--crop`) |
+| `aspect <in> <out> --ratio 1:1` | Center-crop to an aspect ratio (`--codec`) |
+| `lut <in> <out> --lut grade.cube` | Apply a .cube / .3dl table (`--interp`, `--codec`) |
+| `timecode <in> <out>` | Burn a timecode counter (`--position`, `--fontsize`, `--fontcolor`, `--format`) |
+| `cropdetect <in>` | Report the real content region (`--limit`, `--skip`) |
+| `gif2mp4 <in.gif> <out.mp4>` | Convert a GIF to MP4 (`--width`) |
+| `extract-subs <in> <out.srt>` | Pull a subtitle stream to a file (`--stream`) |
+| `retime-subs <in> <out.srt>` | Retime a subtitle file to the video (`--format`, `--stream`) |
+
+**`filter` — every built-in filter by name.** The registry covers all 77 filters
+(51 video, 26 audio), so the CLI never needs a bespoke command per filter:
+
+```bash
+mediaforge filter --list                              # every name with its option keys
+mediaforge filter scale w=160 h=90 in.mp4 out.mp4
+mediaforge filter eq contrast=1.1 --print in.mp4      # print the chain, encode nothing
+mediaforge filter --chain 'scale:w=160,h=90|eq:contrast=1.1' in.mp4 out.mp4
+mediaforge filter volume volume=0.5 in.mp4 out.m4a --audio
+```
+
+**`graph`, `codec` and `args` — inspect before you encode.** Each prints the argv
+the corresponding library helper builds, so a complex command can be checked,
+copied and pasted into a script:
+
+```bash
+mediaforge graph in.mp4 out.mp4 --print \
+  --pipeline '[{"from":"0:v","filter":"scale","args":["1280","720"]}]'
+mediaforge codec x264 preset=medium crf=20
+mediaforge codec --list
+mediaforge args two-pass input=in.mp4 output=out.mp4 videoBitrate=2M
+mediaforge args --list
+```
+
+**`map` — the stream-mapping DSL, end to end.** Every selector the DSL supports is
+a flag, and `--print` shows the args without remuxing:
+
+```bash
+mediaforge map in.mkv out.mp4 --default --print
+mediaforge map in.mkv out.mp4 --av --exclude 0:a:2 --print
+mediaforge map in.mkv out.mkv --remux
+```
+
+**`analyze` and `features` — what this ffmpeg can actually do.** `analyze` prints a
+structured report (streams, default streams, chapters, HDR, interlacing) and
+`--json` emits it compactly. `features` evaluates the version gates in
+`FEATURE_GATES` against the installed binary, or against a version you name with
+`--ffmpeg-version 7.0` — useful for checking a build before a release job runs:
+
+```bash
+mediaforge analyze in.mp4 --json
+mediaforge features --missing
+mediaforge features --ffmpeg-version 7.0
+```
+
+**Library-only exports.** A handful of public exports are deliberately not task
+commands, because they are process lifecycle or internals rather than a user
+operation: `autoKillOnExit`, `killAllFFmpeg`, `renice`, `captureStderr`, `isDeno`,
+`spawnFFmpeg` and `runFFmpeg`. They are listed, with the reason, in `LIBRARY_ONLY`,
+and the CLI/library parity test fails if a new export appears that is neither in a
+command nor on that list — so a missing command is always a decision rather than an
+oversight.
 
 **mediaforge-specific flags:**
 
@@ -1721,8 +2140,12 @@ const registry = getDefaultRegistry('ffmpeg');    // or pass explicit path, e.g.
 const custom = new CapabilityRegistry('ffmpeg');  // custom binary path
 console.log(registry.hasCodec('libx264'));        // true
 console.log(registry.canEncode('libx264'));       // true
+console.log(registry.canEncode('aac'));           // true
 console.log(registry.hasFilter('scale'));         // true
-console.log(registry.encoders.size);             // 80+ encoders on standard FFmpeg builds
+console.log(registry.hasFormat('mp4'));           // true
+// `encoders` is the full `ffmpeg -encoders` list (200+ on a stock build), not
+// just the subset `ffmpeg -codecs` names in a parenthesised list.
+console.log(registry.encoders.size);             // 200+ encoders on standard FFmpeg builds
 ```
 
 ```ts

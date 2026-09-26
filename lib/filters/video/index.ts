@@ -284,6 +284,55 @@ export function drawbox(chainOrOpts: FilterChain | DrawboxOptions, opts?: Drawbo
   return (chainOrOpts as FilterChain).add(node);
 }
 
+// ─── Delogo ────────────────────────────────────────────────────────────────────
+
+export interface DelogoOptions {
+  /** Left edge of the region to blur out */
+  x: number;
+  /** Top edge of the region to blur out */
+  y: number;
+  /** Region width */
+  width: number;
+  /** Region height */
+  height: number;
+  /** Show the box while processing. Default: false */
+  show?: boolean;
+}
+
+/**
+ * Blur out a rectangular region — the standard way to remove a station logo or
+ * a burnt-in clock.
+ *
+ * The region must not touch the frame edges; ffmpeg requires at least a few
+ * pixels of real picture around it, so this validates rather than letting
+ * ffmpeg fail with `Logo area is outside of the frame`.
+ */
+export function delogo(chain: FilterChain, opts: DelogoOptions): FilterChain;
+export function delogo(opts: DelogoOptions): string;
+export function delogo(chainOrOpts: FilterChain | DelogoOptions, opts?: DelogoOptions): FilterChain | string {
+  const isStandalone = !(chainOrOpts instanceof FilterChain);
+  const o = isStandalone ? (chainOrOpts as DelogoOptions) : opts!;
+
+  for (const key of ['x', 'y', 'width', 'height'] as const) {
+    const v = o[key];
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) {
+      throw new RangeError(`delogo: "${key}" must be a finite number >= 0, got ${v}`);
+    }
+  }
+  if (o.width === 0 || o.height === 0) {
+    throw new RangeError('delogo: width and height must both be greater than 0');
+  }
+
+  const named: Record<string, string | number | boolean> = {
+    x: o.x, y: o.y, w: o.width, h: o.height,
+  };
+  if (o.show !== undefined) named['show'] = o.show ? 1 : 0;
+
+  const node = { name: 'delogo', positional: [], named };
+  if (isStandalone) return serializeNode(node);
+  return (chainOrOpts as FilterChain).add(node);
+}
+
 // ─── Drawgrid ─────────────────────────────────────────────────────────────────
 
 export interface DrawgridOptions {

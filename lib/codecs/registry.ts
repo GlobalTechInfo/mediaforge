@@ -13,6 +13,7 @@ export class CapabilityRegistry {
   private _formats: Map<string, FormatInfo> | null = null;
   private _hwaccels: Set<string> | null = null;
   private _encoders: Set<string> | null = null;
+  private _encodersProbed = false;
 
   constructor(binary: string) {
     this.binary = binary;
@@ -34,6 +35,10 @@ export class CapabilityRegistry {
 
   private _ensureInitialised(): void {
     if (this._codecs === null) this._codecs = this._probeCodecs();
+    if (this._encodersProbed !== true) {
+      this._encodersProbed = true;
+      this._probeEncoders();
+    }
   }
 
   get encoders(): Set<string> {
@@ -41,6 +46,34 @@ export class CapabilityRegistry {
       this._ensureInitialised();
     }
     return this._encoders ?? new Set<string>();
+  }
+
+  /**
+   * Every encoder name this build has, not just the ones `ffmpeg -codecs`
+   * names in a `(encoders: ...)` parenthetical.
+   *
+   * That parenthetical only lists encoders whose *description* mentions them,
+   * so on a stock build it accounts for roughly a third of the real list:
+   * `aac`, `flac`, `libmp3lame` and every other encoder ffmpeg reports without
+   * a parenthesised list were invisible, and `hasCodec('aac_latm')` answered
+   * false for a codec the build plainly supports.
+   */
+  private _probeEncoders(): void {
+    const names = this._encoders ?? new Set<string>();
+    let output: string;
+    try {
+      output = this._exec(['-encoders', '-hide_banner']);
+    } catch {
+      this._encoders = names;
+      return;
+    }
+    for (const line of output.split('\n')) {
+      // " V..... libx264   libx264 H.264 / AVC ..." — six flag chars, a gap,
+      // the name, then the description. The description is optional.
+      const match = /^\s*[VASBFS.][A-Z.]{5}\s+(\S+)/.exec(line);
+      if (match?.[1]) names.add(match[1]);
+    }
+    this._encoders = names;
   }
 
   canEncode(codec: string): boolean {
@@ -244,7 +277,10 @@ export class CapabilityRegistry {
         if (line.includes('--')) pastHeader = true;
         continue;
       }
-      const match = /^ ([D.])([E.])\s+(\S+)\s+(.+)$/.exec(line);
+      // The two flag columns are padded, so a demux-only row reads " D " and a
+      // mux-only row reads " E". Requiring both characters in one class silently
+      // dropped every format that cannot do both.
+      const match = /^ ([D. ])([E. ])\s+(\S+)\s+(.+)$/.exec(line);
       if (match === null) continue;
       const [, d, e, name, description] = match;
       if (name === undefined || description === undefined) continue;
@@ -295,6 +331,7 @@ export class CapabilityRegistry {
     this._formats = null;
     this._hwaccels = null;
     this._encoders = null;
+    this._encodersProbed = false;
   }
 }
 

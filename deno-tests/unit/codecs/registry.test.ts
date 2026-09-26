@@ -32,11 +32,14 @@ describe('CapabilityRegistry — individual encoder names', () => {
     expect(registry.canEncode('fake_encoder_xyz')).toBe(false);
   });
 
-  it('encoders set is populated', () => {
-    expect(registry.encoders.size > 0).toBe(true);
+  it('encoders set is populated with real encoder names', () => {
+    expect(registry.encoders.size).toBeGreaterThan(100);
+    expect(registry.encoders.has('libx264')).toBe(true);
+    expect(registry.encoders.has('aac')).toBe(true);
+    expect(registry.encoders.has('')).toBe(false);
   });
 
-  it('encoders contains libx264', () => {
-    expect(registry.encoders.has('libx264')).toBe(true);
+  it('encoders set is disjoint from a name no build has', () => {
+    expect(registry.encoders.has('fake_encoder_xyz')).toBe(false);
   });
 });

@@ -514,20 +514,6 @@ await run('mergeToFile (reencode)', async () => {
   if (!fs.existsSync(p('merged_reencode.mp4'))) throw new Error('output not created');
 });
 
-if (false) await run('concatFiles (event-based)', async () => {
-  const proc = concatFiles({
-    inputs: [p('part1.mp4'), p('part2.mp4'), p('part3.mp4')],
-    output: p('concat_out.mp4'),
-  });
-  const progressEvents = [];
-  proc.emitter.on('progress', (e) => progressEvents.push(e));
-  await new Promise((res, rej) => {
-    proc.emitter.on('end', res);
-    proc.emitter.on('error', rej);
-  });
-  if (!fs.existsSync(p('concat_out.mp4'))) throw new Error('output not created');
-});
-
 // ─── 5. animated GIF ───────────────────────────────────────────────────────
 section('5 — ANIMATED GIF');
 
@@ -850,8 +836,10 @@ await run('mapAVS(0) maps video+audio+subtitle', () => {
 });
 
 await run('copyStream returns args', () => {
-  const result = copyStream('v');
+  const result = copyStream('v', 0);
   if (!result) throw new Error('copyStream returned falsy');
+  const withIndex = copyStream('a', 2);
+  if (withIndex[0] !== '-c:a:2' || withIndex[1] !== 'copy') throw new Error(`bad copyStream: ${withIndex}`);
 });
 
 await run('setMetadata returns args', () => {
@@ -859,9 +847,10 @@ await run('setMetadata returns args', () => {
   if (!result) throw new Error('setMetadata returned falsy');
 });
 
-await run('ss() language-aware mapping', () => {
-  const result = ss(0, 'a', 'eng');
+await run('ss() stream specifier mapping', () => {
+  const result = ss(0, 'a', 1);
   if (!result) throw new Error('ss() returned falsy');
+  if (result.type !== 'a' || result.streamIndex !== 1) throw new Error(`bad ss(): ${JSON.stringify(result)}`);
 });
 
 // ─── 15. hardware acceleration ─────────────────────────────────────────────
@@ -1423,7 +1412,7 @@ await run('cropToRatio 1:1', async () => {
   await cropToRatio2({ input: p('input.mp4'), output: p('square.mp4'), ratio: '1:1' });
   if (!fs.existsSync(p('square.mp4'))) throw new Error('output not created');
 });
-if (false) await run('stackVideos hstack', async () => {
+await run('stackVideos hstack', async () => {
   await stackVideos2({ inputs: [p('short.mp4'), p('short.mp4')], output: p('hstack.mp4'), direction: 'hstack' });
   if (!fs.existsSync(p('hstack.mp4'))) throw new Error('output not created');
 });
@@ -1737,7 +1726,7 @@ const chainOnlyVideoFilters = [
   ['setsar',       () => vf.setsar(new FC(), '1'),                      'setsar'],
   ['setdar',       () => vf.setdar(new FC(), '16/9'),                   'setdar'],
   ['hqdn3d',       () => vf.hqdn3d(new FC()),                           'hqdn3d'],
-  ['hqdn3d(opts)', () => vf.hqdn3d(new FC(), { luma_spatial: 4, chroma_spatial: 3 }), 'hqdn3d'],
+  ['hqdn3d(opts)', () => vf.hqdn3d(new FC(), { s0: 4, s1: 3 }), 'hqdn3d'],
   ['nlmeans',      () => vf.nlmeans(new FC()),                          'nlmeans'],
   ['nlmeans(s=10)',() => vf.nlmeans(new FC(), { s: 10 }),               'nlmeans'],
   ['nlmeansVulkan',() => vf.nlmeansVulkan(new FC()),                    'nlmeans_vulkan'],
@@ -1754,7 +1743,7 @@ const chainOnlyVideoFilters = [
   ['avgblurVulkan',() => vf.avgblurVulkan(new FC()),                    'avgblur_vulkan'],
   ['avgblurVulkan(sizeX)',() => vf.avgblurVulkan(new FC(), { sizeX: 3, sizeY: 3 }), 'avgblur_vulkan'],
   ['zoompan',      () => vf.zoompan(new FC()),                          'zoompan'],
-  ['zoompan(z)',   () => vf.zoompan(new FC(), { z: 'zoom+0.002', d: 125 }), 'zoompan'],
+  ['zoompan(z)',   () => vf.zoompan(new FC(), { zoom: 'zoom+0.002', d: 125 }), 'zoompan'],
   ['videoPad(pad)',() => vf.pad(new FC(), { width: 1920, height: 1080 }), 'pad'],
   ['eq',           () => vf.eq(new FC(), { brightness: 0.1, contrast: 1.2 }), 'eq'],
   ['eq(gamma)',    () => vf.eq(new FC(), { gamma: 1.2, saturation: 1.1 }), 'eq'],
@@ -1765,7 +1754,7 @@ const chainOnlyVideoFilters = [
   ['yadif',        () => vf.yadif(new FC()),                            'yadif'],
   ['yadif(mode)',  () => vf.yadif(new FC(), { mode: 1 }),               'yadif'],
   ['unsharp',      () => vf.unsharp(new FC()),                          'unsharp'],
-  ['unsharp(opts)',() => vf.unsharp(new FC(), { luma_msize_x: 5, luma_amount: 1.5 }), 'unsharp'],
+  ['unsharp(opts)',() => vf.unsharp(new FC(), { lx: 5, la: 1.5 }), 'unsharp'],
   ['gblur',        () => vf.gblur(new FC()),                            'gblur'],
   ['gblur(sigma)', () => vf.gblur(new FC(), { sigma: 3 }),              'gblur'],
   ['boxblur',      () => vf.boxblur(new FC()),                          'boxblur'],
@@ -1951,13 +1940,13 @@ await run('atempo(chain,1.5) → FilterChain', () => {
   const r = af.atempo(new FC(), 1.5);
   if (!r.toString().includes('atempo')) throw new Error(`got: ${r}`);
 });
-await run('headphones({map:"stereo"}) standalone → string', () => {
-  const r = af.headphones({ map: 'stereo' });
-  if (!r || !r.toString().includes('headphones')) throw new Error(`got: ${r}`);
+await run('headphones({hrir,size}) standalone → string', () => {
+  const r = af.headphones({ hrir: 'test.hrtf', size: 4096 });
+  if (!r || !r.includes('hrir=test.hrtf') || !r.includes('size=4096')) throw new Error(`got: ${r}`);
 });
 await run('headphones(chain,opts) → FilterChain', () => {
-  const r = af.headphones(new FC(), { map: 'stereo' });
-  if (!r.toString().includes('headphones')) throw new Error(`got: ${r}`);
+  const r = af.headphones(new FC(), { hrir: 'test.hrtf', size: 4096, normalize: true });
+  if (!r.toString().includes('normalize=1')) throw new Error(`got: ${r}`);
 });
 await run('sofalizer({sofa}) standalone → string', () => {
   const r = af.sofalizer({ sofa: '/tmp/test.sofa' });
@@ -1974,7 +1963,7 @@ const chainOnlyAudioFilters = [
   ['bass({freq:200})',    () => af.bass(new FC(), { gain: 3, frequency: 200 }),   'bass'],
   ['treble({gain:-3})',   () => af.treble(new FC(), { gain: -3 }),               'treble'],
   ['aecho()',            () => af.aecho(new FC()),                               'aecho'],
-  ['aecho({delays})',    () => af.aecho(new FC(), { delays: 500, decays: 0.5 }), 'aecho'],
+  ['aecho({delays})',    () => af.aecho(new FC(), { delays: '500', decays: '0.5' }), 'aecho'],
   ['afade(in)',          () => af.afade(new FC(), { type: 'in', start_time: 0, duration: 2 }), 'afade'],
   ['afade(out)',         () => af.afade(new FC(), { type: 'out', start_time: 8, duration: 2 }), 'afade'],
   ['asetpts',            () => af.asetpts(new FC(), 'PTS-STARTPTS'),             'asetpts'],
@@ -1989,7 +1978,7 @@ const chainOnlyAudioFilters = [
   ['channelsplit()',     () => af.channelsplit(new FC()),                         'channelsplit'],
   ['channelsplit(stereo)',() => af.channelsplit(new FC(), 'stereo'),              'channelsplit'],
   ['aresample(44100)',   () => af.aresample(new FC(), 44100),                    'aresample'],
-  ['aresample({rate})',  () => af.aresample(new FC(), { sample_rate: 48000 }),   'aresample'],
+  ['aresample({rate})',  () => af.aresample(new FC(), { sampleRate: 48000 }),   'aresample'],
   ['dynaudnorm()',       () => af.dynaudnorm(new FC()),                           'dynaudnorm'],
   ['dynaudnorm({f})',    () => af.dynaudnorm(new FC(), { framelen: 500, gausssize: 31 }), 'dynaudnorm'],
   ['compand()',          () => af.compand(new FC()),                              'compand'],
@@ -1999,7 +1988,7 @@ const chainOnlyAudioFilters = [
   ['asplit(2)',          () => af.asplit(new FC(), 2),                            'asplit'],
   ['asplit(3)',          () => af.asplit(new FC(), 3),                            'asplit'],
   ['silencedetect()',    () => af.silencedetect(new FC()),                        'silencedetect'],
-  ['silencedetect({n})', () => af.silencedetect(new FC(), { noise: -40, duration: 1 }), 'silencedetect'],
+  ['silencedetect({n})', () => af.silencedetect(new FC(), { noise: '-40dB', duration: 1 }), 'silencedetect'],
   ['rubberband({tempo})',() => af.rubberband(new FC(), { tempo: 1.5 }),           'rubberband'],
   ['rubberband({pitch})',() => af.rubberband(new FC(), { pitch: 2.0 }),           'rubberband'],
   ['agate()',            () => af.agate(new FC()),                                'agate'],
@@ -2027,8 +2016,9 @@ await run('audioFilterChain() factory → AudioFilterChain', () => {
   if (!a) throw new Error('null');
 });
 await run('videoFilterChain() factory → VideoFilterChain', () => {
-  const v = videoFilterChainFn('scale=640:360');
+  const v = videoFilterChainFn();
   if (!v) throw new Error('null');
+  if (!v.hflip().toString().includes('hflip')) throw new Error('hflip not chained');
 });
 await run('filterGraph() factory → FilterGraph', () => {
   const fg = filterGraphFn();
@@ -2039,9 +2029,10 @@ await run('GraphNode: new GraphNode(graph, inputs) → non-null', () => {
   const gn = new GraphNode(fg, [new GraphStream('0:v', 'video')]);
   if (!gn) throw new Error('null');
 });
-await run('GraphStream: new GraphStream("label") → non-null', () => {
-  const gs = new GraphStream('test');
+await run('GraphStream: new GraphStream("label","type") → non-null', () => {
+  const gs = new GraphStream('test', 'unknown');
   if (!gs) throw new Error('null');
+  if (gs.toString() !== '[test]') throw new Error(`bad toString: ${gs.toString()}`);
 });
 await run('resetLabelCounter() → no throw', () => {
   resetLabelCounterFn(); resetLabelCounterFn();
@@ -2259,8 +2250,9 @@ await run('buildWatermarkFilter("top-left",0,1.0,100) → scale=100', () => {
   const r = buildWatermarkFilter('top-left', 0, 1.0, 100);
   if (!r.includes('scale=100')) throw new Error(`got: ${r}`);
 });
-await run('buildWaveformFilter(800,120,"blue","lin","line",0) → showwavespic string', () => {
-  const r = buildWaveformFilter(800, 120, 'blue', 'lin', 'line', 0);
+await run('buildWaveformFilter(800,120,"blue","lin",0) → showwavespic string', () => {
+  const r = buildWaveformFilter(800, 120, 'blue', 'lin', 0);
+  if (!r.startsWith('[0:a:0]showwavespic=')) throw new Error(`bad filter: ${r}`);
   if (typeof r !== 'string' || !r.includes('showwavespic')) throw new Error(`got: ${r}`);
 });
 await run('buildBurnSubtitlesFilter(path) → "subtitles=\'path\'" string', () => {
@@ -2484,10 +2476,10 @@ await run('FFmpegSpawnError(null,"SIGKILL",""): signal set', () => {
 await run('FFmpegEmitter: on/emit contract', () => {
   const em = new FFmpegEmitter();
   const captured = [];
-  em.on('test', v => captured.push(v));
-  em.emit('test', 42);
-  em.emit('test', 99);
-  if (captured[0] !== 42 || captured[1] !== 99) throw new Error(`captured: ${captured}`);
+  em.on('start', v => captured.push(v));
+  em.emit('start', ['-i', 'in.mp4']);
+  em.emit('start', ['-i', 'other.mp4']);
+  if (captured[0][0] !== '-i' || captured[1][1] !== 'other.mp4') throw new Error(`captured: ${JSON.stringify(captured)}`);
 });
 await run('GuardError(message,alternative): instanceof Error, alternative set', () => {
   const e = new GuardError('codec unavailable', 'try libx264');
@@ -2707,9 +2699,9 @@ await run('mp3ToArgs({bitrate:192}) → contains "mp3lame" or "mp3"', () => {
   const r = mp3ToArgs({ bitrate: 192 });
   if (!r.join(' ').includes('mp3')) throw new Error(`got: ${r}`);
 });
-await run('mp3ToArgs({quality:2}) → contains quality flag', () => {
-  const r = mp3ToArgs({ quality: 2 });
-  if (!r.join(' ').includes('mp3')) throw new Error(`got: ${r}`);
+await run('mp3ToArgs({qscale:2}) → contains -q:a 2', () => {
+  const r = mp3ToArgs({ qscale: 2 });
+  if (!r.includes('-q:a') || r[r.indexOf('-q:a') + 1] !== '2') throw new Error(`got: ${r}`);
 });
 await run('libOpusToArgs alias → identical to opusToArgs', () => {
   const r1 = opusToArgs({ bitrate: 96 });
@@ -2961,20 +2953,22 @@ await run('addChapters with 3 chapters → file with embedded chapters', async (
   await addCh({
     input: p('input.mp4'), output: p('ch3.mp4'),
     chapters: [
-      { title: 'Intro', startSec: 0, endSec: 3 },
-      { title: 'Main', startSec: 3, endSec: 7 },
-      { title: 'Outro', startSec: 7, endSec: 10 },
+      { title: 'Intro', startSec: 0 },
+      { title: 'Main', startSec: 3 },
+      { title: 'Outro', startSec: 7 },
     ],
   });
   if (!fs.existsSync(p('ch3.mp4'))) throw new Error('file not created');
   const info = probe(p('ch3.mp4'));
-  if (getChapterList(info).length < 3) throw new Error(`expected ≥3 chapters, got ${getChapterList(info).length}`);
-  console.log(`      chapters: ${getChapterList(info).length}`);
+  const chs = getChapterList(info);
+  if (chs.length < 3) throw new Error(`expected ≥3 chapters, got ${chs.length}`);
+  if (Math.abs(chs[0].endSec - chs[1].startSec) > 0.2) throw new Error(`endSec not derived: ${JSON.stringify(chs[0])}`);
+  console.log(`      chapters: ${chs.length}`);
 });
 await run('addChapters with 1 chapter → file created', async () => {
   await addCh({
     input: p('short.mp4'), output: p('ch1.mp4'),
-    chapters: [{ title: 'Only Chapter', startSec: 0, endSec: 3 }],
+    chapters: [{ title: 'Only Chapter', startSec: 0 }],
   });
   if (!fs.existsSync(p('ch1.mp4'))) throw new Error('file not created');
 });

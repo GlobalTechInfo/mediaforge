@@ -20,15 +20,15 @@ describe('CapabilityRegistry', () => {
   });
 
   it('instantiates with binary string', () => {
-    assert.ok(reg !== null);
+    assert.notStrictEqual(reg, null);
   });
 
   it('hasCodec returns boolean for h264', () => {
-    assert.ok(typeof reg.hasCodec('h264') === 'boolean');
+    assert.strictEqual(typeof reg.hasCodec('h264'), 'boolean');
   });
 
   it('hasCodec returns true for libx264 encoder name', () => {
-    assert.ok(reg.hasCodec('libx264') === true);
+    assert.strictEqual(reg.hasCodec('libx264'), true);
   });
 
   it('canEncode libx264 returns true', () => {
@@ -40,7 +40,7 @@ describe('CapabilityRegistry', () => {
   });
 
   it('canDecode returns boolean for h264', () => {
-    assert.ok(typeof reg.canDecode('h264') === 'boolean');
+    assert.strictEqual(typeof reg.canDecode('h264'), 'boolean');
   });
 
   it('hasFilter scale returns true', () => {
@@ -48,40 +48,67 @@ describe('CapabilityRegistry', () => {
   });
 
   it('hasFormat mp4 returns boolean', () => {
-    assert.ok(typeof reg.hasFormat('mp4') === 'boolean');
+    assert.strictEqual(typeof reg.hasFormat('mp4'), 'boolean');
   });
 
   it('hasHwaccel returns boolean (not necessarily true)', () => {
     // cuda may not be present — just verify it returns a boolean
-    assert.ok(typeof reg.hasHwaccel('cuda') === 'boolean');
+    assert.strictEqual(typeof reg.hasHwaccel('cuda'), 'boolean');
   });
 
-  it('codecs map is populated', () => {
-    assert.ok(reg.codecs.size > 0, `codecs.size should be > 0, got ${reg.codecs.size}`);
+  it('codecs map holds every codec ffmpeg reports', () => {
+    // `ffmpeg -codecs` is the source, so the parsed map must be large and must
+    // contain the handful of codecs every build ships.
+    assert.ok(reg.codecs.size > 100, `only ${reg.codecs.size} codecs parsed from ffmpeg -codecs`);
+    // `h265` is an alias, not a row: `ffmpeg -codecs` lists it as `hevc`.
+    for (const name of ['h264', 'hevc', 'aac', 'mp3', 'flac', 'png', 'mjpeg']) {
+      assert.ok(reg.codecs.has(name), `ffmpeg -codecs did not report ${name}`);
+    }
+    assert.ok(!reg.codecs.has('h265'), 'h265 is an alias, not a listed codec');
+    // The flag columns have to land in the right field, or a decoder-only
+    // codec would look like an encoder.
+    assert.strictEqual(reg.codecs.get('h264')?.flags.decode, true);
+    assert.strictEqual(reg.codecs.get('png')?.flags.type, 'video');
+    assert.strictEqual(reg.codecs.get('aac')?.flags.type, 'audio');
+    assert.strictEqual(reg.codecs.get('h264')?.flags.lossy, true);
+    assert.strictEqual(reg.codecs.get('flac')?.flags.lossless, true);
   });
 
-  it('filters map is populated', () => {
-    assert.ok(reg.filters.size > 0, `filters.size should be > 0, got ${reg.filters.size}`);
+  it('filters map holds every filter ffmpeg reports', () => {
+    assert.ok(reg.filters.size > 100, `only ${reg.filters.size} filters parsed from ffmpeg -filters`);
+    for (const name of ['scale', 'crop', 'overlay', 'drawtext', 'fps', 'volume', 'amix']) {
+      assert.ok(reg.filters.has(name), `ffmpeg -filters did not report ${name}`);
+    }
   });
 
-  it('formats map is populated', () => {
-    const formats = reg.formats;
-    assert.ok(formats && formats.size > 0, `formats.size should be > 0, got ${formats?.size ?? 0}`);
+  it('formats map holds both the muxer and the demuxer for mp4', () => {
+    // A demux-only or mux-only row used to be dropped by the flag parser, so
+    // `hasFormat('mp4')` answered false for a format ffmpeg can plainly read.
+    assert.ok(reg.formats.size > 10, `only ${reg.formats.size} formats parsed`);
+    assert.strictEqual(reg.hasFormat('mp4'), true, 'mp4 must be reported as a demuxer');
+    assert.strictEqual(reg.hasFormat('matroska'), true);
+    assert.strictEqual(reg.hasFormat('not_a_real_format_xyz'), false);
   });
 
-  it('hwaccels set exists', () => {
+  it('hwaccels set is a Set of the names ffmpeg lists', () => {
     assert.ok(reg.hwaccels instanceof Set);
+    for (const accel of reg.hwaccels) assert.strictEqual(typeof accel, 'string');
+    // A clean ffmpeg -hwaccels lists no device, but never a placeholder.
+    assert.ok(!reg.hwaccels.has(''), 'the accelerator list has an empty entry');
   });
 
-  it('encoders set is populated', () => {
-    assert.ok(reg.encoders.size > 0, `encoders.size should be > 0, got ${reg.encoders.size}`);
+  it('encoders set is populated with real encoder names', () => {
+    assert.ok(reg.encoders.size > 50, `only ${reg.encoders.size} encoders parsed`);
+    assert.ok(reg.encoders.has('libx264'), 'libx264 missing from the encoder list');
+    assert.ok(reg.encoders.has('aac'), 'aac missing from the encoder list');
+    assert.ok(!reg.encoders.has(''), 'the encoder list has an empty entry');
   });
 
   it('invalidate clears and re-probes correctly', () => {
     const r2 = new CapabilityRegistry('ffmpeg');
     r2.hasCodec('libx264');
     r2.invalidate();
-    assert.ok(typeof r2.hasCodec('libx264') === 'boolean');
+    assert.strictEqual(typeof r2.hasCodec('libx264'), 'boolean');
   });
 
   it('returns empty maps for invalid binary', () => {
@@ -89,7 +116,7 @@ describe('CapabilityRegistry', () => {
     assert.strictEqual(bad.codecs.size, 0);
     assert.strictEqual(bad.filters.size, 0);
     assert.strictEqual(bad.formats.size, 0);
-    assert.ok(bad.hwaccels instanceof Set);
+    assert.ok(bad.hwaccels instanceof Set, `assertion failed: ${bad.hwaccels instanceof Set}`);
   });
 
   it('getDefaultRegistry returns singleton', () => {
@@ -109,23 +136,23 @@ describe('spawnFFmpeg / runFFmpeg coverage', () => {
 
   it('FFmpegSpawnError with null signal uses "unknown"', () => {
     const e = new FFmpegSpawnError(null, null, 'err');
-    assert.ok(e.message.includes('unknown'));
+    assert.ok(e.message.includes('unknown'), `expected ${e.message} to include ${'unknown'}; got ${e.message}`);
   });
 
   it('FFmpegSpawnError with signal string shows signal', () => {
     const e = new FFmpegSpawnError(null, 'SIGTERM', 'err');
-    assert.ok(e.message.includes('SIGTERM'));
+    assert.ok(e.message.includes('SIGTERM'), `expected ${e.message} to include ${'SIGTERM'}; got ${e.message}`);
   });
 
   it('FFmpegSpawnError truncates long stderr to 2000 chars', () => {
     const longErr = 'x'.repeat(5000);
     const e = new FFmpegSpawnError(1, null, longErr);
-    assert.ok(e.message.length < 3000);
+    assert.ok(e.message.length < 3000, `expected ${e.message.length} to be less than ${3000}; got ${e.message.length}`);
   });
 
   it('spawnFFmpeg with cwd option does not throw', () => {
     const proc = spawnFFmpeg({ binary: 'ffmpeg', args: ['-version'], cwd: '/tmp' });
-    assert.ok(proc.emitter !== undefined);
+    assert.notStrictEqual(proc.emitter, undefined);
     return new Promise<void>((res) => {
       proc.emitter.on('end', res);
       proc.emitter.on('error', res);
@@ -169,12 +196,12 @@ describe('spawnFFmpeg / runFFmpeg coverage', () => {
       proc.emitter.on('end', res);
       proc.emitter.on('error', () => res());
     });
-    assert.ok(lines.length > 0);
+    assert.ok(lines.length > 0, `expected ${lines.length} to be greater than ${0}; got ${lines.length}`);
   });
 
   it('spawnFFmpeg child process has pid', () => {
     const proc = spawnFFmpeg({ binary: 'ffmpeg', args: ['-version'] });
-    assert.ok(typeof proc.child.pid === 'number');
+    assert.strictEqual(typeof proc.child.pid, 'number');
     return new Promise<void>((res) => {
       proc.emitter.on('end', res);
       proc.emitter.on('error', res);
@@ -219,28 +246,28 @@ describe('version utils coverage', () => {
   it('parseVersionOutput extracts configuration flags', () => {
     const output = 'ffmpeg version 7.0.1\nconfiguration: --enable-libx264 --enable-libopus\n';
     const v = parseVersionOutput(output);
-    assert.ok(v.configuration.includes('--enable-libx264'));
+    assert.ok(v.configuration.includes('--enable-libx264'), `expected ${v.configuration} to include ${'--enable-libx264'}; got ${v.configuration}`);
   });
 
   it('satisfiesVersion with exact match', () => {
     const v = { major: 7, minor: 0, patch: 0, raw: '7.0.0', isGit: false, libraries: {}, configuration: [] };
-    assert.ok(satisfiesVersion(v, 7));
+    assert.ok(satisfiesVersion(v, 7), `assertion failed: ${satisfiesVersion(v, 7)}`);
   });
 
   it('satisfiesVersion below required returns false', () => {
     const v = { major: 6, minor: 1, patch: 0, raw: '6.1.0', isGit: false, libraries: {}, configuration: [] };
-    assert.ok(!satisfiesVersion(v, 7));
+    assert.ok(!satisfiesVersion(v, 7), `assertion failed: ${!satisfiesVersion(v, 7)}`);
   });
 
   it('formatVersion includes major.minor.patch', () => {
     const v = { major: 7, minor: 1, patch: 2, raw: '7.1.2', isGit: false, libraries: {}, configuration: [] };
     const s = formatVersion(v);
-    assert.ok(s.includes('7'));
+    assert.ok(s.includes('7'), `expected ${s} to include ${'7'}; got ${s}`);
   });
 
   it('probeVersion returns valid version from installed ffmpeg', () => {
     const v = probeVersion('ffmpeg');
-    assert.ok(v.major >= 4);
+    assert.ok(v.major >= 4, `expected ${v.major} to be at least ${4}; got ${v.major}`);
   });
 
   it('probeVersion throws on bad binary', () => {
@@ -326,15 +353,29 @@ describe('ffprobe coverage', () => {
     assert.strictEqual(parseBitrate('N/A'), null);
   });
 
-  it('parseFrameRate handles variable framerate 0/0', () => {
-    const result = parseFrameRate('0/0');
-    assert.ok(result === null || result.value === 0);
+  it('parseFrameRate returns null for every unparseable rate', () => {
+    // ffmpeg reports 0/0 for a stream with no fixed frame rate, so there is
+    // no meaningful fps to derive rather than a zero fps. `1/abc` and `30/0`
+    // used to slip through as NaN/Infinity.
+    assert.strictEqual(parseFrameRate('0/0'), null);
+    assert.strictEqual(parseFrameRate('N/A'), null);
+    assert.strictEqual(parseFrameRate(undefined), null);
+    assert.strictEqual(parseFrameRate(''), null);
+    assert.strictEqual(parseFrameRate('25'), null);
+    assert.strictEqual(parseFrameRate('1/abc'), null);
+    assert.strictEqual(parseFrameRate('30/0'), null);
+    assert.strictEqual(parseFrameRate('-30/1'), null);
+  });
+
+  it('parseFrameRate keeps the exact ratio alongside the reduced value', () => {
+    assert.deepStrictEqual(parseFrameRate('30000/1001'), { num: 30000, den: 1001, value: 30000 / 1001 });
+    assert.deepStrictEqual(parseFrameRate('25/1'), { num: 25, den: 1, value: 25 });
   });
 
   it('summarizeAudioStream returns expected fields', () => {
     const stream = mockResult.streams[1] as any;
     const summary = summarizeAudioStream(stream);
-    assert.ok(summary !== null);
+    assert.notStrictEqual(summary, null);
     assert.strictEqual(summary?.codec, 'aac');
     assert.strictEqual(summary?.channels, 2);
   });
@@ -342,7 +383,7 @@ describe('ffprobe coverage', () => {
   it('ProbeError stores filePath and detail', () => {
     const e = new ProbeError('/tmp/file.mp4', 'No such file');
     assert.strictEqual(e.filePath, '/tmp/file.mp4');
-    assert.ok(e.message.includes('file.mp4'));
+    assert.ok(e.message.includes('file.mp4'), `expected ${e.message} to include ${'file.mp4'}; got ${e.message}`);
   });
 
   it('probe throws ProbeError for nonexistent file', () => {
@@ -367,13 +408,13 @@ describe('args.ts full coverage', () => {
 
   it('buildOutputArgs seekOutput', () => {
     const args = buildOutputArgs({ seekOutput: '00:01:00' });
-    assert.ok(args.includes('-ss'));
-    assert.ok(args.includes('00:01:00'));
+    assert.ok(args.includes('-ss'), `expected ${args} to include ${'-ss'}; got ${args}`);
+    assert.ok(args.includes('00:01:00'), `expected ${args} to include ${'00:01:00'}; got ${args}`);
   });
 
   it('buildOutputArgs map array', () => {
     const args = buildOutputArgs({ map: ['0:v', '0:a'] });
-    assert.ok(args.filter((a: string) => a === '-map').length === 2);
+    assert.strictEqual(args.filter((a: string) => a === '-map').length, 2);
   });
 
   it('toDuration with number returns string', () => {
@@ -386,20 +427,20 @@ describe('args.ts full coverage', () => {
 
   it('buildGlobalArgs with logLevel', () => {
     const args = buildGlobalArgs({ logLevel: 'quiet' });
-    assert.ok(args.includes('-loglevel'));
-    assert.ok(args.includes('quiet'));
+    assert.ok(args.includes('-loglevel'), `expected ${args} to include ${'-loglevel'}; got ${args}`);
+    assert.ok(args.includes('quiet'), `expected ${args} to include ${'quiet'}; got ${args}`);
   });
 
   it('buildGlobalArgs with progress=true', () => {
     const args = buildGlobalArgs({ progress: true });
-    assert.ok(args.includes('-progress'));
+    assert.ok(args.includes('-progress'), `expected ${args} to include ${'-progress'}; got ${args}`);
   });
 
   it('buildInputArgs with all options', () => {
     const args = buildInputArgs({ seekInput: 10, duration: 30, format: 'mp4' });
-    assert.ok(args.includes('-ss'));
-    assert.ok(args.includes('-t'));
-    assert.ok(args.includes('-f'));
+    assert.ok(args.includes('-ss'), `expected ${args} to include ${'-ss'}; got ${args}`);
+    assert.ok(args.includes('-t'), `expected ${args} to include ${'-t'}; got ${args}`);
+    assert.ok(args.includes('-f'), `expected ${args} to include ${'-f'}; got ${args}`);
   });
 });
 
@@ -416,11 +457,11 @@ describe('binary.ts coverage', () => {
   });
 
   it('resolveBinary returns ffmpeg path', () => {
-    assert.ok(typeof resolveBinary() === 'string');
+    assert.strictEqual(typeof resolveBinary(), 'string');
   });
 
   it('resolveProbe returns ffprobe path', () => {
-    assert.ok(typeof resolveProbe() === 'string');
+    assert.strictEqual(typeof resolveProbe(), 'string');
   });
 
   it('isBinaryAvailable false for nonexistent', () => {
@@ -432,11 +473,11 @@ describe('binary.ts coverage', () => {
   });
 
   it('BinaryNotFoundError is Error', () => {
-    assert.ok(new BinaryNotFoundError('x') instanceof Error);
+    assert.ok(new BinaryNotFoundError('x') instanceof Error, `assertion failed: ${new BinaryNotFoundError('x') instanceof Error}`);
   });
 
   it('BinaryNotExecutableError is Error', () => {
-    assert.ok(new BinaryNotExecutableError('x') instanceof Error);
+    assert.ok(new BinaryNotExecutableError('x') instanceof Error, `assertion failed: ${new BinaryNotExecutableError('x') instanceof Error}`);
   });
 
   it('validateBinary passes for ffmpeg', () => {
@@ -469,81 +510,81 @@ describe('codec serializers full coverage', () => {
 
   it('x264ToArgs with tune', () => {
     const args = x264ToArgs({ tune: 'film' });
-    assert.ok(args.includes('film'));
+    assert.ok(args.includes('film'), `expected ${args} to include ${'film'}; got ${args}`);
   });
 
   it('x264ToArgs with aq-mode', () => {
     const args: string[] = x264ToArgs({ aqMode: 2 });
-    assert.ok(args.some((a: string) => a.includes('aq') || a === '2'));
+    assert.ok(args.some((a: string) => a.includes('aq') || a === '2'), `assertion failed: ${args.some((a: string) => a.includes('aq') || a === '2')}`);
   });
 
   it('x265ToArgs with bitrate', () => {
     const args = x265ToArgs({ bitrate: 2000 });
-    assert.ok(args.includes('2000k'));
+    assert.ok(args.includes('2000k'), `expected ${args} to include ${'2000k'}; got ${args}`);
   });
 
   it('x265ToArgs with crf', () => {
     const args = x265ToArgs({ crf: 18, preset: 'slow' });
-    assert.ok(args.includes('18'));
-    assert.ok(args.includes('slow'));
+    assert.ok(args.includes('18'), `expected ${args} to include ${'18'}; got ${args}`);
+    assert.ok(args.includes('slow'), `expected ${args} to include ${'slow'}; got ${args}`);
   });
 
   it('svtav1ToArgs with speed preset', () => {
     const args = svtav1ToArgs({ preset: 8, crf: 35 });
-    assert.ok(args.includes('8'));
-    assert.ok(args.includes('35'));
+    assert.ok(args.includes('8'), `expected ${args} to include ${'8'}; got ${args}`);
+    assert.ok(args.includes('35'), `expected ${args} to include ${'35'}; got ${args}`);
   });
 
   it('vp9ToArgs with tile-columns', () => {
     const args: string[] = vp9ToArgs({ tileColumns: 2 });
-    assert.ok(args.some((a: string) => a.includes('tile') || a === '2'));
+    assert.ok(args.some((a: string) => a.includes('tile') || a === '2'), `assertion failed: ${args.some((a: string) => a.includes('tile') || a === '2')}`);
   });
 
   it('aacToArgs with channels', () => {
     const args = aacToArgs({ channels: 6 });
-    assert.ok(args.includes('6'));
+    assert.ok(args.includes('6'), `expected ${args} to include ${'6'}; got ${args}`);
   });
 
   it('opusToArgs with vbr', () => {
     const args = opusToArgs({ vbr: 'on' });
-    assert.ok(args.includes('on'));
+    assert.ok(args.includes('on'), `expected ${args} to include ${'on'}; got ${args}`);
   });
 
   it('mp3ToArgs with qscale vbr', () => {
     const args = mp3ToArgs({ qscale: 2 });
-    assert.ok(args.includes('2'));
+    assert.ok(args.includes('2'), `expected ${args} to include ${'2'}; got ${args}`);
   });
 
   it('flacToArgs with compression level', () => {
     const args = flacToArgs({ compressionLevel: 8 });
-    assert.ok(args.includes('8'));
+    assert.ok(args.includes('8'), `expected ${args} to include ${'8'}; got ${args}`);
   });
 
   it('nvencToArgs with hevc codec', () => {
     const args = nvencToArgs({ preset: 'p4' }, 'hevc_nvenc');
-    assert.ok(args.includes('hevc_nvenc'));
+    assert.ok(args.includes('hevc_nvenc'), `expected ${args} to include ${'hevc_nvenc'}; got ${args}`);
   });
 
   it('vaapiToArgs with hevc codec', () => {
     const args = vaapiToArgs({}, 'hevc_vaapi');
-    assert.ok(args.includes('hevc_vaapi'));
+    assert.ok(args.includes('hevc_vaapi'), `expected ${args} to include ${'hevc_vaapi'}; got ${args}`);
   });
 
   it('mediacodecToArgs returns args array', () => {
     const args = mediacodecToArgs({}, 'h264_mediacodec');
-    assert.ok(Array.isArray(args));
-    assert.ok(args.includes('h264_mediacodec'));
+    assert.ok(Array.isArray(args), `assertion failed: ${Array.isArray(args)}`);
+    assert.ok(args.includes('h264_mediacodec'), `expected ${args} to include ${'h264_mediacodec'}; got ${args}`);
   });
 
   it('vulkanToArgs returns args array', () => {
     const args = vulkanToArgs({}, 'h264_vulkan');
-    assert.ok(Array.isArray(args));
-    assert.ok(args.includes('h264_vulkan'));
+    assert.ok(Array.isArray(args), `assertion failed: ${Array.isArray(args)}`);
+    assert.ok(args.includes('h264_vulkan'), `expected ${args} to include ${'h264_vulkan'}; got ${args}`);
   });
 
   it('qsvToArgs with bitrate', () => {
     const args = qsvToArgs({ bitrate: 3000 }, 'h264_qsv');
-    assert.ok(args.includes('3000k'));
+    assert.ok(args.includes('3000k'), `expected ${args} to include ${'3000k'}; got ${args}`);
   });
 });
 
@@ -571,7 +612,7 @@ describe('buildAtempoChain coverage', () => {
     assert.ok(s.includes(','), `expected comma chain: ${s}`);
     const parts = s.split(',');
     assert.strictEqual(parts.length, 2);
-    assert.ok(parts[0]!.includes('atempo=2'));
+    assert.ok(parts[0]!.includes('atempo=2'), `expected ${parts[0]!} to include ${'atempo=2'}; got ${parts[0]!}`);
   });
 
   it('0.25x chains two atempo=0.5 filters', () => {
@@ -586,7 +627,7 @@ describe('buildAtempoChain coverage', () => {
   });
 
   it('1.5x stays single', () => {
-    assert.ok(!buildAtempoChain(1.5).includes(','));
+    assert.ok(!buildAtempoChain(1.5).includes(','), `assertion failed: ${!buildAtempoChain(1.5).includes(',')}`);
   });
 });
 
@@ -667,87 +708,87 @@ describe('v0.3.0 filter arg coverage', () => {
 
   it('curves standalone: preset vintage', () => {
     const s = curves({ preset: 'vintage' });
-    assert.ok(typeof s === 'string');
+    assert.strictEqual(typeof s, 'string');
     assert.ok(s.includes('preset=vintage'), `got: ${s}`);
   });
 
   it('curves standalone: custom r/g/b', () => {
     const s = curves({ r: '0/0 1/1', g: '0/0 0.5/0.8 1/1' });
-    assert.ok(s.includes('curves='));
+    assert.ok(s.includes('curves='), `expected ${s} to include ${'curves='}; got ${s}`);
   });
 
   it('curves chained returns FilterChain', () => {
     const fc = new FilterChain();
     const result = curves(fc, { preset: 'cross_process' });
-    assert.ok(result.toString().includes('cross_process'));
+    assert.ok(result.toString().includes('cross_process'), `expected ${result.toString()} to include ${'cross_process'}; got ${result.toString()}`);
   });
 
   it('levels standalone: inBlack + gamma', () => {
     const s = levels({ inBlack: 10, inWhite: 240, gamma: 1.2 });
-    assert.ok(typeof s === 'string');
-    assert.ok(s.includes('levels='));
+    assert.strictEqual(typeof s, 'string');
+    assert.ok(s.includes('levels='), `expected ${s} to include ${'levels='}; got ${s}`);
   });
 
   it('levels standalone: no args', () => {
     const s = levels();
-    assert.ok(s.includes('levels'));
+    assert.ok(s.includes('levels'), `expected ${s} to include ${'levels'}; got ${s}`);
   });
 
   it('deband: produces deband filter', () => {
-    assert.ok(deband(new FilterChain()).toString().includes('deband'));
+    assert.ok(deband(new FilterChain()).toString().includes('deband'), `expected ${deband(new FilterChain()).toString()} to include ${'deband'}; got ${deband(new FilterChain()).toString()}`);
   });
 
   it('deband: with range option', () => {
-    assert.ok(deband(new FilterChain(), { range: 16 }).toString().includes('range=16'));
+    assert.ok(deband(new FilterChain(), { range: 16 }).toString().includes('range=16'), `expected ${deband(new FilterChain(), { range: 16 }).toString()} to include ${'range=16'}; got ${deband(new FilterChain(), { range: 16 }).toString()}`);
   });
 
   it('deshake: produces deshake filter', () => {
-    assert.ok(deshake(new FilterChain()).toString().includes('deshake'));
+    assert.ok(deshake(new FilterChain()).toString().includes('deshake'), `expected ${deshake(new FilterChain()).toString()} to include ${'deshake'}; got ${deshake(new FilterChain()).toString()}`);
   });
 
   it('deshake: with rx/ry', () => {
     const s = deshake(new FilterChain(), { rx: 16, ry: 16 }).toString();
-    assert.ok(s.includes('rx=16'));
+    assert.ok(s.includes('rx=16'), `expected ${s} to include ${'rx=16'}; got ${s}`);
   });
 
   it('deflicker: produces deflicker filter', () => {
-    assert.ok(deflicker(new FilterChain()).toString().includes('deflicker'));
+    assert.ok(deflicker(new FilterChain()).toString().includes('deflicker'), `expected ${deflicker(new FilterChain()).toString()} to include ${'deflicker'}; got ${deflicker(new FilterChain()).toString()}`);
   });
 
   it('deflicker: with mode', () => {
-    assert.ok(deflicker(new FilterChain(), { mode: 'am', size: 5 }).toString().includes('mode=am'));
+    assert.ok(deflicker(new FilterChain(), { mode: 'am', size: 5 }).toString().includes('mode=am'), `expected ${deflicker(new FilterChain(), { mode: 'am', size: 5 }).toString()} to include ${'mode=am'}; got ${deflicker(new FilterChain(), { mode: 'am', size: 5 }).toString()}`);
   });
 
   it('smartblur: produces smartblur filter', () => {
-    assert.ok(smartblur(new FilterChain()).toString().includes('smartblur'));
+    assert.ok(smartblur(new FilterChain()).toString().includes('smartblur'), `expected ${smartblur(new FilterChain()).toString()} to include ${'smartblur'}; got ${smartblur(new FilterChain()).toString()}`);
   });
 
   it('smartblur: with luma params', () => {
     const s = smartblur(new FilterChain(), { luma_radius: 1.5, luma_strength: 0.8 }).toString();
-    assert.ok(s.includes('lr=1.5'));
+    assert.ok(s.includes('lr=1.5'), `expected ${s} to include ${'lr=1.5'}; got ${s}`);
   });
 
   it('hstack: inputs=2', () => {
-    assert.ok(hstack(new FilterChain(), 2).toString().includes('hstack=inputs=2'));
+    assert.ok(hstack(new FilterChain(), 2).toString().includes('hstack=inputs=2'), `expected ${hstack(new FilterChain(), 2).toString()} to include ${'hstack=inputs=2'}; got ${hstack(new FilterChain(), 2).toString()}`);
   });
 
   it('hstack: inputs=4', () => {
-    assert.ok(hstack(new FilterChain(), 4).toString().includes('inputs=4'));
+    assert.ok(hstack(new FilterChain(), 4).toString().includes('inputs=4'), `expected ${hstack(new FilterChain(), 4).toString()} to include ${'inputs=4'}; got ${hstack(new FilterChain(), 4).toString()}`);
   });
 
   it('vstack: inputs=2', () => {
-    assert.ok(vstack(new FilterChain(), 2).toString().includes('vstack=inputs=2'));
+    assert.ok(vstack(new FilterChain(), 2).toString().includes('vstack=inputs=2'), `expected ${vstack(new FilterChain(), 2).toString()} to include ${'vstack=inputs=2'}; got ${vstack(new FilterChain(), 2).toString()}`);
   });
 
   it('xstack: custom layout', () => {
     const s = xstack(new FilterChain(), { inputs: 4, layout: '0_0|w0_0|0_h0|w0_h0' }).toString();
-    assert.ok(s.includes('xstack='));
-    assert.ok(s.includes('inputs=4'));
+    assert.ok(s.includes('xstack='), `expected ${s} to include ${'xstack='}; got ${s}`);
+    assert.ok(s.includes('inputs=4'), `expected ${s} to include ${'inputs=4'}; got ${s}`);
   });
 
   it('colorSource: with options', () => {
     const s = colorSource(new FilterChain(), { color: 'black', size: '1920x1080' }).toString();
-    assert.ok(s.includes('color='));
+    assert.ok(s.includes('color='), `expected ${s} to include ${'color='}; got ${s}`);
   });
 });
 
@@ -759,32 +800,32 @@ describe('amfToArgs coverage', () => {
   });
 
   it('defaults to h264_amf', () => {
-    assert.ok(amfToArgs({}).includes('h264_amf'));
+    assert.ok(amfToArgs({}).includes('h264_amf'), `expected ${amfToArgs({})} to include ${'h264_amf'}; got ${amfToArgs({})}`);
   });
   it('hevc_amf', () => {
-    assert.ok(amfToArgs({}, 'hevc_amf').includes('hevc_amf'));
+    assert.ok(amfToArgs({}, 'hevc_amf').includes('hevc_amf'), `expected ${amfToArgs({}, 'hevc_amf')} to include ${'hevc_amf'}; got ${amfToArgs({}, 'hevc_amf')}`);
   });
   it('av1_amf', () => {
-    assert.ok(amfToArgs({}, 'av1_amf').includes('av1_amf'));
+    assert.ok(amfToArgs({}, 'av1_amf').includes('av1_amf'), `expected ${amfToArgs({}, 'av1_amf')} to include ${'av1_amf'}; got ${amfToArgs({}, 'av1_amf')}`);
   });
   it('sets bitrate', () => {
-    assert.ok(amfToArgs({ bitrate: 8000 }).includes('8000k'));
+    assert.ok(amfToArgs({ bitrate: 8000 }).includes('8000k'), `expected ${amfToArgs({ bitrate: 8000 })} to include ${'8000k'}; got ${amfToArgs({ bitrate: 8000 })}`);
   });
   it('sets quality preset', () => {
-    assert.ok(amfToArgs({ quality: 'balanced' }).includes('balanced'));
+    assert.ok(amfToArgs({ quality: 'balanced' }).includes('balanced'), `expected ${amfToArgs({ quality: 'balanced' })} to include ${'balanced'}; got ${amfToArgs({ quality: 'balanced' })}`);
   });
   it('sets rateControl', () => {
-    assert.ok(amfToArgs({ rateControl: 'cbr' }).includes('cbr'));
+    assert.ok(amfToArgs({ rateControl: 'cbr' }).includes('cbr'), `expected ${amfToArgs({ rateControl: 'cbr' })} to include ${'cbr'}; got ${amfToArgs({ rateControl: 'cbr' })}`);
   });
   it('sets qp', () => {
     const args = amfToArgs({ qp: 22 });
-    assert.ok(args.includes('-qp_i') && args.includes('22'));
+    assert.ok(args.includes('-qp_i') && args.includes('22'), `assertion failed: ${args.includes('-qp_i') && args.includes('22')}`);
   });
   it('sets gopSize', () => {
-    assert.ok(amfToArgs({ gopSize: 60 }).includes('60'));
+    assert.ok(amfToArgs({ gopSize: 60 }).includes('60'), `expected ${amfToArgs({ gopSize: 60 })} to include ${'60'}; got ${amfToArgs({ gopSize: 60 })}`);
   });
   it('sets maxrate', () => {
-    assert.ok(amfToArgs({ maxrate: 12000 }).includes('12000k'));
+    assert.ok(amfToArgs({ maxrate: 12000 }).includes('12000k'), `expected ${amfToArgs({ maxrate: 12000 })} to include ${'12000k'}; got ${amfToArgs({ maxrate: 12000 })}`);
   });
 });
 
@@ -795,23 +836,23 @@ describe('videotoolboxToArgs coverage', () => {
   });
 
   it('defaults to h264_videotoolbox', () => {
-    assert.ok(videotoolboxToArgs({}).includes('h264_videotoolbox'));
+    assert.ok(videotoolboxToArgs({}).includes('h264_videotoolbox'), `expected ${videotoolboxToArgs({})} to include ${'h264_videotoolbox'}; got ${videotoolboxToArgs({})}`);
   });
   it('hevc_videotoolbox', () => {
-    assert.ok(videotoolboxToArgs({}, 'hevc_videotoolbox').includes('hevc_videotoolbox'));
+    assert.ok(videotoolboxToArgs({}, 'hevc_videotoolbox').includes('hevc_videotoolbox'), `expected ${videotoolboxToArgs({}, 'hevc_videotoolbox')} to include ${'hevc_videotoolbox'}; got ${videotoolboxToArgs({}, 'hevc_videotoolbox')}`);
   });
   it('sets bitrate', () => {
-    assert.ok(videotoolboxToArgs({ bitrate: 6000 }).includes('6000k'));
+    assert.ok(videotoolboxToArgs({ bitrate: 6000 }).includes('6000k'), `expected ${videotoolboxToArgs({ bitrate: 6000 })} to include ${'6000k'}; got ${videotoolboxToArgs({ bitrate: 6000 })}`);
   });
   it('sets quality (0-100)', () => {
     // quality 1.0 → 100
-    assert.ok(videotoolboxToArgs({ quality: 1.0 }).includes('100'));
+    assert.ok(videotoolboxToArgs({ quality: 1.0 }).includes('100'), `expected ${videotoolboxToArgs({ quality: 1.0 })} to include ${'100'}; got ${videotoolboxToArgs({ quality: 1.0 })}`);
   });
   it('sets maxKeyFrameInterval', () => {
-    assert.ok(videotoolboxToArgs({ maxKeyFrameInterval: 60 }).includes('60'));
+    assert.ok(videotoolboxToArgs({ maxKeyFrameInterval: 60 }).includes('60'), `expected ${videotoolboxToArgs({ maxKeyFrameInterval: 60 })} to include ${'60'}; got ${videotoolboxToArgs({ maxKeyFrameInterval: 60 })}`);
   });
   it('sets profile', () => {
-    assert.ok(videotoolboxToArgs({ profile: 'main' }).includes('main'));
+    assert.ok(videotoolboxToArgs({ profile: 'main' }).includes('main'), `expected ${videotoolboxToArgs({ profile: 'main' })} to include ${'main'}; got ${videotoolboxToArgs({ profile: 'main' })}`);
   });
 });
 
@@ -845,7 +886,7 @@ describe('inferAudioCodec via extractAudio arg path', () => {
 
   it('buildAtempoChain covers all branches', () => {
     // 1x exactly
-    assert.ok(buildAtempoChain(1.0).includes('atempo=1.0'));
+    assert.ok(buildAtempoChain(1.0).includes('atempo=1.0'), `expected ${buildAtempoChain(1.0)} to include ${'atempo=1.0'}; got ${buildAtempoChain(1.0)}`);
     // very slow: 0.1 needs two passes
     const slow = buildAtempoChain(0.1);
     assert.ok(slow.split(',').length >= 2, `0.1x needs chain: ${slow}`);
@@ -866,31 +907,31 @@ describe('HLS/DASH arg builder branches', () => {
 
   it('buildHlsArgs includes hls segment filename', () => {
     const args = buildHlsArgs('in.mp4', '/out', {});
-    assert.ok(Array.isArray(args));
-    assert.ok(args.includes('in.mp4'));
-    assert.ok(args.includes('-f') && args.includes('hls'));
+    assert.ok(Array.isArray(args), `assertion failed: ${Array.isArray(args)}`);
+    assert.ok(args.includes('in.mp4'), `expected ${args} to include ${'in.mp4'}; got ${args}`);
+    assert.ok(args.includes('-f') && args.includes('hls'), `assertion failed: ${args.includes('-f') && args.includes('hls')}`);
   });
 
   it('buildHlsArgs with videoCodec', () => {
     const args = buildHlsArgs('in.mp4', '/out', { videoCodec: 'libx264' });
-    assert.ok(args.includes('libx264'));
+    assert.ok(args.includes('libx264'), `expected ${args} to include ${'libx264'}; got ${args}`);
   });
 
   it('buildHlsArgs with videoBitrate', () => {
     const args = buildHlsArgs('in.mp4', '/out', { videoBitrate: '500k' });
-    assert.ok(args.includes('500k'));
+    assert.ok(args.includes('500k'), `expected ${args} to include ${'500k'}; got ${args}`);
   });
 
   it('buildDashArgs includes dash format', () => {
     const args = buildDashArgs('in.mp4', 'out/manifest.mpd', {});
-    assert.ok(args.includes('-f') && args.includes('dash'));
-    assert.ok(args.includes('out/manifest.mpd'));
+    assert.ok(args.includes('-f') && args.includes('dash'), `assertion failed: ${args.includes('-f') && args.includes('dash')}`);
+    assert.ok(args.includes('out/manifest.mpd'), `expected ${args} to include ${'out/manifest.mpd'}; got ${args}`);
   });
 
   it('buildDashArgs with codec options', () => {
     const args = buildDashArgs('in.mp4', 'out/m.mpd', { videoCodec: 'libx264', audioBitrate: '128k' });
-    assert.ok(args.includes('libx264'));
-    assert.ok(args.includes('128k'));
+    assert.ok(args.includes('libx264'), `expected ${args} to include ${'libx264'}; got ${args}`);
+    assert.ok(args.includes('128k'), `expected ${args} to include ${'128k'}; got ${args}`);
   });
 });
 
@@ -903,14 +944,14 @@ describe('normalize + gif arg builder branches', () => {
 
   it('buildLoudnormFilter with defaults', () => {
     const f = buildLoudnormFilter(-23, 7, -2);
-    assert.ok(typeof f === 'string');
-    assert.ok(f.includes('loudnorm='));
-    assert.ok(f.includes('i=-23'));
+    assert.strictEqual(typeof f, 'string');
+    assert.ok(f.includes('loudnorm='), `expected ${f} to include ${'loudnorm='}; got ${f}`);
+    assert.ok(f.includes('i=-23'), `expected ${f} to include ${'i=-23'}; got ${f}`);
   });
 
   it('buildLoudnormFilter podcast values', () => {
     const f = buildLoudnormFilter(-16, 11, -1.5);
-    assert.ok(f.includes('i=-16') && f.includes('lra=11'));
+    assert.ok(f.includes('i=-16') && f.includes('lra=11'), `assertion failed: ${f.includes('i=-16') && f.includes('lra=11')}`);
   });
 });
 
@@ -947,9 +988,9 @@ describe('gif arg builder branches', () => {
 
   it('buildGifArgs with startTime and duration', () => {
     const { pass1, pass2 } = buildGifArgs('in.mp4', '/tmp/p.png', 'out.gif', 15, 480, 'sierra2', 5, 10);
-    assert.ok(pass1.includes('-ss') && pass1.includes('5'));
-    assert.ok(pass1.includes('-t') && pass1.includes('10'));
-    assert.ok(pass2.includes('-ss'));
+    assert.ok(pass1.includes('-ss') && pass1.includes('5'), `assertion failed: ${pass1.includes('-ss') && pass1.includes('5')}`);
+    assert.ok(pass1.includes('-t') && pass1.includes('10'), `assertion failed: ${pass1.includes('-t') && pass1.includes('10')}`);
+    assert.ok(pass2.includes('-ss'), `expected ${pass2} to include ${'-ss'}; got ${pass2}`);
   });
 });
 
@@ -965,32 +1006,32 @@ describe('truehdToArgs / wavpackToArgs / vorbisToArgs branch coverage', () => {
 
   it('truehdToArgs with sampleRate', () => {
     const a = truehdToArgs({ sampleRate: 96000, channelLayout: '7.1' });
-    assert.ok(a.includes('truehd') && a.includes('96000'));
+    assert.ok(a.includes('truehd') && a.includes('96000'), `assertion failed: ${a.includes('truehd') && a.includes('96000')}`);
   });
 
   it('wavpackToArgs lossless mode (default)', () => {
-    assert.ok(wavpackToArgs({}).includes('wavpack'));
+    assert.ok(wavpackToArgs({}).includes('wavpack'), `expected ${wavpackToArgs({})} to include ${'wavpack'}; got ${wavpackToArgs({})}`);
   });
 
   it('wavpackToArgs with bitrate', () => {
-    assert.ok(wavpackToArgs({ bitrate: 256 }).includes('256k'));
+    assert.ok(wavpackToArgs({ bitrate: 256 }).includes('256k'), `expected ${wavpackToArgs({ bitrate: 256 })} to include ${'256k'}; got ${wavpackToArgs({ bitrate: 256 })}`);
   });
 
   it('wavpackToArgs with quality number', () => {
-    assert.ok(wavpackToArgs({ quality: 80 }).includes('wavpack'));
+    assert.ok(wavpackToArgs({ quality: 80 }).includes('wavpack'), `expected ${wavpackToArgs({ quality: 80 })} to include ${'wavpack'}; got ${wavpackToArgs({ quality: 80 })}`);
   });
 
   it('wavpackToArgs with extra', () => {
-    assert.ok(wavpackToArgs({ extra: 3 }).includes('3'));
+    assert.ok(wavpackToArgs({ extra: 3 }).includes('3'), `expected ${wavpackToArgs({ extra: 3 })} to include ${'3'}; got ${wavpackToArgs({ extra: 3 })}`);
   });
 
   it('vorbisToArgs bitrate mode (no qscale)', () => {
-    assert.ok(vorbisToArgs({ bitrate: 128 }).includes('128k'));
+    assert.ok(vorbisToArgs({ bitrate: 128 }).includes('128k'), `expected ${vorbisToArgs({ bitrate: 128 })} to include ${'128k'}; got ${vorbisToArgs({ bitrate: 128 })}`);
   });
 
   it('vorbisToArgs with minrate/maxrate', () => {
     const a = vorbisToArgs({ minrate: 96, maxrate: 320 });
-    assert.ok(a.includes('96k') && a.includes('320k'));
+    assert.ok(a.includes('96k') && a.includes('320k'), `assertion failed: ${a.includes('96k') && a.includes('320k')}`);
   });
 });
 
@@ -1007,58 +1048,58 @@ describe('proResToArgs / dnxhdToArgs / ffv1ToArgs branch coverage', () => {
   });
 
   it('proResToArgs: bits=12', () => {
-    assert.ok(proResToArgs({ bits: 12 }).includes('12'));
+    assert.ok(proResToArgs({ bits: 12 }).includes('12'), `expected ${proResToArgs({ bits: 12 })} to include ${'12'}; got ${proResToArgs({ bits: 12 })}`);
   });
 
   it('proResToArgs: vendor + alphaQuality', () => {
     const a = proResToArgs({ vendor: 'apl0', alphaQuality: 8 });
-    assert.ok(a.includes('apl0') && a.includes('8'));
+    assert.ok(a.includes('apl0') && a.includes('8'), `assertion failed: ${a.includes('apl0') && a.includes('8')}`);
   });
 
   it('dnxhdToArgs: profile string', () => {
-    assert.ok(dnxhdToArgs({ profile: 'dnxhr_hq' }).includes('dnxhr_hq'));
+    assert.ok(dnxhdToArgs({ profile: 'dnxhr_hq' }).includes('dnxhr_hq'), `expected ${dnxhdToArgs({ profile: 'dnxhr_hq' })} to include ${'dnxhr_hq'}; got ${dnxhdToArgs({ profile: 'dnxhr_hq' })}`);
   });
 
   it('ffv1ToArgs: level + context + slices + sliceCrc=false', () => {
     const a = ffv1ToArgs({ level: 1, context: 1, slices: 16, sliceCrc: false });
-    assert.ok(a.includes('1') && a.includes('16') && a.includes('0'));
+    assert.ok(a.includes('1') && a.includes('16') && a.includes('0'), `assertion failed: ${a.includes('1') && a.includes('16') && a.includes('0')}`);
   });
 
   it('mjpegToArgs: huffman=optimal', () => {
-    assert.ok(mjpegToArgs({ huffman: 'optimal' }).includes('optimal'));
+    assert.ok(mjpegToArgs({ huffman: 'optimal' }).includes('optimal'), `expected ${mjpegToArgs({ huffman: 'optimal' })} to include ${'optimal'}; got ${mjpegToArgs({ huffman: 'optimal' })}`);
   });
 
   it('mjpegToArgs: pixFmt', () => {
-    assert.ok(mjpegToArgs({ pixFmt: 'yuvj422p' }).includes('yuvj422p'));
+    assert.ok(mjpegToArgs({ pixFmt: 'yuvj422p' }).includes('yuvj422p'), `expected ${mjpegToArgs({ pixFmt: 'yuvj422p' })} to include ${'yuvj422p'}; got ${mjpegToArgs({ pixFmt: 'yuvj422p' })}`);
   });
 
   it('mpeg2ToArgs: gopSize + level + interlaced=false', () => {
     const a = mpeg2ToArgs({ gopSize: 25, level: 'high', interlaced: false });
-    assert.ok(a.includes('25') && a.includes('high'));
-    assert.ok(!a.includes('+ildct'));
+    assert.ok(a.includes('25') && a.includes('high'), `assertion failed: ${a.includes('25') && a.includes('high')}`);
+    assert.ok(!a.includes('+ildct'), `expected ${!a} to include ${'+ildct'}; got ${!a}`);
   });
 
   it('mpeg2ToArgs: maxrate + bufsize + profile', () => {
     const a = mpeg2ToArgs({ maxrate: 15000, bufsize: 20000, profile: 'main' });
-    assert.ok(a.includes('15000k') && a.includes('20000k') && a.includes('main'));
+    assert.ok(a.includes('15000k') && a.includes('20000k') && a.includes('main'), `assertion failed: ${a.includes('15000k') && a.includes('20000k') && a.includes('main')}`);
   });
 
   it('mpeg4ToArgs: bitrate + gopSize + bFrames + me', () => {
     const a = mpeg4ToArgs({ bitrate: 2000, gopSize: 250, bFrames: 2, me: 'hex' });
-    assert.ok(a.includes('2000k') && a.includes('250') && a.includes('hex'));
+    assert.ok(a.includes('2000k') && a.includes('250') && a.includes('hex'), `assertion failed: ${a.includes('2000k') && a.includes('250') && a.includes('hex')}`);
   });
 
   it('mpeg4ToArgs: qscale', () => {
-    assert.ok(mpeg4ToArgs({ qscale: 5 }).includes('5'));
+    assert.ok(mpeg4ToArgs({ qscale: 5 }).includes('5'), `expected ${mpeg4ToArgs({ qscale: 5 })} to include ${'5'}; got ${mpeg4ToArgs({ qscale: 5 })}`);
   });
 
   it('vp8ToArgs: all options', () => {
     const a = vp8ToArgs({ crf: 10, cpuUsed: 4, quality: 'realtime', keyintMax: 120 });
-    assert.ok(a.includes('10') && a.includes('4') && a.includes('realtime') && a.includes('120'));
+    assert.ok(a.includes('10') && a.includes('4') && a.includes('realtime') && a.includes('120'), `assertion failed: ${a.includes('10') && a.includes('4') && a.includes('realtime') && a.includes('120')}`);
   });
 
   it('theoraToArgs: bitrate mode', () => {
-    assert.ok(theoraToArgs({ bitrate: 800 }).includes('800k'));
+    assert.ok(theoraToArgs({ bitrate: 800 }).includes('800k'), `expected ${theoraToArgs({ bitrate: 800 })} to include ${'800k'}; got ${theoraToArgs({ bitrate: 800 })}`);
   });
 });
 
@@ -1081,8 +1122,8 @@ describe('watermark builder branch coverage', () => {
 
   it('buildWatermarkFilter: scaleWidth + opacity', () => {
     const f = buildWatermarkFilter('center', 10, 0.5, 100);
-    assert.ok(f.includes('scale=100'));
-    assert.ok(f.includes('colorchannelmixer'));
+    assert.ok(f.includes('scale=100'), `expected ${f} to include ${'scale=100'}; got ${f}`);
+    assert.ok(f.includes('colorchannelmixer'), `expected ${f} to include ${'colorchannelmixer'}; got ${f}`);
   });
 
   it('buildTextWatermarkFilter: all positions', () => {
@@ -1095,7 +1136,7 @@ describe('watermark builder branch coverage', () => {
 
   it('buildTextWatermarkFilter: with fontFile', () => {
     const f = buildTextWatermarkFilter('hi', 'bottom-right', 10, 24, 'white', '/fonts/Arial.ttf');
-    assert.ok(f.includes('fontfile'));
+    assert.ok(f.includes('fontfile'), `expected ${f} to include ${'fontfile'}; got ${f}`);
   });
 });
 
@@ -1110,16 +1151,16 @@ describe('metadata arg builder coverage', () => {
 
   it('buildMetadataArgs: title + artist', () => {
     const a = buildMetadataArgs({ title: 'Test', artist: 'me' });
-    assert.ok(a.includes('title=Test') && a.includes('artist=me'));
+    assert.ok(a.includes('title=Test') && a.includes('artist=me'), `assertion failed: ${a.includes('title=Test') && a.includes('artist=me')}`);
   });
 
   it('buildMetadataArgs: empty', () => {
-    assert.ok(Array.isArray(buildMetadataArgs({})));
+    assert.ok(Array.isArray(buildMetadataArgs({})), `assertion failed: ${Array.isArray(buildMetadataArgs({}))}`);
   });
 
   it('buildChapterContent: generates ffmetadata', () => {
     const s = buildChapterContent([{ title: 'Intro', startSec: 0, endSec: 5 }]);
-    assert.ok(s.includes('[CHAPTER]') && s.includes('Intro'));
+    assert.ok(s.includes('[CHAPTER]') && s.includes('Intro'), `assertion failed: ${s.includes('[CHAPTER]') && s.includes('Intro')}`);
   });
 
   it('buildChapterContent: multiple chapters', () => {
@@ -1127,7 +1168,7 @@ describe('metadata arg builder coverage', () => {
       { title: 'A', startSec: 0, endSec: 5 },
       { title: 'B', startSec: 5, endSec: 10 },
     ]);
-    assert.ok(s.includes('A') && s.includes('B'));
+    assert.ok(s.includes('A') && s.includes('B'), `assertion failed: ${s.includes('A') && s.includes('B')}`);
   });
 });
 
@@ -1140,26 +1181,26 @@ describe('subtitle builder coverage', () => {
 
   it('no style options', () => {
     const f = buildBurnSubtitlesFilter('/tmp/subs.srt');
-    assert.ok(f.includes('subtitles='));
-    assert.ok(!f.includes('force_style'));
+    assert.ok(f.includes('subtitles='), `expected ${f} to include ${'subtitles='}; got ${f}`);
+    assert.ok(!f.includes('force_style'), `expected ${!f} to include ${'force_style'}; got ${!f}`);
   });
 
   it('fontSize only', () => {
     const f = buildBurnSubtitlesFilter('/tmp/subs.srt', 24);
-    assert.ok(f.includes('FontSize=24') && f.includes('force_style'));
+    assert.ok(f.includes('FontSize=24') && f.includes('force_style'), `assertion failed: ${f.includes('FontSize=24') && f.includes('force_style')}`);
   });
 
   it('fontName only', () => {
-    assert.ok(buildBurnSubtitlesFilter('/tmp/s.srt', undefined, 'Arial').includes('FontName=Arial'));
+    assert.ok(buildBurnSubtitlesFilter('/tmp/s.srt', undefined, 'Arial').includes('FontName=Arial'), `expected ${buildBurnSubtitlesFilter('/tmp/s.srt', undefined, 'Arial')} to include ${'FontName=Arial'}; got ${buildBurnSubtitlesFilter('/tmp/s.srt', undefined, 'Arial')}`);
   });
 
   it('primaryColor only', () => {
-    assert.ok(buildBurnSubtitlesFilter('/tmp/s.srt', undefined, undefined, '&HFFFFFF&').includes('PrimaryColour'));
+    assert.ok(buildBurnSubtitlesFilter('/tmp/s.srt', undefined, undefined, '&HFFFFFF&').includes('PrimaryColour'), `expected ${buildBurnSubtitlesFilter('/tmp/s.srt', undefined, undefined, '&HFFFFFF&')} to include ${'PrimaryColour'}; got ${buildBurnSubtitlesFilter('/tmp/s.srt', undefined, undefined, '&HFFFFFF&')}`);
   });
 
   it('all options combined', () => {
     const f = buildBurnSubtitlesFilter('/tmp/s.srt', 18, 'Mono', '&H000000&');
-    assert.ok(f.includes('FontSize=18') && f.includes('Mono') && f.includes('PrimaryColour'));
+    assert.ok(f.includes('FontSize=18') && f.includes('Mono') && f.includes('PrimaryColour'), `assertion failed: ${f.includes('FontSize=18') && f.includes('Mono') && f.includes('PrimaryColour')}`);
   });
 });
 
@@ -1236,15 +1277,15 @@ describe('presets coverage', () => {
 
   it('listPresets returns array of preset names', () => {
     const names = listPresets();
-    assert.ok(Array.isArray(names));
-    assert.ok(names.length > 0);
-    assert.ok(names.includes('web'));
+    assert.ok(Array.isArray(names), `assertion failed: ${Array.isArray(names)}`);
+    assert.ok(names.length > 0, `expected ${names.length} to be greater than ${0}; got ${names.length}`);
+    assert.ok(names.includes('web'), `expected ${names} to include ${'web'}; got ${names}`);
   });
 
   it('getPreset: web preset', () => {
     const p = getPreset('web');
-    assert.ok(Array.isArray(p.videoArgs));
-    assert.ok(Array.isArray(p.audioArgs));
+    assert.ok(Array.isArray(p.videoArgs), `assertion failed: ${Array.isArray(p.videoArgs)}`);
+    assert.ok(Array.isArray(p.audioArgs), `assertion failed: ${Array.isArray(p.audioArgs)}`);
   });
 
   it('getPreset: all presets return valid args', () => {
@@ -1261,28 +1302,28 @@ describe('presets coverage', () => {
 
   it('applyPreset: returns flat arg array for web', () => {
     const args = applyPreset('web');
-    assert.ok(Array.isArray(args));
-    assert.ok(args.length > 0);
+    assert.ok(Array.isArray(args), `assertion failed: ${Array.isArray(args)}`);
+    assert.ok(args.length > 0, `expected ${args.length} to be greater than ${0}; got ${args.length}`);
   });
 
   it('applyPreset: discord includes libx264', () => {
-    assert.ok(applyPreset('discord').includes('libx264'));
+    assert.ok(applyPreset('discord').includes('libx264'), `expected ${applyPreset('discord')} to include ${'libx264'}; got ${applyPreset('discord')}`);
   });
 
   it('applyPreset: instagram includes aac', () => {
-    assert.ok(applyPreset('instagram').includes('aac'));
+    assert.ok(applyPreset('instagram').includes('aac'), `expected ${applyPreset('instagram')} to include ${'aac'}; got ${applyPreset('instagram')}`);
   });
 
   it('applyPreset: prores includes prores_ks', () => {
-    assert.ok(applyPreset('prores').includes('prores_ks'));
+    assert.ok(applyPreset('prores').includes('prores_ks'), `expected ${applyPreset('prores')} to include ${'prores_ks'}; got ${applyPreset('prores')}`);
   });
 
   it('applyPreset: dnxhd includes dnxhd', () => {
-    assert.ok(applyPreset('dnxhd').includes('dnxhd'));
+    assert.ok(applyPreset('dnxhd').includes('dnxhd'), `expected ${applyPreset('dnxhd')} to include ${'dnxhd'}; got ${applyPreset('dnxhd')}`);
   });
 
   it('applyPreset: gif includes -an', () => {
-    assert.ok(applyPreset('gif').includes('-an'));
+    assert.ok(applyPreset('gif').includes('-an'), `expected ${applyPreset('gif')} to include ${'-an'}; got ${applyPreset('gif')}`);
   });
 });
 
@@ -1308,7 +1349,7 @@ describe('concat.ts buildConcatList coverage', () => {
 
   it('buildConcatList: escapes single quotes in paths', () => {
     const s = buildConcatList(["/tmp/it's a file.mp4"]);
-    assert.ok(typeof s === 'string');
+    assert.strictEqual(typeof s, 'string');
     assert.ok(s.includes('/tmp/'), 'path should be present');
   });
 

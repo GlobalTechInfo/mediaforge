@@ -8,6 +8,7 @@ import {
   audioFilterChain,
   filterGraph,
   resetLabelCounter,
+  GraphNode,
 } from '../../../lib/filters/complex.ts';
 
 describe('VideoFilterChain', () => {
@@ -210,10 +211,18 @@ describe('FilterGraph', () => {
     expect(g.toString()).toBe('');
   });
 
-  it('from() returns a GraphNode', () => {
+  it('from() returns a node that starts a link into the graph', () => {
     const g = filterGraph();
+    // `from()` only registers the input; a link appears once a filter is
+    // applied, and until every node has an output the graph refuses to
+    // serialise rather than emitting a dangling branch ffmpeg would reject.
     const node = g.from('[0:v]');
-    expect(node).toBeDefined();
+    expect(node).toBeInstanceOf(GraphNode);
+    expect(g.size).toBe(0);
+    expect(() => g.toString()).toThrow('uncommitted node');
+    node.scale(1280, 720).out('scaled');
+    expect(g.size).toBe(1);
+    expect(g.toString()).toBe('[0:v]scale=1280:720[scaled]');
   });
 
   it('scale adds a link', () => {

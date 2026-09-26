@@ -253,27 +253,35 @@ export class FilterGraph {
 
   /**
    * Start building a filter chain from one or more input stream refs.
+   *
+   * An array is spread, so the result of a previous `out(...)` can be passed
+   * straight back in: `g.from(...g.from('0:v').split(2).out('a', 'b'))`.
+   *
    * @example g.from('[0:v]')   // from input 0 video
    * @example g.from('[logo]')  // from a previously labeled stream
    */
-  from(...refs: (string | GraphStream)[]): GraphNode {
-    const streams = refs.map((r) =>
-      typeof r === 'string'
-        ? new GraphStream(r.replace(/^\[|\]$/g, ''), 'unknown')
-        : r,
-    );
+  from(...refs: Array<string | GraphStream | GraphStream[]>): GraphNode {
+    const streams = refs
+      .flat()
+      .map((r) =>
+        typeof r === 'string'
+          ? new GraphStream(r.replace(/^\[|\]$/g, ''), 'unknown')
+          : r,
+      );
     return new GraphNode(this, streams);
   }
 
   /**
    * Start building a multi-input filter (overlay, amerge, concat…).
    */
-  merge(...refs: (string | GraphStream)[]): MultiInputNode {
-    const streams = refs.map((r) =>
-      typeof r === 'string'
-        ? new GraphStream(r.replace(/^\[|\]$/g, ''), 'unknown')
-        : r,
-    );
+  merge(...refs: Array<string | GraphStream | GraphStream[]>): MultiInputNode {
+    const streams = refs
+      .flat()
+      .map((r) =>
+        typeof r === 'string'
+          ? new GraphStream(r.replace(/^\[|\]$/g, ''), 'unknown')
+          : r,
+      );
     return new MultiInputNode(this, streams);
   }
 

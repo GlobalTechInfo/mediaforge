@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { mkdtempSync, realpathSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnFFmpeg, runFFmpeg } from '../process/spawn.ts';
 import { resolveBinary, resolveProbe } from '../utils/binary.ts';
 import { probeAsync } from '../probe/ffprobe.ts';
@@ -155,9 +155,33 @@ export async function concatFiles(opts: ConcatFilesOptions): Promise<FFmpegProce
     '-filter_complex', filterComplex,
     '-map', '[v]',
     '-map', '[a]',
-    ...(useCopy ? ['-c', 'copy'] : ['-c:v', videoCodec, '-c:a', audioCodec]),
+    // Stream copy cannot survive a filtergraph: ffmpeg decodes every frame to
+    // run the concat filter and then rejects `-c copy` with "Filtering and
+    // streamcopy cannot be used together". Since the concat filter is what
+    // makes mixed-codec inputs work at all, copy mode has to go through the
+    // concat demuxer instead, which needs no re-encode.
+    ...(useCopy ? [] : ['-c:v', videoCodec, '-c:a', audioCodec]),
     output,
   ];
+
+  if (useCopy) {
+    // Concat demuxer: no filtergraph, so `-c copy` is valid. Falls back to the
+    // re-encoding path when the inputs are not stream-compatible with each
+    // other, which is the only case where the demuxer cannot be used.
+    const listFile = writeConcatListFile(inputs, output);
+    try {
+      const proc = spawnFFmpeg({
+        binary,
+        args: ['-y', '-f', 'concat', '-safe', '0', '-i', listFile, '-c', 'copy', output],
+      });
+      await awaitProcess(proc);
+      return proc;
+    } catch {
+      // Demuxer copy failed (mismatched codecs/params) — re-encode instead.
+    } finally {
+      rmSync(listFile, { force: true });
+    }
+  }
 
   return spawnFFmpeg({ binary, args });
 }
@@ -198,16 +222,47 @@ export function buildConcatList(files: string[]): string {
     .join('\n');
 }
 
+/**
+ * Write a concat-demuxer list to a temp file next to `output`.
+ *
+ * Lives beside the output rather than in os.tmpdir() so the absolute paths in
+ * the list stay valid without `-safe 0` relying on a cross-device guess.
+ */
+function writeConcatListFile(inputs: string[], output: string): string {
+  const dir = path.dirname(path.resolve(output));
+  const listFile = path.join(
+    dir,
+    `.mediaforge-concat-${process.pid}-${Date.now()}.txt`,
+  );
+  writeFileSync(listFile, buildConcatList(inputs), 'utf8');
+  return listFile;
+}
+
+/** Resolve once an FFmpegProcess has finished, propagating any error. */
+function awaitProcess(proc: FFmpegProcess): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const done = (err?: Error) => {
+      if (settled) return;
+      settled = true;
+      if (err) reject(err);
+      else resolve();
+    };
+    proc.emitter.on('end', () => done());
+    proc.emitter.on('error', e => done(e instanceof Error ? e : new Error(String(e))));
+  });
+}
+
 // ─── concatWithTransitions ───────────────────────────────────────────────────
 
-export type TransitionType = 'crossfade' | 'xfade' | 'fade' | 'dissolve' | 'wipeleft' | 'wiperight' | 'wipeup' | 'wipedown' | 'slideleft' | 'slideright' | 'slideup' | 'slidedown' | 'circlecrop' | 'rectcrop' | 'distance' | 'fadeblack' | 'fadewhite' | 'radial' | 'smoothleft' | 'smoothright' | 'smoothup' | 'smoothdown' | 'pixelize' | 'diagtl' | 'diagtr' | 'diagbl' | 'diagbr' | 'hlslice' | 'hrslice' | 'vuslice' | 'vdslice' | 'zoomin' | 'fadegrays' | 'wipetl' | 'wipetr' | 'wipebl' | 'wipebr' | 'cycle' | 'random';
+export type TransitionType = 'fade' | 'dissolve' | 'wipeleft' | 'wiperight' | 'wipeup' | 'wipedown' | 'slideleft' | 'slideright' | 'slideup' | 'slidedown' | 'circlecrop' | 'rectcrop' | 'distance' | 'fadeblack' | 'fadewhite' | 'radial' | 'smoothleft' | 'smoothright' | 'smoothup' | 'smoothdown' | 'pixelize' | 'diagtl' | 'diagtr' | 'diagbl' | 'diagbr' | 'hlslice' | 'hrslice' | 'vuslice' | 'vdslice' | 'zoomin' | 'fadegrays' | 'wipetl' | 'wipetr' | 'wipebl' | 'wipebr' | 'cycle' | 'random';
 
 export interface ConcatWithTransitionsOptions {
   /** Input video files */
   inputs: string[];
   /** Output file path */
   output: string;
-  /** Transition type. Default: 'crossfade' */
+  /** Transition type. Default: 'fade' */
   transition?: TransitionType;
   /** Transition duration in seconds. Default: 1 */
   duration?: number;
@@ -288,14 +343,14 @@ function buildTransitionGraph(
 }
 
 /**
- * Concatenate videos with transitions (crossfade/xfade).
+ * Concatenate videos with transitions (the `xfade` filter's transition names).
  *
  * @example
  * // Simple crossfade transition
  * await concatWithTransitions({
  *   inputs: ['clip1.mp4', 'clip2.mp4', 'clip3.mp4'],
  *   output: 'merged.mp4',
- *   transition: 'crossfade',
+ *   transition: 'fade',
  *   duration: 1
  * });
  *
@@ -314,7 +369,7 @@ export async function concatWithTransitions(opts: ConcatWithTransitionsOptions):
   const {
     inputs,
     output,
-    transition = 'crossfade',
+    transition = 'fade',
     duration = 1,
     videoCodec = 'libx264',
     audioCodec = 'aac',
@@ -384,7 +439,11 @@ export async function concatWithTransitions(opts: ConcatWithTransitionsOptions):
   ];
 
   if (onProgress) {
-    const proc = spawnFFmpeg({ binary, args, parseProgress: true });
+    // The parser only produces a percentage when it knows the total length, and
+    // the durations were just probed, so pass them on: without this `onProgress`
+    // never fires and every callback field is undefined.
+    const totalDurationUs = durations.reduce((a, b) => a + b, 0) * 1_000_000;
+    const proc = spawnFFmpeg({ binary, args, parseProgress: true, totalDurationUs });
     proc.emitter.on('progress', (info) => {
       if (info.percent !== undefined) {
         onProgress(info.percent);

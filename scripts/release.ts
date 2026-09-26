@@ -1,5 +1,6 @@
 import { execSync, type ExecSyncOptions } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { bumpVersion, parseVersion } from './release-version.ts';
 
 const run = (cmd: string, opts: ExecSyncOptions = {}): void => {
   console.log(`  $ ${cmd}`);
@@ -8,15 +9,6 @@ const run = (cmd: string, opts: ExecSyncOptions = {}): void => {
 
 const runSilent = (cmd: string): string =>
   execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-
-function bumpVersion(current: string, type: string): string {
-  const [maj, min, pat] = current.split('.').map(Number);
-  if (type === 'major') return `${maj + 1}.0.0`;
-  if (type === 'minor') return `${maj}.${min + 1}.0`;
-  if (type === 'patch') return `${maj}.${min}.${pat + 1}`;
-  if (/^\d+\.\d+\.\d+/.test(type)) return type;
-  throw new Error(`Unknown bump type: ${type}`);
-}
 
 async function main(): Promise<void> {
   const bumpType: string = process.argv[2] ?? 'patch';
@@ -36,10 +28,16 @@ async function main(): Promise<void> {
   console.log('\n[2/7] Bumping version...');
   const pkg: Record<string, unknown> = JSON.parse(readFileSync('package.json', 'utf8'));
   const oldVersion = pkg.version as string;
+  // Resolve and validate before touching either manifest, so a bad argument
+  // fails with the working tree still clean.
   const newVersion = bumpVersion(oldVersion, bumpType);
+  const { prerelease } = parseVersion(newVersion);
   pkg.version = newVersion;
   writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-  console.log(`  package.json: ${oldVersion} -> ${newVersion}`);
+  console.log(
+    `  package.json: ${oldVersion} -> ${newVersion}` +
+      (prerelease === null ? '' : `  (prerelease: ${prerelease})`),
+  );
 
   console.log('\n[3/7] Syncing deno.json version...');
   const deno: Record<string, unknown> = JSON.parse(readFileSync('deno.json', 'utf8'));
@@ -47,12 +45,14 @@ async function main(): Promise<void> {
   writeFileSync('deno.json', JSON.stringify(deno, null, 2) + '\n');
   console.log(`  deno.json: ${newVersion}`);
 
-  console.log('\n[4/7] Running build, typecheck, lint, and unit tests...');
+  console.log('\n[4/7] Running build, typecheck, lint, and the full test suite...');
   try {
     run('npm run build');
     run('npm run typecheck');
     run('npm run lint');
-    run('npm run test:unit');
+    run('npm run check:types');
+    run('npm run test');
+    run('npm run battle:all');
   } catch {
     // package.json / deno.json have already been rewritten to the new version,
     // but nothing is committed and no tag exists yet. Say so, because "the

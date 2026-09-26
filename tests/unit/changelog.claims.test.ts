@@ -49,14 +49,14 @@ describe('CHANGELOG 2.0.0: breaking changes match the code', () => {
   });
 
   it('ffv1ToArgs emits -level from the level option', () => {
-    assert.ok(m.ffv1ToArgs({ level: 3 }).includes('-level'));
+    assert.ok(m.ffv1ToArgs({ level: 3 }).includes('-level'), `expected ${m.ffv1ToArgs({ level: 3 })} to include ${'-level'}; got ${m.ffv1ToArgs({ level: 3 })}`);
   });
 
   it('mapStream numeric overload is declared and returns the same args tuple', () => {
     assert.deepEqual(m.mapStream(0, 'v', 0), ['-map', '0:v:0']);
     assert.deepEqual(m.mapStream('0:a:1'), ['-map', '0:a:1']);
     // The battle test asserts the numeric form is an array, not a bare string.
-    assert.ok(Array.isArray(m.mapStream(0, 'v', 0)));
+    assert.ok(Array.isArray(m.mapStream(0, 'v', 0)), `assertion failed: ${Array.isArray(m.mapStream(0, 'v', 0))}`);
     assert.match(v200, /now returns an args tuple/);
   });
 
@@ -113,8 +113,8 @@ describe('CHANGELOG 2.0.0: original 23 fixes still hold', () => {
       input: 'i.mp4', output: 'o.mp4', videoCodec: 'libx264', videoBitrate: '2M', audioCodec: 'aac',
     });
     assert.ok(pass1.includes('-an'), 'pass 1 must silence audio');
-    assert.ok(pass1.includes('matroska'));
-    assert.ok(pass2.includes('-c:a'));
+    assert.ok(pass1.includes('matroska'), `expected ${pass1} to include ${'matroska'}; got ${pass1}`);
+    assert.ok(pass2.includes('-c:a'), `expected ${pass2} to include ${'-c:a'}; got ${pass2}`);
     const none = m.buildTwoPassArgs({
       input: 'i.mp4', output: 'o.mp4', videoCodec: 'libx264', videoBitrate: '2M', audioCodec: 'none',
     });
@@ -239,10 +239,26 @@ describe('CHANGELOG 2.0.0: correctness (#37-#47)', () => {
     assert.match(lib('probe/ffprobe.ts'),
       /child\.on\('close', \(code\) => \{[\s\S]{0,400}settled = true;[\s\S]{0,60}clearTimeout\(timer\)/);
   });
-  it('#38 probeVersionAsync keeps the child referenced', () => {
-    const src = lib('utils/version.ts');
-    assert.doesNotMatch(src, /child\.unref/);
-    assert.match(src, /if \(typeof timer\.unref === 'function'\) timer\.unref\(\);/);
+  it('#38 the version probe never unrefs the child it waits on', () => {
+    // A child that is unref'd can let the process exit before 'close' fires,
+    // so the promise/callback would never settle. The async probe that carried
+    // this guard was removed as dead code in 2.1.0-rc.1; the invariant is
+    // asserted across every spawn site in the codebase so it cannot come back.
+    const sites: [string, string][] = [
+      ['utils/version.ts', 'probeVersion'],
+      ['process/spawn.ts', 'spawnFFmpeg'],
+      ['probe/ffprobe.ts', 'probeAsync'],
+      ['helpers/process.ts', 'trackChild'],
+    ];
+    for (const [rel, fn] of sites) {
+      const src = lib(rel);
+      // Nothing derived from a spawned child may be unref'd…
+      assert.doesNotMatch(src, /child\w*\.unref\(/, `${rel}: ${fn} unrefs the child it waits on`);
+      // …and the only unref allowed anywhere is on a timeout handle.
+      for (const m of src.matchAll(/(\w+)\.unref\(\)/g)) {
+        assert.match(m[1]!, /timer|Timer|timeout|Timeout/, `${rel}: unref'd "${m[1]}", not a timer`);
+      }
+    }
   });
   it('#39 registries are cached per binary', () => {
     assert.match(lib('codecs/registry.ts'), /const _defaultRegistries = new Map<string, CapabilityRegistry>\(\)/);
@@ -264,9 +280,15 @@ describe('CHANGELOG 2.0.0: correctness (#37-#47)', () => {
     assert.match(src, /let depth = 0;/);
     assert.doesNotMatch(src, /for \(let end = start \+ 1/);
   });
-  it('#43 StringDecoder is used for child stdout', () => {
+  it('#43 multi-byte UTF-8 is never corrupted across chunk boundaries', () => {
+    // probeAsync reads a raw stream and needs StringDecoder; probeVersion reads
+    // synchronously with execFileSync, where `encoding: 'utf8'` reassembles the
+    // stream for us. Assert the right mechanism for each.
     assert.match(lib('probe/ffprobe.ts'), /StringDecoder/);
-    assert.match(lib('utils/version.ts'), /StringDecoder/);
+    const version = lib('utils/version.ts');
+    assert.match(version, /execFileSync/);
+    assert.match(version, /encoding: 'utf8'/);
+    assert.doesNotMatch(version, /\.toString\(\)/, 'per-chunk toString() corrupts split UTF-8');
   });
   it('#44 isBinaryAvailableAsync never rejects', async () => {
     assert.equal(await m.isBinaryAvailableAsync('a\0b'), false);
@@ -326,6 +348,6 @@ describe('CHANGELOG 2.0.0: documentation section', () => {
     assert.match(v200, /tests\/unit\/readme\.claims\.test\.ts/);
   });
   it('the README claim test file referenced by the changelog exists', () => {
-    assert.ok(read('tests/unit/readme.claims.test.ts').length > 0);
+    assert.ok(read('tests/unit/readme.claims.test.ts').length > 0, `expected ${read('tests/unit/readme.claims.test.ts').length} to be greater than ${0}; got ${read('tests/unit/readme.claims.test.ts').length}`);
   });
 });

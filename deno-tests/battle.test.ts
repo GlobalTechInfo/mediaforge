@@ -388,7 +388,7 @@ await run('.spawn() returns FFmpegProcess with emitter', async () => {
     .spawn();
   if (!proc || !proc.emitter) throw new Error('spawn() did not return expected process object');
   await new Promise((res, rej) => {
-    proc.emitter.on('end', res);
+    proc.emitter.on('end', () => res(undefined));
     proc.emitter.on('error', rej);
   });
   if (!fs.existsSync(p('out_spawn.mp4'))) throw new Error('output not created');
@@ -409,7 +409,7 @@ await run('.enableProgress() + .spawn({ parseProgress: true })', async () => {
   });
 
   await new Promise((res, rej) => {
-    proc.emitter.on('end', res);
+    proc.emitter.on('end', () => res(undefined));
     proc.emitter.on('error', rej);
   });
   if (!fs.existsSync(p('out_progress.mp4'))) throw new Error('output not created');
@@ -425,7 +425,7 @@ await run('.spawn() emitter: stderr event', async () => {
     .spawn();
   proc.emitter.on('stderr', (line) => lines.push(line));
   await new Promise((res, rej) => {
-    proc.emitter.on('end', res);
+    proc.emitter.on('end', () => res(undefined));
     proc.emitter.on('error', rej);
   });
 });
@@ -497,7 +497,7 @@ await run('pipeThrough: readable -> ffmpeg -> writable', async () => {
   const out = fs.createWriteStream(p('out_pipe.mp4'));
   proc.stdout!.pipe(out);
   await new Promise<void>((res, rej) => {
-    proc.emitter.on('end', res);
+    proc.emitter.on('end', () => res(undefined));
     proc.emitter.on('error', rej);
   });
   if (!fs.existsSync(p('out_pipe.mp4'))) throw new Error('output not created');
@@ -552,20 +552,6 @@ await run('mergeToFile (reencode)', async () => {
     audioCodec: 'aac',
   });
   if (!fs.existsSync(p('merged_reencode.mp4'))) throw new Error('output not created');
-});
-
-if (false) await run('concatFiles (event-based)', async () => {
-  const proc = concatFiles({
-    inputs: [p('part1.mp4'), p('part2.mp4'), p('part3.mp4')],
-    output: p('concat_out.mp4'),
-  });
-  const progressEvents = [];
-  proc.emitter.on('progress', (e) => progressEvents.push(e));
-  await new Promise((res, rej) => {
-    proc.emitter.on('end', res);
-    proc.emitter.on('error', rej);
-  });
-  if (!fs.existsSync(p('concat_out.mp4'))) throw new Error('output not created');
 });
 
 // ─── 5. animated GIF ───────────────────────────────────────────────────────
@@ -764,7 +750,7 @@ await run('listPresets() returns array', () => {
   console.log(`      presets: ${list.join(', ')}`);
 });
 
-const presetNames = ['web', 'web-hq', 'mobile', 'archive', 'podcast', 'hls-input', 'gif', 'discord', 'instagram', 'prores', 'dnxhd'];
+const presetNames: Array<Parameters<typeof getPreset>[0]> = ['web', 'web-hq', 'mobile', 'archive', 'podcast', 'hls-input', 'gif', 'discord', 'instagram', 'prores', 'dnxhd'];
 
 for (const name of presetNames) {
   await run(`getPreset('${name}') shape`, () => {
@@ -890,8 +876,10 @@ await run('mapAVS(0) maps video+audio+subtitle', () => {
 });
 
 await run('copyStream returns args', () => {
-  const result = copyStream('v');
+  const result = copyStream('v', 0);
   if (!result) throw new Error('copyStream returned falsy');
+  const withIndex = copyStream('a', 2);
+  if (withIndex[0] !== '-c:a:2' || withIndex[1] !== 'copy') throw new Error(`bad copyStream: ${withIndex}`);
 });
 
 await run('setMetadata returns args', () => {
@@ -899,9 +887,10 @@ await run('setMetadata returns args', () => {
   if (!result) throw new Error('setMetadata returned falsy');
 });
 
-await run('ss() language-aware mapping', () => {
-  const result = ss(0, 'a', 'eng');
+await run('ss() stream specifier mapping', () => {
+  const result = ss(0, 'a', 1);
   if (!result) throw new Error('ss() returned falsy');
+  if (result.type !== 'a' || result.streamIndex !== 1) throw new Error(`bad ss(): ${JSON.stringify(result)}`);
 });
 
 // ─── 15. hardware acceleration ─────────────────────────────────────────────
@@ -980,8 +969,9 @@ await run('filterGraph() factory', () => {
 });
 
 await run('videoFilterChain', () => {
-  const result = videoFilterChain('scale=640:360');
+  const result = videoFilterChain();
   if (result == null) throw new Error('null return');
+  if (!result.scale(640, 360).toString().includes('scale=640:360')) throw new Error('scale not applied');
 });
 
 await run('FilterGraph class', () => {
@@ -1027,7 +1017,7 @@ await run('probeAsync() async', async () => {
 
 await run('ProbeError: thrown and caught on bad file path', () => {
   let threw = false;
-  try { probe('/nonexistent/definitely_missing.mp4'); } catch (e) { threw = true; if (!(e instanceof ProbeError)) throw new Error(`expected ProbeError, got ${e.constructor.name}`); }
+  try { probe('/nonexistent/definitely_missing.mp4'); } catch (e) { threw = true; if (!(e instanceof ProbeError)) throw new Error(`expected ProbeError, got ${(e as Error).constructor.name}`); }
   if (!threw) throw new Error('probe did not throw on missing file');
 });
 
@@ -1067,6 +1057,7 @@ await run('getMediaDuration', () => {
 await run('durationToMicroseconds', () => {
   const info = probe(p('input.mp4'));
   const dur = getMediaDuration(info);
+  if (dur === null) throw new Error('no duration on input');
   const us = durationToMicroseconds(dur);
   if (typeof us !== 'number' || us <= 0) throw new Error(`unexpected microseconds: ${us}`);
 });
@@ -1074,6 +1065,7 @@ await run('durationToMicroseconds', () => {
 await run('summarizeVideoStream', () => {
   const info = probe(p('input.mp4'));
   const stream = getDefaultVideoStream(info);
+  if (!stream) throw new Error('no default video stream');
   const summary = summarizeVideoStream(stream);
   if (!summary || typeof summary !== 'object') throw new Error('unexpected summary shape');
   console.log(`      video summary: ${JSON.stringify(summary)}`);
@@ -1082,6 +1074,7 @@ await run('summarizeVideoStream', () => {
 await run('summarizeAudioStream', () => {
   const info = probe(p('input.mp4'));
   const stream = getDefaultAudioStream(info);
+  if (!stream) throw new Error('no default audio stream');
   const summary = summarizeAudioStream(stream);
   if (!summary || typeof summary !== 'object') throw new Error('unexpected summary shape');
   console.log(`      audio summary: ${JSON.stringify(summary)}`);
@@ -1090,6 +1083,7 @@ await run('summarizeAudioStream', () => {
 await run('parseFrameRate', () => {
   const info = probe(p('input.mp4'));
   const stream = getDefaultVideoStream(info);
+  if (!stream) throw new Error('no default video stream');
   const fps = parseFrameRate(stream.r_frame_rate ?? stream.avg_frame_rate ?? '30/1');
   if (!fps || typeof fps.value !== 'number' || fps.value <= 0) throw new Error(`unexpected fps: ${JSON.stringify(fps)}`);
 });
@@ -1150,12 +1144,13 @@ await run('renice (lower priority)', async () => {
     .spawn();
   try {
     renice(proc.child, 10);
-  } catch (e) {
-    if (!e.message.includes('not supported') && !e.message.includes('permission')) throw e;
-    console.log(`      renice skipped: ${e.message}`);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!msg.includes('not supported') && !msg.includes('permission')) throw e;
+    console.log(`      renice skipped: ${msg}`);
   }
   await new Promise((res, rej) => {
-    proc.emitter.on('end', res);
+    proc.emitter.on('end', () => res(undefined));
     proc.emitter.on('error', rej);
   });
 });
@@ -1169,7 +1164,7 @@ await run('autoKillOnExit registers and returns unregister fn', async () => {
   const unregister = autoKillOnExit(proc.child);
   if (typeof unregister !== 'function') throw new Error('expected unregister function');
   await new Promise((res, rej) => {
-    proc.emitter.on('end', res);
+    proc.emitter.on('end', () => res(undefined));
     proc.emitter.on('error', rej);
   });
   unregister();
@@ -1185,7 +1180,7 @@ await run('killAllFFmpeg: registers spawned process then kills gracefully', asyn
   killAllFFmpeg();
   // Process should end (either success or error — both OK, we just verify it stopped)
   await new Promise((res) => {
-    proc.emitter.on('end', res);
+    proc.emitter.on('end', () => res(undefined));
     proc.emitter.on('error', res);
     setTimeout(res, 3000); // timeout safety
   });
@@ -1408,7 +1403,7 @@ await run('cropToRatio 1:1', async () => {
   await cropToRatio({ input: p('input.mp4'), output: p('square.mp4'), ratio: '1:1' });
   if (!fs.existsSync(p('square.mp4'))) throw new Error('output not created');
 });
-if (false) await run('stackVideos hstack', async () => {
+await run('stackVideos hstack', async () => {
   await stackVideos({ inputs: [p('short.mp4'), p('short.mp4')], output: p('hstack.mp4'), direction: 'hstack' });
   if (!fs.existsSync(p('hstack.mp4'))) throw new Error('output not created');
 });
@@ -1638,7 +1633,7 @@ await run('vaguedenoiser(chain,opts) → FilterChain', () => {
 });
 
 // Chain-only filters (all of them)
-const chainOnlyVideoFilters = [
+const chainOnlyVideoFilters: Array<[string, () => FilterChain, string]> = [
   ['vflip',        () => vflip(new FilterChain()),                            'vflip'],
   ['hflip',        () => hflip(new FilterChain()),                            'hflip'],
   ['rotate',       () => rotate(new FilterChain(), { angle: 'PI/4' }),        'rotate'],
@@ -1650,7 +1645,7 @@ const chainOnlyVideoFilters = [
   ['setsar',       () => setsar(new FilterChain(), '1'),                      'setsar'],
   ['setdar',       () => setdar(new FilterChain(), '16/9'),                   'setdar'],
   ['hqdn3d',       () => hqdn3d(new FilterChain()),                           'hqdn3d'],
-  ['hqdn3d(opts)', () => hqdn3d(new FilterChain(), { luma_spatial: 4, chroma_spatial: 3 }), 'hqdn3d'],
+  ['hqdn3d(opts)', () => hqdn3d(new FilterChain(), { s0: 4, s1: 3 }), 'hqdn3d'],
   ['nlmeans',      () => nlmeans(new FilterChain()),                          'nlmeans'],
   ['nlmeans(s=10)',() => nlmeans(new FilterChain(), { s: 10 }),               'nlmeans'],
   ['nlmeansVulkan',() => nlmeansVulkan(new FilterChain()),                    'nlmeans_vulkan'],
@@ -1667,7 +1662,7 @@ const chainOnlyVideoFilters = [
   ['avgblurVulkan',() => avgblurVulkan(new FilterChain()),                    'avgblur_vulkan'],
   ['avgblurVulkan(sizeX)',() => avgblurVulkan(new FilterChain(), { sizeX: 3, sizeY: 3 }), 'avgblur_vulkan'],
   ['zoompan',      () => zoompan(new FilterChain()),                          'zoompan'],
-  ['zoompan(z)',   () => zoompan(new FilterChain(), { z: 'zoom+0.002', d: 125 }), 'zoompan'],
+  ['zoompan(z)',   () => zoompan(new FilterChain(), { zoom: 'zoom+0.002', d: 125 }), 'zoompan'],
   ['videoPad(pad)',() => videoPad(new FilterChain(), { width: 1920, height: 1080 }), 'pad'],
   ['eq',           () => eq(new FilterChain(), { brightness: 0.1, contrast: 1.2 }), 'eq'],
   ['eq(gamma)',    () => eq(new FilterChain(), { gamma: 1.2, saturation: 1.1 }), 'eq'],
@@ -1678,7 +1673,7 @@ const chainOnlyVideoFilters = [
   ['yadif',        () => yadif(new FilterChain()),                            'yadif'],
   ['yadif(mode)',  () => yadif(new FilterChain(), { mode: 1 }),               'yadif'],
   ['unsharp',      () => unsharp(new FilterChain()),                          'unsharp'],
-  ['unsharp(opts)',() => unsharp(new FilterChain(), { luma_msize_x: 5, luma_amount: 1.5 }), 'unsharp'],
+  ['unsharp(opts)',() => unsharp(new FilterChain(), { lx: 5, la: 1.5 }), 'unsharp'],
   ['gblur',        () => gblur(new FilterChain()),                            'gblur'],
   ['gblur(sigma)', () => gblur(new FilterChain(), { sigma: 3 }),              'gblur'],
   ['boxblur',      () => boxblur(new FilterChain()),                          'boxblur'],
@@ -1713,6 +1708,7 @@ await run('scale filter real encode → 320x180 file created', async () => {
   if (!fs.existsSync(p('vf_scale.mp4'))) throw new Error('file not created');
   const info = probe(p('vf_scale.mp4'));
   const vs = getDefaultVideoStream(info);
+  if (!vs) throw new Error('no video stream in output');
   if (vs.width !== 320) throw new Error(`expected 320px, got ${vs.width}`);
 });
 await run('crop real encode → 160x90 from 320x180', async () => {
@@ -1794,7 +1790,9 @@ await run('setpts (0.5x speed) real encode → shorter file', async () => {
   // setpts=0.5*PTS halves video timestamps; audio copy keeps full 3s audio
   // so container duration stays ~3s. Verify file created and video stream exists.
   if (!vs) throw new Error('no video stream in output');
-  console.log(`      setpts output dur: ${getMediaDuration(info).toFixed(2)}s`);
+  const dur = getMediaDuration(info);
+  if (dur === null) throw new Error('no duration on output');
+  console.log(`      setpts output dur: ${dur.toFixed(2)}s`);
 });
 await run('curves vintage preset real encode → file created', async () => {
   const f = curves({ preset: 'vintage' });
@@ -1864,13 +1862,13 @@ await run('atempo(chain,1.5) → FilterChain', () => {
   const r = atempo(new FilterChain(), 1.5);
   if (!r.toString().includes('atempo')) throw new Error(`got: ${r}`);
 });
-await run('headphones({map:"stereo"}) standalone → string', () => {
-  const r = headphones({ map: 'stereo' });
-  if (!r || !r.toString().includes('headphones')) throw new Error(`got: ${r}`);
+await run('headphones({hrir,size}) standalone → string', () => {
+  const r = headphones({ hrir: 'test.hrtf', size: 4096 });
+  if (!r || !r.includes('hrir=test.hrtf') || !r.includes('size=4096')) throw new Error(`got: ${r}`);
 });
 await run('headphones(chain,opts) → FilterChain', () => {
-  const r = headphones(new FilterChain(), { map: 'stereo' });
-  if (!r.toString().includes('headphones')) throw new Error(`got: ${r}`);
+  const r = headphones(new FilterChain(), { hrir: 'test.hrtf', size: 4096, normalize: true });
+  if (!r.toString().includes('normalize=1')) throw new Error(`got: ${r}`);
 });
 await run('sofalizer({sofa}) standalone → string', () => {
   const r = sofalizer({ sofa: '/tmp/test.sofa' });
@@ -1882,12 +1880,12 @@ await run('sofalizer(chain,opts) → FilterChain', () => {
 });
 
 // Chain-only audio filters with multiple option variants
-const chainOnlyAudioFilters = [
+const chainOnlyAudioFilters: Array<[string, () => FilterChain, string]> = [
   ['bass({gain:5})',      () => bass(new FilterChain(), { gain: 5 }),                  'bass'],
   ['bass({freq:200})',    () => bass(new FilterChain(), { gain: 3, frequency: 200 }),   'bass'],
   ['treble({gain:-3})',   () => treble(new FilterChain(), { gain: -3 }),               'treble'],
   ['aecho()',            () => aecho(new FilterChain()),                               'aecho'],
-  ['aecho({delays})',    () => aecho(new FilterChain(), { delays: 500, decays: 0.5 }), 'aecho'],
+  ['aecho({delays})',    () => aecho(new FilterChain(), { delays: '500', decays: '0.5' }), 'aecho'],
   ['afade(in)',          () => afade(new FilterChain(), { type: 'in', start_time: 0, duration: 2 }), 'afade'],
   ['afade(out)',         () => afade(new FilterChain(), { type: 'out', start_time: 8, duration: 2 }), 'afade'],
   ['asetpts',            () => asetpts(new FilterChain(), 'PTS-STARTPTS'),             'asetpts'],
@@ -1902,7 +1900,7 @@ const chainOnlyAudioFilters = [
   ['channelsplit()',     () => channelsplit(new FilterChain()),                         'channelsplit'],
   ['channelsplit(stereo)',() => channelsplit(new FilterChain(), 'stereo'),              'channelsplit'],
   ['aresample(44100)',   () => aresample(new FilterChain(), 44100),                    'aresample'],
-  ['aresample({rate})',  () => aresample(new FilterChain(), { sample_rate: 48000 }),   'aresample'],
+  ['aresample({rate})',  () => aresample(new FilterChain(), { sampleRate: 48000 }),   'aresample'],
   ['dynaudnorm()',       () => dynaudnorm(new FilterChain()),                           'dynaudnorm'],
   ['dynaudnorm({f})',    () => dynaudnorm(new FilterChain(), { framelen: 500, gausssize: 31 }), 'dynaudnorm'],
   ['compand()',          () => compand(new FilterChain()),                              'compand'],
@@ -1912,7 +1910,7 @@ const chainOnlyAudioFilters = [
   ['asplit(2)',          () => asplit(new FilterChain(), 2),                            'asplit'],
   ['asplit(3)',          () => asplit(new FilterChain(), 3),                            'asplit'],
   ['silencedetect()',    () => silencedetect(new FilterChain()),                        'silencedetect'],
-  ['silencedetect({n})', () => silencedetect(new FilterChain(), { noise: -40, duration: 1 }), 'silencedetect'],
+  ['silencedetect({n})', () => silencedetect(new FilterChain(), { noise: '-40dB', duration: 1 }), 'silencedetect'],
   ['rubberband({tempo})',() => rubberband(new FilterChain(), { tempo: 1.5 }),           'rubberband'],
   ['rubberband({pitch})',() => rubberband(new FilterChain(), { pitch: 2.0 }),           'rubberband'],
   ['agate()',            () => agate(new FilterChain()),                                'agate'],
@@ -1940,8 +1938,9 @@ await run('audioFilterChain() factory → AudioFilterChain', () => {
   if (!a) throw new Error('null');
 });
 await run('videoFilterChain() factory → VideoFilterChain', () => {
-  const v = videoFilterChain('scale=640:360');
+  const v = videoFilterChain();
   if (!v) throw new Error('null');
+  if (!v.hflip().toString().includes('hflip')) throw new Error('hflip not chained');
 });
 await run('filterGraph() factory → FilterGraph', () => {
   const fg = filterGraph();
@@ -1952,9 +1951,10 @@ await run('GraphNode: new GraphNode(graph, inputs) → non-null', () => {
   const gn = new GraphNode(fg, [new GraphStream('0:v', 'video')]);
   if (!gn) throw new Error('null');
 });
-await run('GraphStream: new GraphStream("label") → non-null', () => {
-  const gs = new GraphStream('test');
+await run('GraphStream: new GraphStream("label","type") → non-null', () => {
+  const gs = new GraphStream('test', 'unknown');
   if (!gs) throw new Error('null');
+  if (gs.toString() !== '[test]') throw new Error(`bad toString: ${gs.toString()}`);
 });
 await run('resetLabelCounter() → no throw', () => {
   resetLabelCounter(); resetLabelCounter();
@@ -1992,6 +1992,7 @@ await run('aresample 22050 real encode → file created, sampleRate verified', a
   if (!fs.existsSync(p('af_resample.mp3'))) throw new Error('file not created');
   const info = probe(p('af_resample.mp3'));
   const stream = getDefaultAudioStream(info);
+  if (!stream) throw new Error('no default audio stream');
   if (stream.sample_rate !== '22050') throw new Error(`expected 22050, got ${stream.sample_rate}`);
 });
 await run('compand real encode → file created', async () => {
@@ -2172,8 +2173,8 @@ await run('buildWatermarkFilter("top-left",0,1.0,100) → scale=100', () => {
   const r = buildWatermarkFilter('top-left', 0, 1.0, 100);
   if (!r.includes('scale=100')) throw new Error(`got: ${r}`);
 });
-await run('buildWaveformFilter(800,120,"blue","lin","line",0) → showwavespic string', () => {
-  const r = buildWaveformFilter(800, 120, 'blue', 'lin', 'line', 0);
+await run('buildWaveformFilter(800,120,"blue","lin",0) → showwavespic string', () => {
+  const r = buildWaveformFilter(800, 120, 'blue', 'lin', 0);
   if (typeof r !== 'string' || !r.includes('showwavespic')) throw new Error(`got: ${r}`);
 });
 await run('buildBurnSubtitlesFilter(path) → "subtitles=\'path\'" string', () => {
@@ -2395,11 +2396,11 @@ await run('FFmpegSpawnError(null,"SIGKILL",""): signal set', () => {
 });
 await run('FFmpegEmitter: on/emit contract', () => {
   const em = new FFmpegEmitter();
-  const captured = [];
-  em.on('test', v => captured.push(v));
-  em.emit('test', 42);
-  em.emit('test', 99);
-  if (captured[0] !== 42 || captured[1] !== 99) throw new Error(`captured: ${captured}`);
+  const captured: string[][] = [];
+  em.on('start', v => captured.push(v));
+  em.emit('start', ['-i', 'in.mp4']);
+  em.emit('start', ['-i', 'other.mp4']);
+  if (captured[0]![0] !== '-i' || captured[1]![1] !== 'other.mp4') throw new Error(`captured: ${JSON.stringify(captured)}`);
 });
 await run('GuardError(message,alternative): instanceof Error, alternative set', () => {
   const e = new GuardError('codec unavailable', 'try libx264');
@@ -2407,24 +2408,24 @@ await run('GuardError(message,alternative): instanceof Error, alternative set', 
   if (e.alternative !== 'try libx264') throw new Error(`alternative: ${e.alternative}`);
 });
 await run('ProgressParser(cb): push key=value lines → callback fires on "progress=continue"', () => {
-  const results = [];
+  const results: Array<{ frame?: number; fps?: number; speed?: number }> = [];
   const pp = new ProgressParser(info => results.push(info));
   ['frame=100', 'fps=30', 'total_size=512000',
    'out_time=00:00:03.330000', 'out_time_us=3330000',
    'speed=1x', 'progress=continue'].forEach(l => pp.push(l));
   if (results.length !== 1) throw new Error(`expected 1 event, got ${results.length}`);
-  if (results[0].frame !== 100) throw new Error(`frame: ${results[0].frame}`);
-  console.log(`      frame=${results[0].frame} fps=${results[0].fps} speed=${results[0].speed}`);
+  if (results[0]!.frame !== 100) throw new Error(`frame: ${results[0]!.frame}`);
+  console.log(`      frame=${results[0]!.frame} fps=${results[0]!.fps} speed=${results[0]!.speed}`);
 });
 await run('ProgressParser with totalDurationUs → percent calculated', () => {
-  const results = [];
+  const results: Array<{ percent?: number }> = [];
   const pp = new ProgressParser(info => results.push(info), 10_000_000);
   ['frame=300', 'fps=30', 'total_size=1024000',
    'out_time=00:00:05.000000', 'out_time_us=5000000',
    'speed=1x', 'progress=continue'].forEach(l => pp.push(l));
-  if (results[0].percent === undefined) throw new Error('no percent');
-  if (Math.abs(results[0].percent - 50) > 1) throw new Error(`expected ~50%, got ${results[0].percent}`);
-  console.log(`      percent: ${results[0].percent.toFixed(1)}%`);
+  if (results[0]!.percent === undefined) throw new Error('no percent');
+  if (Math.abs(results[0]!.percent! - 50) > 1) throw new Error(`expected ~50%, got ${results[0]!.percent}`);
+  console.log(`      percent: ${results[0]!.percent!.toFixed(1)}%`);
 });
 await run('parseAllProgress(dump) → ProgressInfo[] with 2+ blocks', () => {
   const dump = [
@@ -2619,9 +2620,9 @@ await run('mp3ToArgs({bitrate:192}) → contains "mp3lame" or "mp3"', () => {
   const r = mp3ToArgs({ bitrate: 192 });
   if (!r.join(' ').includes('mp3')) throw new Error(`got: ${r}`);
 });
-await run('mp3ToArgs({quality:2}) → contains quality flag', () => {
-  const r = mp3ToArgs({ quality: 2 });
-  if (!r.join(' ').includes('mp3')) throw new Error(`got: ${r}`);
+await run('mp3ToArgs({qscale:2}) → contains -q:a 2', () => {
+  const r = mp3ToArgs({ qscale: 2 });
+  if (!r.includes('-q:a') || r[r.indexOf('-q:a') + 1] !== '2') throw new Error(`got: ${r}`);
 });
 await run('libOpusToArgs alias → identical to opusToArgs', () => {
   const r1 = opusToArgs({ bitrate: 96 });
@@ -2713,7 +2714,7 @@ await run('spawnFFmpeg({binary,args}) → FFmpegProcess, file created', async ()
   });
   if (!proc.emitter) throw new Error('no emitter');
   if (!proc.child)   throw new Error('no child');
-  await new Promise((res, rej) => { proc.emitter.on('end', res); proc.emitter.on('error', rej); });
+  await new Promise((res, rej) => { proc.emitter.on('end', () => res(undefined)); proc.emitter.on('error', rej); });
   if (!fs.existsSync(p('spawnffmpeg.m4a'))) throw new Error('file not created');
 });
 await run('spawnFFmpeg: "stderr" event fires with lines', async () => {
@@ -2723,7 +2724,7 @@ await run('spawnFFmpeg: "stderr" event fires with lines', async () => {
     args: ['-y', '-f', 'lavfi', '-i', 'sine=duration=1', '-c:a', 'aac', p('sp_stderr.m4a')],
   });
   proc.emitter.on('stderr', l => lines.push(l));
-  await new Promise((res, rej) => { proc.emitter.on('end', res); proc.emitter.on('error', rej); });
+  await new Promise((res, rej) => { proc.emitter.on('end', () => res(undefined)); proc.emitter.on('error', rej); });
   if (lines.length === 0) throw new Error('no stderr lines');
   console.log(`      stderr lines: ${lines.length}`);
 });
@@ -2735,7 +2736,7 @@ await run('spawnFFmpeg with parseProgress:true → progress events', async () =>
     parseProgress: true,
   });
   proc.emitter.on('progress', e => events.push(e));
-  await new Promise((res, rej) => { proc.emitter.on('end', res); proc.emitter.on('error', rej); });
+  await new Promise((res, rej) => { proc.emitter.on('end', () => res(undefined)); proc.emitter.on('error', rej); });
   console.log(`      progress events: ${events.length}`);
 });
 await run('runFFmpeg({binary,args}) → Promise<void>, file created', async () => {
@@ -2864,20 +2865,22 @@ await run('addChapters with 3 chapters → file with embedded chapters', async (
   await addChapters({
     input: p('input.mp4'), output: p('ch3.mp4'),
     chapters: [
-      { title: 'Intro', startSec: 0, endSec: 3 },
-      { title: 'Main', startSec: 3, endSec: 7 },
-      { title: 'Outro', startSec: 7, endSec: 10 },
+      { title: 'Intro', startSec: 0 },
+      { title: 'Main', startSec: 3 },
+      { title: 'Outro', startSec: 7 },
     ],
   });
   if (!fs.existsSync(p('ch3.mp4'))) throw new Error('file not created');
   const info = probe(p('ch3.mp4'));
-  if (getChapterList(info).length < 3) throw new Error(`expected ≥3 chapters, got ${getChapterList(info).length}`);
-  console.log(`      chapters: ${getChapterList(info).length}`);
+  const chs = getChapterList(info);
+  if (chs.length < 3) throw new Error(`expected ≥3 chapters, got ${chs.length}`);
+  if (Math.abs(chs[0]!.endSec - chs[1]!.startSec) > 0.2) throw new Error(`endSec not derived: ${JSON.stringify(chs[0])}`);
+  console.log(`      chapters: ${chs.length}`);
 });
 await run('addChapters with 1 chapter → file created', async () => {
   await addChapters({
     input: p('short.mp4'), output: p('ch1.mp4'),
-    chapters: [{ title: 'Only Chapter', startSec: 0, endSec: 3 }],
+    chapters: [{ title: 'Only Chapter', startSec: 0 }],
   });
   if (!fs.existsSync(p('ch1.mp4'))) throw new Error('file not created');
 });
@@ -2910,7 +2913,7 @@ await run('stabilizeVideo → file created or graceful skip (vidstab optional)',
     if (!fs.existsSync(p('stable.mp4'))) throw new Error('file not created');
     console.log('      stabilized.mp4 created');
   } catch (e) {
-    const msg = String(e?.message ?? e);
+    const msg = String((e as { message?: string })?.message ?? e);
     if (msg.includes('vidstab') || msg.includes('Unknown filter') || msg.includes('No such filter')) {
       console.log('      vidstab not compiled — skipped');
     } else { throw e; }
@@ -2942,7 +2945,7 @@ await run('streamToUrl({input,url:"udp://..."}) → rejects quickly or succeeds'
       new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 6000)),
     ]);
   } catch (e) {
-    const msg = String(e?.message ?? e);
+    const msg = String((e as { message?: string })?.message ?? e);
     if (msg === 'timeout' || msg.includes('refused') || msg.includes('exit') || msg.includes('FFmpeg')) {
       console.log(`      streamToUrl rejected as expected: ${msg.slice(0,60)}`);
     } else { throw e; }

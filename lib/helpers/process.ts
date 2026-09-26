@@ -7,8 +7,7 @@ const isWindows = process.platform === 'win32';
 const _spawnedPids = new Set<number>();
 // A Set (not an array) that holds only LIVE children. The previous
 // implementation appended every child to an array and never removed it, so a
-// long-running process leaked one entry per encode, and getSpawnedCount() had
-// to scan the whole history to filter out dead entries.
+// long-running process leaked one entry per encode.
 const _spawned = new Set<ChildProcess>();
 
 export function trackChild(child: ChildProcess): void {
@@ -28,6 +27,12 @@ export function trackChild(child: ChildProcess): void {
   child.once('exit', release);
 }
 
+/**
+ * Number of ffmpeg children currently being tracked (i.e. still live).
+ *
+ * Not part of the public API — it exists so the child-leak regression test can
+ * assert that `trackChild` releases entries instead of accumulating them.
+ */
 export function getSpawnedCount(): number {
   return _spawned.size;
 }

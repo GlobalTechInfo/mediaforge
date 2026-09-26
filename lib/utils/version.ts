@@ -1,6 +1,4 @@
-import { execFileSync, spawn } from 'node:child_process';
-import { StringDecoder } from 'node:string_decoder';
-import type { Buffer } from 'node:buffer';
+import { execFileSync } from 'node:child_process';
 import type { VersionInfo } from '../types/version.ts';
 
 /** Matches "ffmpeg version 7.1.1 ...", "ffmpeg version 8.1 ..." and "ffmpeg version N-116912-gabcdef ..." */
@@ -79,50 +77,6 @@ export function probeVersion(binaryPath: string): VersionInfo {
     encoding: 'utf8',
   });
   return parseVersionOutput(output);
-}
-
-/**
- * Async version of probeVersion — non-blocking, with timeout support.
- */
-export function probeVersionAsync(binaryPath: string, timeoutMs = 10000): Promise<VersionInfo> {
-  return new Promise<VersionInfo>((resolve, reject) => {
-    // A per-chunk toString() corrupts multi-byte UTF-8 split across chunk
-    // boundaries; StringDecoder reassembles the byte stream correctly.
-    const decoder = new StringDecoder('utf8');
-    let output = '';
-    let settled = false;
-    const child = spawn(binaryPath, ['-version'], { stdio: ['ignore', 'pipe', 'pipe'] });
-    child.stdout?.on('data', (chunk: Buffer) => { output += decoder.write(chunk); });
-
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      child.kill();
-      reject(new Error(`probeVersionAsync timed out for "${binaryPath}" after ${timeoutMs}ms`));
-    }, timeoutMs);
-    // The child itself must stay referenced, otherwise the process can exit
-    // before 'close' fires and the promise never settles. Only the timer is
-    // unref'd, so it cannot by itself keep the event loop alive.
-    if (typeof timer.unref === 'function') timer.unref();
-
-    child.on('error', (err: Error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(new Error(`Failed to probe version for "${binaryPath}": ${err.message}`));
-    });
-    child.on('close', (code: number | null) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (code !== 0) {
-        reject(new Error(`probeVersionAsync failed for "${binaryPath}" with exit code ${code}`));
-        return;
-      }
-      output += decoder.end();
-      resolve(parseVersionOutput(output));
-    });
-  });
 }
 
 /**

@@ -7,6 +7,254 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.0-rc.1]
+
+> **Release candidate.** This is a prerelease — pin the exact version
+> (`mediaforge@2.1.0-rc.1`). It is not published to `latest`; the stable `2.1.0`
+> is cut only after this RC has been exercised in production.
+
+Everything below is additive, so the 2.0.0 API still works unchanged.
+
+### Added — the CLI now covers the whole library surface
+
+The CLI shipped 31 editing commands against a library that exports 332 runtime
+symbols. This release closes that gap: **52 task commands**, and a parity test
+(`cli.test.ts`, `deno-tests/cli.test.ts`, `runtime-tests/battle.ts`
+and `tests/unit/cli.test.ts`) that fails if a public export is neither reachable from
+a command nor listed in `LIBRARY_ONLY` with a reason. A missing command is now a
+decision, not an oversight.
+
+- **`filter <name> [key=value …]`** — applies any of the **77 built-in filters**
+  (51 video, 26 audio) by name, so no filter needs a bespoke command. `--list`
+  prints every name with its option keys, `--print` emits the filter string without
+  encoding, `--chain` applies several in order (`scale:w=160,h=90|eq:contrast=1.1`),
+  and `--audio` switches from `-vf` to `-af`.
+- **`graph <in> <out> --pipeline …`** — builds `-filter_complex` from a JSON step
+  list (`{from, filter, args?, named?, out?}`). The final step's output label is
+  mapped automatically, because a filtergraph whose last output is unmapped fails
+  with ffmpeg's unhelpful "unconnected output".
+- **`codec <name> [key=value …]`** — prints the encoder arguments any of the 36
+  codec builders produces. `pcm` takes its sample format as a leading positional
+  (`mediaforge codec pcm pcm_s16le sampleRate=48000`).
+- **`map <in> <out>`** — the whole stream-mapping DSL as flags: `--all`, `--remux`,
+  `--default`, `--av`, `--spec`, `--video`, `--audio`, `--subs`, `--label`,
+  `--exclude`, `--disposition`, `--copy-stream`, `--codec-stream`, `--metadata`,
+  `--stream-meta`, `--print`.
+- **`preset [name] <in> <out>`** — `--list`, `--print`, and `--size` / `--crf`
+  overrides on the named encode presets.
+- **`analyze <file> [--json]`** — a structured report: format, duration, size,
+  bitrate, HDR and interlacing flags, per-stream summaries with the default stream
+  marked, subtitles and chapters.
+- **`features`** — evaluates the `FEATURE_GATES` table against the installed
+  binary, or against a version you name with `--ffmpeg-version 7.0`; `--missing`
+  lists only the gates that are unavailable.
+- **`hwaccel <name> <in> <out>`** — GPU transcode through `transcodeWithHwFilters`,
+  with `--list`, `--check` (availability only) and `--print` (the chain only, no
+  encoder and no input/output needed).
+- **`args <op> [key=value …]`** — prints the exact argv any of the 55 arg builders
+  produces, for inspection and for copy-paste into a script.
+- **Media operations:** `stack` (hstack / vstack), `mix` (weighted amix), `loop`,
+  `deinterlace`, `stabilize`, `aspect`, `lut`, `timecode`, `cropdetect`,
+  `gif2mp4`, `extract-subs` and `retime-subs`.
+- **`LIBRARY_ONLY`** documents the public exports deliberately left without their
+  own command — process-lifecycle helpers (`autoKillOnExit`, `killAllFFmpeg`,
+  `renice`) and internals every task already uses (`spawnFFmpeg`, `runFFmpeg`,
+  `captureStderr`, `isDeno`) — each with the reason.
+- `fixSubtitleDuration` was reachable only through an `args` builder, which was
+  misleading because it really runs ffmpeg against a real subtitle file. It is now
+  the `retime-subs` command.
+- `buildHlsArgs` / `buildDashArgs` now take their options as
+  `Omit<HlsOptions, 'input' | 'outputDir'>` and
+  `Omit<DashOptions, 'input' | 'output'>` (both optional and exported), instead of
+  requiring the input and output as positional parameters.
+
+### Fixed
+
+- **`npm run release` corrupted every prerelease version.** `bumpVersion` split the
+  current version on `.` and called `Number` on each part, so `2.1.0-rc.1`
+  became `[2, 1, NaN, 1]` and `patch` produced the string `2.1.NaN`. The
+  accepted-argument test was an unanchored `/^\d+\.\d+\.\d+/`, so `2.1.0junk`
+  and `1.2.3-` were both treated as valid versions and would have been written
+  into `package.json` and pushed as a tag. Version handling now lives in
+  `scripts/release-version.ts` with a real parser, covered by
+  `tests/unit/release-version.test.ts` across every format the project uses or
+  could ship: `2.1.0`, `2.1.0-alpha`, `2.1.0-rc.1`, `2.0.0.beta`, `2.0.1-dev`
+  and `2.1.1-dev-2`. An explicit version is written back verbatim, so
+  `2.0.0.beta` keeps its dot rather than being normalised to `2.0.0-beta`.
+  Bumping from a prerelease now lands on that version's own final release, as
+  semver requires: `2.1.0-rc.1` with `patch` gives `2.1.0`, not `2.1.NaN` and
+  not `2.1.1`.
+- **The release script's verification step was too narrow.** It ran only
+  `test:unit`, so a release could be tagged and pushed with failing integration
+  tests, a failing battle suite or a dead export. It now runs `check:types`,
+  the full `test` suite and `battle:all` before committing anything.
+- **`CapabilityRegistry.encoders` only listed a third of the encoders.** The set
+  was built from the `(encoders: ...)` parenthetical in `ffmpeg -codecs`, which
+  ffmpeg only fills in for the handful of encoders it names in a codec's
+  description. On a stock build `aac`, `libmp3lame`, `flac`, `libopus` and ~135
+  others were missing, so `hasCodec('aac')` and `canEncode('aac')` answered
+  false for codecs the build plainly supports. The set is now merged with a full
+  parse of `ffmpeg -encoders` (74 → 210 entries on this machine).
+- **`onProgress` never reported a percentage.** `parseProgress: true` told the
+  parser to listen for ffmpeg's `key=value` progress blocks, but nothing ever
+  asked ffmpeg to emit them, and the parser has no total to divide by. `spawnFFmpeg`
+  now adds `-progress pipe:2` when it is not already in the argv, and
+  `concatWithTransitions`, `interpolateFrames`, `cutToScenes` and `removeSilence`
+  probe their input and pass the total, so `onProgress` receives real numbers.
+- **`mediaforge concat --reencode` reported "Wrote" before the file existed.**
+  `concatFiles` resolves once the process is spawned, and the re-encode path (which
+  needs the concat filter) was still running. The command now waits for the process
+  to finish.
+- **`CapabilityRegistry.hasFormat('mp4')` was always false.** The `ffmpeg -formats`
+  parser required two adjacent flag characters, so every demux-only (` D `) and
+  mux-only (` E`) row was silently dropped — including `mp4`, `matroska` and
+  `webm`. The flags are now parsed as padded columns.
+- **`mediaforge hwaccel <name> --print` demanded an input and an output.** Printing
+  the filter chain is a dry run, so the positional check moved behind it.
+- **`FilterGraph.from()` / `.merge()` lost the refs of a previous node.** Passing
+  `g.from('0:v').split(2).out('a', 'b')` serialised `[undefined]`; both now spread
+  their refs, so the result of `.out(...)` can be handed straight back in.
+- **Numeric CLI options were stringified.** `args silence-remove threshold=-40`
+  passed `"-40"` to `buildSilenceRemoveFilter`, which correctly rejected it as
+  outside the `(-200, 0]` dB range. Numeric options keep their type; string-typed
+  options still accept a number, because the CLI coerces `key=2`.
+- `coerceValue` only coerces plain decimal numbers, so `0x10`, `1e3` and a padded
+  `" 7 "` stay strings.
+- **`buildTimestampFilename` produced the wrong name.** It added 1 to the index, so
+  asking for frame 6 named frame 7; it stripped a bare `ext` as a literal
+  suffix, so `frame_%04d.jpg` + `jpg` came out as `frame_0006..jpg`; and a bare
+  `ext` without a dot produced `frame_0006jpg`. The index is now used as given,
+  a real extension is stripped, the dot is added when it is missing, and the
+  number is padded to the width the placeholder declares (`%03d` → `005`, bare
+  `%d` → four digits). A pattern with no `%d` placeholder also gets the
+  index now, inserted before the extension (`clip.jpg` + index 9 →
+  `clip0009.jpg`); previously it was passed through unchanged, so every frame
+  of a `extract-frames` run overwrote the last one. The CLI's
+  `args timestamp-filename` follows.
+- **`buildWaveformFilter` emitted `[0:a:undefined]`** when called without a stream
+  index, because the parameter was required but the arg builder let it be
+  omitted. It now defaults to the first audio stream, so a four-argument call
+  produces a usable filter.
+- `deno check` now covers `lib/`, `deno-tests/` **and** `runtime-tests/`; 78 type
+  errors in `deno-tests/battle.test.ts` are fixed (they were real API mismatches —
+  `copyStream('v', 0)`, `ss(0, 'a', 1)`, `videoFilterChain()` with no argument,
+  `new GraphStream('test', 'unknown')`, `headphones {hrir, size, normalize}`,
+  `silencedetect {noise: '-40dB'}`, and more — mirrored into the Node suite too).
+
+### Testing and coverage
+
+- **Library statement coverage is 98.08%** (15,100 / 15,395), up from 80.2%, and
+  `npm run coverage:gate` now fails the build below 98% statements / 98%
+  functions / 70% branches. The gate runs in CI after `npm run coverage:battle`.
+- Four new battle suites close the gap, because the existing ones spawn the built
+  binary and so instrument nothing: `gaps.test.ts` (CLI task table driven in
+  process against real 2-second clips), `libgaps.test.ts` (concat helpers,
+  filter graphs, chains, streaming, the capability registry, the fluent builder),
+  `gaps2.test.ts` (guards, hardware filters, progress parsing, metadata, HLS,
+  probe internals) and `gaps3.test.ts` (progress callbacks, validation
+  branches, process lifecycle, the last parse corners).
+- The newly added battle suites dropped the `battle.` filename prefix:
+  `battle.newfeatures.test.ts` is now `newfeatures.test.ts`, `battle.cli.test.ts`
+  is `cli.test.ts`, and so on. The pre-existing `battle.test.ts` keeps its name.
+  The `npm run battle:*` script names are unchanged, so only the filenames moved.
+- `npm run check:scripts` fails if any test file on disk is not reachable from
+  an `npm run` script or a `deno task` — a suite nobody runs is worse than no
+  suite, because it still reads as coverage.
+- `npm run battle:all` now runs all eight Node suites; `npm run battle:cov`,
+  `:gaps`, `:lib`, `:gaps2` and `:gaps3` run one each. 1,004 assertions in total,
+  all in-process for the coverage suites.
+- `getSpawnedCount` is documented, `probeVersionAsync` is gone, and the changelog
+  and README claim tests (`changelog.claims`, `readme.claims`) pass 62/62 and 38/38.
+
+### Internal notes
+
+- The `lib/cli` task table is a proxy over a lazily merged registry. `tasks.extra.ts`
+  imports the library barrel and the barrel re-exports the CLI, so merging the two
+  tables at module-evaluation time threw for any caller that entered the cycle
+  through `tasks.extra.ts`.
+- `check:dead` ignores `coerceValue` with a reason: it is the coercion step of
+  `key=value` parsing, exported so the battle suites can assert the primitive
+  mapping every arg builder depends on.
+
+### Added — video quality metrics
+
+- `measureQuality({ reference, distorted, metric?, vmaf?, minScore?, binary? })` — measure VMAF, SSIM or PSNR between two encodes, throwing when the result falls below `minScore` so it can be used directly as a CI gate. VMAF needs an ffmpeg built with libvmaf; the error says so explicitly when the filter is missing.
+- `buildVmafFilter`, `buildSsimFilter`, `buildPsnrFilter` — the filter strings on their own, for dry runs and unit tests.
+- `parseVmafLog`, `parseStatsFile` — decode libvmaf JSON and `stats_file` output into a `QualityScore`.
+- A perfect encode scores `Infinity` on PSNR (ffmpeg reports `psnr_avg:inf`); that is carried through as a real result and clears any `minScore`.
+
+### Added — HDR → SDR tone mapping
+
+- `toneMapHdrToSdr({ input, output, algorithm, peak, targetPeak, parameter, desaturation, outputColorSpace, requireHdrInput })` — probes the input, refuses a non-HDR source unless `requireHdrInput: false`, and tags the result as BT.709 so players do not re-apply an HDR display transform.
+- `buildToneMapFilter`, `TONE_MAP_ALGORITHMS`, `HDR_SOURCE_PROPERTIES`, `SDR_TARGET_PROPERTIES`.
+- `parameter` is rejected on `hable`/`clip`/`spline`, which ignore it.
+
+### Added — temporal editing
+
+- `interpolateFrames` / `buildInterpolateFilter` — motion-compensated frame interpolation (`mci` | `blend` | `dup`) for slow motion and 24 → 60. `mb_size`/`mc_mode` are only emitted for `mci`, because ffmpeg rejects them otherwise.
+- `cutToScenes` / `buildSceneCutArgs` — use detected scene changes as an edit decision list. The windows are `[0, s0], [s0, s1], …`; `trimStart` shortens each window from its end.
+- `removeSilence` / `buildSilenceRemoveFilter`, and `writeSegments` / `buildSegmentArgs` — the segment muxer now forces keyframes at each boundary and creates the output directory, so a 2 s file with `segmentTime: 1` yields two segments rather than one.
+
+### Added — hardware filter chains
+
+- `buildHwUploadFilter`, `buildHwDownloadFilter`, `buildHwScaleFilter`, `buildHwFilterChain`, `transcodeWithHwFilters`, `HWACCELS` — compose upload → GPU work → download chains so frames cross the bus once.
+- `buildHwScaleFilter` throws for accelerations with no GPU scaler (videotoolbox, the D3D/DXVA paths) instead of quietly emitting a software `scale`.
+- `buildHwFilterChain` refuses an empty `gpuFilters`, which is always slower than staying in software.
+
+### Added — subtitle conversion
+
+- `convertSubtitles({ input, output, format, streamIndex, shiftSeconds, fixDuration, burn })`, `fixSubtitleDuration`, `subtitleCodecFor`, `subtitleExtensionFor`.
+- `burn: true` converts to a temp sidecar, burns it, and removes the temp directory in a `finally` block.
+
+### Added — ABR ladder
+
+- `abrLadder`, `buildAbrLadderArgs`, `buildAbrLadderFilter`, `buildVarStreamMap`, `validateAbrVariants` — a multi-bitrate HLS ladder in one pass via `-var_stream_map`.
+- Odd dimensions are rejected up front from every entry point, rather than failing deep inside the encoder.
+- `masterPlaylist` is emitted as a bare filename: ffmpeg resolves `-master_pl_name` against the output directory and prepends it even to an absolute path.
+
+### Added — delogo filter
+
+- `delogo({ x, y, width, height, show? })` — dual standalone/chained, with geometry validation.
+
+### Added — encode controls
+
+- `FFmpegBuilder.preset()`, `.profile()`, `.level()`, `.movflags()`, `.keyframeInterval()`, `.fpsMode()`, `.rateControl()`, `.setColorProperties()`.
+- `FPS_MODES` and `COLOR_PROPERTY_KEYS` are exported for validation.
+
+### Added — runtime portability suite
+
+- `runtime-tests/battle.ts` runs the whole 2.1.0 feature surface against real ffmpeg on **Node, Deno and Bun** from one source file, by importing `lib/index.ts` directly. Run it with `npm run battle:runtime`, `deno task battle:runtime`, `bun run runtime-tests/battle.ts`, or all three with `npm run battle:runtimes`.
+- CI gained a Bun job and a Deno runtime-portability step.
+- `deno lint` and the Deno type check now cover `runtime-tests/`.
+
+### Added — quality gates in CI
+
+- `npm run check:dead` (`scripts/check-dead.ts`) subtracts ts-prune's false positives — symbols re-exported through `lib/index.ts`, and helpers imported across modules, which ts-prune cannot resolve because this project uses Deno-style `./x.ts` import specifiers — then fails on anything genuinely dead. `ts-prune.ignore` records the deliberate exceptions.
+- `npm run check:types` runs type coverage and the dead-export check together.
+- CI enforces both.
+
+### Added — task-oriented CLI
+
+- 31 task commands — `trim`, `speed`, `volume`, `normalize`, `extract`, `replace-audio`, `concat`, `transitions`, `hls`, `abr`, `dash`, `segments`, `chapters`, `metadata`, `thumbnail`, `sprite`, `frames`, `gif`, `watermark`, `text`, `subtitles`, `quality`, `tonemap`, `interpolate`, `silence`, `scenes`, `waveform`, `spectrum`, `delogo`, `twopass`, `to-bitrate` — so the CLI covers the library rather than only re-exposing ffmpeg flags.
+- `CLI_TASKS`, `parseTaskArgs`, `taskHelpText` and `taskDetail` are exported from the package index, so the subcommand surface can be inspected and driven programmatically.
+- `mediaforge probe` now passes `-show_chapters`, so the chapters `mediaforge chapters` writes are actually visible.
+
+### Fixed
+
+- **`detectScenes` never detected anything** — it filtered stderr for lines containing `scene`, but ffmpeg's `showinfo` never prints the scene score, so the filter always returned `[]`. It now uses `metadata=print`, which emits `lavfi.scene_score` for each selected frame, and `cutToScenes` works as a result. The existing test only asserted the return *type*, which is why this went unnoticed.
+- **`fpsMode()` broke every encode on ffmpeg < 5.1** — it always emitted `-fps_mode`, which does not exist before 5.1 (`Unrecognized option 'fps_mode'`). The flag is now chosen from the probed version: `-vsync` below 5.1, `-fps_mode` from 5.1 on. `fpsMode()` also rejects unknown modes.
+- **`concatFiles({ copy: true })` always failed** — it combined `-filter_complex` with `-c copy`, and ffmpeg rejects stream copy through a filtergraph with "Filtering and streamcopy cannot be used together". Copy mode now goes through the concat demuxer, and falls back to re-encoding when the inputs are not stream-compatible.
+- **`concatWithTransitions` failed with its own defaults** — the default transition was `'crossfade'`, which is not a value ffmpeg's `xfade` filter accepts (`Error setting option transition to value crossfade`). The default is now `'fade'`, and `crossfade`/`xfade` were removed from `TransitionType`.
+- **`mediaforge thumbnail out.jpg` wrote a PNG** — `frameToBuffer` defaults to PNG, so the file content did not match its extension. The format now comes from `--format` or the output extension.
+- **`mediaforge tonemap --force` did the opposite of what it says** — it was wired to `requireHdrInput`, so `--force` made the HDR check *stricter* and the flag was unusable on SDR input. It now passes `requireHdrInput: !force`.
+- **The CLI silently ignored misspelled task flags** — `mediaforge trim --star 1` ran with defaults and exited 0. Unknown flags are now a hard error listing the valid ones.
+- **`taskDetail('typo')` returned an empty string** — `mediaforge help <typo>` printed nothing at all, reading like a success. It now explains the unknown command and points at the task list.
+- **`rateControl()` accepted no `max`** — it emitted `-maxrate undefined`. `max` is now required, and `bufferSize` defaults to `max` because VBV needs a buffer to look at.
+- **`setColorProperties({})` silently did nothing** — it now throws, like it already did for unknown keys.
+- **Two dead exports removed** — `getSpawnedCount()` and `probeVersionAsync()` were exported from their modules but never called and never re-exported from the package index, so they were unreachable dead code. `check:dead` is now wired into CI so this cannot recur.
+- **Task usage lines omitted their own flags** — all 31 now list every flag they declare, and a test keeps them in sync.
+- **`writeSegments` did not create its output directory** — a pattern like `out/seg%03d.ts` failed unless the directory already existed.
+
 ## [2.0.0]
 
 ### Breaking Changes

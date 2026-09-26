@@ -132,7 +132,11 @@ export function detectScenes(opts: DetectScenesOptions): Promise<SceneChange[]> 
 
   const args = [
     '-i', input,
-    '-vf', `select='gt(scene,${threshold})',showinfo`,
+    // `metadata=print` emits `lavfi.scene_score` for each selected frame, which
+    // is the only place the score is actually reported. `showinfo` does not
+    // print the scene score at all, so filtering on the word "scene" in its
+    // output never matched anything.
+    '-vf', `select='gt(scene,${threshold})',metadata=print`,
     '-f', 'null', '-',
   ];
 
@@ -148,11 +152,19 @@ export function detectScenes(opts: DetectScenesOptions): Promise<SceneChange[]> 
 
     const cleanup = () => { if (!settled) { settled = true; try { proc.kill(); } catch { /* ok */ } } };
 
+    // metadata=print emits two lines per selected frame: one with the frame's
+    // pts_time, then one with lavfi.scene_score. Buffer the timestamp until the
+    // score line confirms the frame really was a scene change.
+    let pendingTime: number | null = null;
     proc.emitter.on('stderr', (line: string) => {
-      const tsMatch = line.match(/pts_time:([\d.]+)/);
-      if (tsMatch && line.includes('scene')) {
-        const ts = parseFloat(tsMatch[1]!);
-        scenes.push({ timestamp: ts, sceneNumber: sceneNum++ });
+      const tsMatch = /pts_time:([\d.]+)/.exec(line);
+      if (tsMatch) {
+        pendingTime = parseFloat(tsMatch[1]!);
+        return;
+      }
+      if (/lavfi\.scene_score=/.test(line) && pendingTime !== null) {
+        scenes.push({ timestamp: pendingTime, sceneNumber: sceneNum++ });
+        pendingTime = null;
       }
     });
 
@@ -162,7 +174,7 @@ export function detectScenes(opts: DetectScenesOptions): Promise<SceneChange[]> 
 }
 
 export function buildSceneSelectFilter(threshold: number = 0.4): string {
-  return `select='gt(scene,${threshold})',showinfo`;
+  return `select='gt(scene,${threshold})',metadata=print`;
 }
 
 // ─── cropDetect ────────────────────────────────────────────────────

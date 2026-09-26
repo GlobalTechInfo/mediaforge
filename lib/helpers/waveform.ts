@@ -170,7 +170,7 @@ export async function generateSpectrum(opts: SpectrumOptions): Promise<void> {
 
 export function buildWaveformFilter(
   width: number, height: number,
-  color: string, scale: string, streamIndex: number,
+  color: string, scale: string, streamIndex = 0,
 ): string {
   // NOTE: the color is passed through verbatim here, while generateWaveform()
   // strips a leading '#'. Both forms are accepted by showwavespic, so the
