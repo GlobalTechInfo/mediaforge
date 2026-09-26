@@ -41,20 +41,20 @@ function walk(dir: string, re: RegExp, out: string[] = []): string[] {
 // Named by their script rather than by a filename prefix, so a rename shows
 // up here instead of silently unhooking a suite from `battle:all`.
 const BATTLE_SCRIPTS: Record<string, string> = {
-  'battle.test.ts': 'battle',
-  'newfeatures.test.ts': 'battle:new',
-  'cli.test.ts': 'battle:cli',
-  'coverage.test.ts': 'battle:cov',
-  'gaps.test.ts': 'battle:gaps',
-  'libgaps.test.ts': 'battle:lib',
-  'gaps2.test.ts': 'battle:gaps2',
-  'gaps3.test.ts': 'battle:gaps3',
+  'tests/integration/battle.test.ts': 'battle',
+  'tests/integration/newfeatures.test.ts': 'battle:new',
+  'tests/integration/cli.test.ts': 'battle:cli',
+  'tests/integration/coverage.test.ts': 'battle:cov',
+  'tests/integration/gaps.test.ts': 'battle:gaps',
+  'tests/integration/libgaps.test.ts': 'battle:lib',
+  'tests/integration/gaps2.test.ts': 'battle:gaps2',
+  'tests/integration/gaps3.test.ts': 'battle:gaps3',
 };
 
 const DENO_TASKS: Record<string, string> = {
-  'deno-tests/battle.test.ts': 'battle',
-  'deno-tests/newfeatures.test.ts': 'battle:new',
-  'deno-tests/cli.test.ts': 'battle:cli',
+  'deno-tests/integration/battle.test.ts': 'battle',
+  'deno-tests/integration/newfeatures.test.ts': 'battle:new',
+  'deno-tests/integration/cli.test.ts': 'battle:cli',
 };
 
 
@@ -73,7 +73,6 @@ const problems: string[] = [];
 // ─── Node battle suites ──────────────────────────────────────────────────────
 // Each suite needs its own script, a place in `battle:all`, and a turn in the
 // c8 chain that feeds `coverage:gate`.
-
 
 for (const [file, own] of Object.entries(BATTLE_SCRIPTS)) {
   if (!rootBattle.includes(file)) {
@@ -166,6 +165,16 @@ for (const file of testsRoot) {
   }
 }
 
+// Nothing may sit at the repository root. A test file in the root is outside
+// every test directory, so no discovery rule covers it, and its relative
+// imports resolve against the repo root rather than against a suite tree —
+// both of which are easy to miss and hard to review.
+for (const entry of readdirSync('.').sort()) {
+  if (/\.test\.ts$/.test(entry) && statSync(entry).isFile()) {
+    problems.push(`test file at the repository root: ${entry}`);
+  }
+}
+
 // ─── Runtime cross-runtime suite ─────────────────────────────────────────────
 
 for (const file of runtime) {
@@ -187,6 +196,23 @@ if (!scripts['battle:runtimes']?.includes('bun run runtime-tests/battle.ts')) {
 
 if (!scripts['coverage:gate']?.includes('--check-coverage')) {
   problems.push('"coverage:gate" does not actually fail on a coverage miss');
+}
+
+// The c8 chain has to instrument exactly the suites battle:all runs. A
+// hand-written chain drifts: it once kept the pre-rename paths, and a
+// generator that prepended `tsx` to bodies that already had it produced
+// `tsx tsx <file>`, which c8 reports only as ERR_MODULE_NOT_FOUND.
+const coverageBattle = scripts['coverage:battle'] ?? '';
+for (const name of Object.values(BATTLE_SCRIPTS)) {
+  const suite = scripts[name];
+  if (!suite) continue;
+  const file = suite.replace(/^tsx\s+/, '');
+  if (!coverageBattle.includes(file)) {
+    problems.push(`"coverage:battle" does not instrument ${file} (from "${name}")`);
+  }
+}
+if (/\btsx\s+tsx\b/.test(coverageBattle)) {
+  problems.push('"coverage:battle" has a doubled `tsx tsx` in a segment');
 }
 for (const metric of ['--lines', '--functions', '--branches', '--statements']) {
   if (!scripts['coverage:gate']?.includes(metric)) {

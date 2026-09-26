@@ -76,11 +76,11 @@ function ff(args: string): void {
   }
 }
 
-const m = await import('./lib/index.js') as Record<string, any>;
-const complex = await import('./lib/filters/complex.js') as Record<string, any>;
-const streams = await import('./lib/helpers/streams.js') as Record<string, any>;
-const registryMod = await import('./lib/codecs/registry.js') as Record<string, any>;
-const { FFmpegBuilder, VersionError } = await import('./lib/FFmpeg.js') as Record<string, any>;
+const m = await import('../../lib/index.js') as Record<string, any>;
+const complex = await import('../../lib/filters/complex.js') as Record<string, any>;
+const streams = await import('../../lib/helpers/streams.js') as Record<string, any>;
+const registryMod = await import('../../lib/codecs/registry.js') as Record<string, any>;
+const { FFmpegBuilder, VersionError } = await import('../../lib/FFmpeg.js') as Record<string, any>;
 
 fs.rmSync(TMP, { recursive: true, force: true });
 fs.mkdirSync(TMP, { recursive: true });

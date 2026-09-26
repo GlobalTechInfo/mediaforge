@@ -13,8 +13,8 @@
 
 import {
   CLI_TASKS, parseTaskArgs, taskHelpText, taskDetail,
-} from '../lib/index.ts';
-import { CLI_TASKS as TASKS_MOD } from '../lib/cli/tasks.ts';
+} from '../../lib/index.ts';
+import { CLI_TASKS as TASKS_MOD } from '../../lib/cli/tasks.ts';
 
 const errors: Array<{ label: string; error: string; stack: string }> = [];
 let passed = 0;
@@ -249,7 +249,7 @@ await run('no task runs successfully with no arguments', async () => {
 section('52 — CLI: library-surface commands');
 
 await run('the filter registry covers every exported filter', async () => {
-  const mod = await import('../lib/cli/filter-registry.ts');
+  const mod = await import('../../lib/cli/filter-registry.ts');
   const names = mod.filterNames();
   if (names.length !== 77) throw new Error(`registry has ${names.length} filters, expected 77`);
   for (const n of names) {
@@ -265,8 +265,8 @@ await run('the filter registry covers every exported filter', async () => {
 });
 
 await run('every registry filter serialises without placeholder values', async () => {
-  const mod = await import('../lib/cli/filter-registry.ts');
-  const { FilterChain } = await import('../lib/types/filters.ts');
+  const mod = await import('../../lib/cli/filter-registry.ts');
+  const { FilterChain } = await import('../../lib/types/filters.ts');
   for (const n of mod.filterNames()) {
     const e = mod.FILTER_REGISTRY[n]!;
     const rec: Record<string, string | number | boolean> = {};
@@ -283,7 +283,7 @@ await run('every registry filter serialises without placeholder values', async (
 });
 
 await run('the arg-op and codec-builder tables are non-empty', async () => {
-  const mod = await import('../lib/cli/tasks.extra.ts');
+  const mod = await import('../../lib/cli/tasks.extra.ts');
   const ops = mod.argOpNames();
   const codecs = mod.codecBuilderNames();
   if (ops.length < 30) throw new Error(`only ${ops.length} arg builders`);
@@ -294,7 +294,7 @@ await run('the arg-op and codec-builder tables are non-empty', async () => {
 });
 
 await run('LIBRARY_ONLY gives a reason for every entry', async () => {
-  const { LIBRARY_ONLY } = await import('../lib/cli/tasks.extra.ts');
+  const { LIBRARY_ONLY } = await import('../../lib/cli/tasks.extra.ts');
   for (const [name, reason] of Object.entries(LIBRARY_ONLY)) {
     if (reason.length < 10) throw new Error(`${name}: reason too short`);
   }
@@ -303,8 +303,10 @@ await run('LIBRARY_ONLY gives a reason for every entry', async () => {
 await run('every runtime export is reachable from the CLI or documented as library-only', async () => {
   // The real reachability test: an export counts as reachable when the CLI
   // source names it, or when LIBRARY_ONLY records why it has no command.
-  const lib = await import('../lib/index.ts');
-  const { LIBRARY_ONLY } = await import('../lib/cli/tasks.extra.ts');
+  const lib = await import('../../lib/index.ts');
+  const { LIBRARY_ONLY } = await import('../../lib/cli/tasks.extra.ts');
+  // Deno.readTextFileSync resolves against the cwd, not this module, so these
+  // stay repository-root-relative however deep this file lives.
   const files = [
     'lib/cli/tasks.ts', 'lib/cli/tasks.extra.ts', 'lib/cli/filter-registry.ts',
     'lib/cli/index.ts', 'lib/cli/flags.ts', 'lib/cli/types.ts',
@@ -319,7 +321,7 @@ await run('every runtime export is reachable from the CLI or documented as libra
   if (missing.length > 0) throw new Error(`unreachable from the CLI: ${missing.join(', ')}`);
   const unused = Object.keys(LIBRARY_ONLY).filter(n => !(n in lib));
   if (unused.length > 0) throw new Error(`LIBRARY_ONLY lists non-exports: ${unused.join(', ')}`);
-  const { INTERNAL_NOTES } = await import('../lib/cli/tasks.extra.ts');
+  const { INTERNAL_NOTES } = await import('../../lib/cli/tasks.extra.ts');
   for (const [name, reason] of Object.entries(INTERNAL_NOTES)) {
     if (name in lib) throw new Error(`${name} is a public export, so it belongs in LIBRARY_ONLY`);
     if (reason.length < 10) throw new Error(`${name}: reason too short`);
@@ -343,8 +345,8 @@ await run('the task table has grown past the original 31 commands', () => {
 });
 
 await run('the filter/codec/arg tables cover the bulk of the library', async () => {
-  const { argOpNames, codecBuilderNames } = await import('../lib/cli/tasks.extra.ts');
-  const { filterNames } = await import('../lib/cli/filter-registry.ts');
+  const { argOpNames, codecBuilderNames } = await import('../../lib/cli/tasks.extra.ts');
+  const { filterNames } = await import('../../lib/cli/filter-registry.ts');
   if (filterNames().length !== 77) throw new Error(`${filterNames().length} filters`);
   if (argOpNames().length < 55) throw new Error(`only ${argOpNames().length} arg builders`);
   if (codecBuilderNames().length < 35) throw new Error(`only ${codecBuilderNames().length} codec builders`);

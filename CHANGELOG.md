@@ -19,8 +19,9 @@ Everything below is additive, so the 2.0.0 API still works unchanged.
 
 The CLI shipped 31 editing commands against a library that exports 332 runtime
 symbols. This release closes that gap: **52 task commands**, and a parity test
-(`cli.test.ts`, `deno-tests/cli.test.ts`, `runtime-tests/battle.ts`
-and `tests/unit/cli.test.ts`) that fails if a public export is neither reachable from
+(`tests/integration/cli.test.ts`, `deno-tests/integration/cli.test.ts`,
+`runtime-tests/battle.ts` and `tests/unit/cli.test.ts`) that fails if a public
+export is neither reachable from
 a command nor listed in `LIBRARY_ONLY` with a reason. A missing command is now a
 decision, not an oversight.
 
@@ -136,7 +137,8 @@ decision, not an oversight.
   omitted. It now defaults to the first audio stream, so a four-argument call
   produces a usable filter.
 - `deno check` now covers `lib/`, `deno-tests/` **and** `runtime-tests/`; 78 type
-  errors in `deno-tests/battle.test.ts` are fixed (they were real API mismatches —
+  errors in `deno-tests/integration/battle.test.ts` are fixed (they were real API
+  mismatches —
   `copyStream('v', 0)`, `ss(0, 'a', 1)`, `videoFilterChain()` with no argument,
   `new GraphStream('test', 'unknown')`, `headphones {hrir, size, normalize}`,
   `silencedetect {noise: '-40dB'}`, and more — mirrored into the Node suite too).
@@ -147,16 +149,19 @@ decision, not an oversight.
   `npm run coverage:gate` now fails the build below 98% statements / 98%
   functions / 70% branches. The gate runs in CI after `npm run coverage:battle`.
 - Four new battle suites close the gap, because the existing ones spawn the built
-  binary and so instrument nothing: `gaps.test.ts` (CLI task table driven in
-  process against real 2-second clips), `libgaps.test.ts` (concat helpers,
-  filter graphs, chains, streaming, the capability registry, the fluent builder),
-  `gaps2.test.ts` (guards, hardware filters, progress parsing, metadata, HLS,
-  probe internals) and `gaps3.test.ts` (progress callbacks, validation
-  branches, process lifecycle, the last parse corners).
-- The newly added battle suites dropped the `battle.` filename prefix:
-  `battle.newfeatures.test.ts` is now `newfeatures.test.ts`, `battle.cli.test.ts`
-  is `cli.test.ts`, and so on. The pre-existing `battle.test.ts` keeps its name.
-  The `npm run battle:*` script names are unchanged, so only the filenames moved.
+  binary and so instrument nothing: `tests/integration/gaps.test.ts` (CLI task
+  table driven in process against real 2-second clips),
+  `tests/integration/libgaps.test.ts` (concat helpers, filter graphs, chains,
+  streaming, the capability registry, the fluent builder),
+  `tests/integration/gaps2.test.ts` (guards, hardware filters, progress parsing,
+  metadata, HLS, probe internals) and `tests/integration/gaps3.test.ts` (progress
+  callbacks, validation branches, process lifecycle, the last parse corners).
+- The battle suites live in the test tree, not the repository root. The eight
+  Node suites are in `tests/integration/` and their three Deno counterparts in
+  `deno-tests/integration/`, alongside the existing integration tests. A test
+  file at the root is outside every discovery rule, and its `import('./lib/…')`
+  specifiers resolve against the root rather than against a suite tree.
+  `npm run check:scripts` now fails if one reappears at the root.
 - `npm run check:scripts` fails if any test file on disk is not reachable from
   an `npm run` script or a `deno task` — a suite nobody runs is worse than no
   suite, because it still reads as coverage.

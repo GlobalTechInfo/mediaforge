@@ -64,15 +64,15 @@ function throws(fn: () => unknown, re: RegExp, what: string): string {
   return msg;
 }
 
-const m = await import('./lib/index.js') as Record<string, any>;
+const m = await import('../../lib/index.js') as Record<string, any>;
 // The time helpers are internal to the library rather than part of the public
 // index, so they are reached through their own module.
-const time = await import('./lib/utils/time.js');
-const { FilterChain } = await import('./lib/types/filters.js') as { FilterChain: new () => any };
-const flags = await import('./lib/cli/flags.js');
-const extra = await import('./lib/cli/tasks.extra.js');
-const registry = await import('./lib/cli/filter-registry.js');
-const CLI_TASKS = (await import('./lib/cli/tasks.js')).CLI_TASKS as Record<string, any>;
+const time = await import('../../lib/utils/time.js');
+const { FilterChain } = await import('../../lib/types/filters.js') as { FilterChain: new () => any };
+const flags = await import('../../lib/cli/flags.js');
+const extra = await import('../../lib/cli/tasks.extra.js');
+const registry = await import('../../lib/cli/filter-registry.js');
+const CLI_TASKS = (await import('../../lib/cli/tasks.js')).CLI_TASKS as Record<string, any>;
 
 fs.rmSync(TMP, { recursive: true, force: true });
 fs.mkdirSync(TMP, { recursive: true });

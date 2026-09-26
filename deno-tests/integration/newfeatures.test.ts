@@ -1,14 +1,11 @@
 /**
- * mediaforge battle test — 2.1.0 feature set
+ * deno-tests/battle.newfeatures.test.ts — Deno mirror of the 2.1.0 feature set
  *
- * Companion to `battle.test.ts`, covering everything added in 2.1.0: the quality
- * metrics, HDR tone mapping, temporal helpers, hardware filter builders, subtitle
- * conversion, ABR ladders, `delogo`, the new encode-control builder methods, and
- * all 31 task-oriented CLI commands.
+ * Same coverage as the Node `battle.newfeatures.test.ts`, importing straight
+ * from `lib/` TypeScript source so the Deno publish surface is exercised with
+ * no build step. Keep the two in sync when changing either.
  *
- * Same contract as the main battle file: every test is isolated, errors are
- * collected, and a summary is printed at the end. Exit code is 1 if anything
- * failed.
+ * Run: deno task battle:new
  */
 
 import fs from 'node:fs';
@@ -16,8 +13,48 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
+import {
+  buildVmafFilter,
+  buildSsimFilter,
+  buildPsnrFilter,
+  parseVmafLog,
+  parseStatsFile,
+  measureQuality,
+  buildToneMapFilter,
+  toneMapHdrToSdr,
+  TONE_MAP_ALGORITHMS,
+  HDR_SOURCE_PROPERTIES,
+  SDR_TARGET_PROPERTIES,
+  buildInterpolateFilter,
+  interpolateFrames,
+  buildSceneCutArgs,
+  cutToScenes,
+  buildSilenceRemoveFilter,
+  removeSilence,
+  buildSegmentArgs,
+  writeSegments,
+  buildHwUploadFilter,
+  buildHwDownloadFilter,
+  buildHwScaleFilter,
+  buildHwFilterChain,
+  HWACCELS,
+  subtitleCodecFor,
+  subtitleExtensionFor,
+  convertSubtitles,
+  fixSubtitleDuration,
+  buildVarStreamMap,
+  buildAbrLadderFilter,
+  buildAbrLadderArgs,
+  validateAbrVariants,
+  abrLadder,
+  ffmpeg,
+  COLOR_PROPERTY_KEYS,
+  delogo,
+  detectScenes,
+} from '../../lib/index.ts';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const TMP = path.join(__dirname, 'tmp_nf');
+const TMP = path.join(__dirname, 'tmp_newfeatures');
 
 const p = (name: string) => path.join(TMP, name);
 const errors: { label: string; error: string; stack: string }[] = [];
@@ -156,63 +193,25 @@ await run('generate hdr-ish bt2020/pq source (for tone mapping)', () => {
 // ─── imports ────────────────────────────────────────────────────────────────
 section('IMPORT — loading 2.1.0 exports');
 
-const {
-  buildVmafFilter: buildVmafFilterFn,
-  buildSsimFilter: buildSsimFilterFn,
-  buildPsnrFilter: buildPsnrFilterFn,
-  parseVmafLog: parseVmafLogFn,
-  parseStatsFile: parseStatsFileFn,
-  measureQuality: measureQualityFn,
-  buildToneMapFilter: buildToneMapFilterFn,
-  toneMapHdrToSdr: toneMapHdrToSdrFn,
-  TONE_MAP_ALGORITHMS,
-  HDR_SOURCE_PROPERTIES,
-  SDR_TARGET_PROPERTIES,
-  buildInterpolateFilter: buildInterpolateFilterFn,
-  interpolateFrames: interpolateFramesFn,
-  buildSceneCutArgs: buildSceneCutArgsFn,
-  cutToScenes: cutToScenesFn,
-  buildSilenceRemoveFilter: buildSilenceRemoveFilterFn,
-  removeSilence: removeSilenceFn,
-  buildSegmentArgs: buildSegmentArgsFn,
-  writeSegments: writeSegmentsFn,
-  buildHwUploadFilter: buildHwUploadFilterFn,
-  buildHwDownloadFilter: buildHwDownloadFilterFn,
-  buildHwScaleFilter: buildHwScaleFilterFn,
-  buildHwFilterChain: buildHwFilterChainFn,
-  HWACCELS,
-  subtitleCodecFor: subtitleCodecForFn,
-  subtitleExtensionFor: subtitleExtensionForFn,
-  convertSubtitles: convertSubtitlesFn,
-  fixSubtitleDuration: fixSubtitleDurationFn,
-  buildVarStreamMap: buildVarStreamMapFn,
-  buildAbrLadderFilter: buildAbrLadderFilterFn,
-  buildAbrLadderArgs: buildAbrLadderArgsFn,
-  validateAbrVariants: validateAbrVariantsFn,
-  abrLadder: abrLadderFn,
-  ffmpeg: ffmpegFn,
-  COLOR_PROPERTY_KEYS,
-  delogo: delogoFn,
-  detectScenes: detectScenesFn,
-} = await import('./lib/index.js');
+
 
 await run('all 2.1.0 exports load without error', () => {
   const missing = [
-    ['buildVmafFilter', buildVmafFilterFn], ['buildSsimFilter', buildSsimFilterFn],
-    ['buildPsnrFilter', buildPsnrFilterFn], ['parseVmafLog', parseVmafLogFn],
-    ['parseStatsFile', parseStatsFileFn], ['measureQuality', measureQualityFn],
-    ['buildToneMapFilter', buildToneMapFilterFn], ['toneMapHdrToSdr', toneMapHdrToSdrFn],
-    ['buildInterpolateFilter', buildInterpolateFilterFn], ['interpolateFrames', interpolateFramesFn],
-    ['buildSceneCutArgs', buildSceneCutArgsFn], ['cutToScenes', cutToScenesFn],
-    ['buildSilenceRemoveFilter', buildSilenceRemoveFilterFn], ['removeSilence', removeSilenceFn],
-    ['buildSegmentArgs', buildSegmentArgsFn], ['writeSegments', writeSegmentsFn],
-    ['buildHwUploadFilter', buildHwUploadFilterFn], ['buildHwDownloadFilter', buildHwDownloadFilterFn],
-    ['buildHwScaleFilter', buildHwScaleFilterFn], ['buildHwFilterChain', buildHwFilterChainFn],
-    ['subtitleCodecFor', subtitleCodecForFn], ['subtitleExtensionFor', subtitleExtensionForFn],
-    ['convertSubtitles', convertSubtitlesFn], ['fixSubtitleDuration', fixSubtitleDurationFn],
-    ['buildVarStreamMap', buildVarStreamMapFn], ['buildAbrLadderFilter', buildAbrLadderFilterFn],
-    ['buildAbrLadderArgs', buildAbrLadderArgsFn], ['validateAbrVariants', validateAbrVariantsFn],
-    ['abrLadder', abrLadderFn], ['delogo', delogoFn],
+    ['buildVmafFilter', buildVmafFilter], ['buildSsimFilter', buildSsimFilter],
+    ['buildPsnrFilter', buildPsnrFilter], ['parseVmafLog', parseVmafLog],
+    ['parseStatsFile', parseStatsFile], ['measureQuality', measureQuality],
+    ['buildToneMapFilter', buildToneMapFilter], ['toneMapHdrToSdr', toneMapHdrToSdr],
+    ['buildInterpolateFilter', buildInterpolateFilter], ['interpolateFrames', interpolateFrames],
+    ['buildSceneCutArgs', buildSceneCutArgs], ['cutToScenes', cutToScenes],
+    ['buildSilenceRemoveFilter', buildSilenceRemoveFilter], ['removeSilence', removeSilence],
+    ['buildSegmentArgs', buildSegmentArgs], ['writeSegments', writeSegments],
+    ['buildHwUploadFilter', buildHwUploadFilter], ['buildHwDownloadFilter', buildHwDownloadFilter],
+    ['buildHwScaleFilter', buildHwScaleFilter], ['buildHwFilterChain', buildHwFilterChain],
+    ['subtitleCodecFor', subtitleCodecFor], ['subtitleExtensionFor', subtitleExtensionFor],
+    ['convertSubtitles', convertSubtitles], ['fixSubtitleDuration', fixSubtitleDuration],
+    ['buildVarStreamMap', buildVarStreamMap], ['buildAbrLadderFilter', buildAbrLadderFilter],
+    ['buildAbrLadderArgs', buildAbrLadderArgs], ['validateAbrVariants', validateAbrVariants],
+    ['abrLadder', abrLadder], ['delogo', delogo],
   ] as [string, unknown][];
   for (const [name, value] of missing) {
     if (typeof value !== 'function') throw new Error(`${name} is not a function`);
@@ -224,22 +223,22 @@ await run('all 2.1.0 exports load without error', () => {
 section('42 — QUALITY METRICS: filter builders');
 
 await run('buildVmafFilter() → "libvmaf=log_fmt=json"', () => {
-  const r = buildVmafFilterFn();
+  const r = buildVmafFilter();
   if (r !== 'libvmaf=log_fmt=json') throw new Error(`got: ${r}`);
 });
 
 await run('buildVmafFilter({target:80}) → includes target=80', () => {
-  const r = buildVmafFilterFn({ target: 80 });
+  const r = buildVmafFilter({ target: 80 });
   if (!r.includes('target=80')) throw new Error(`got: ${r}`);
 });
 
 await run('buildVmafFilter({minScore:50}) → includes min_score=50', () => {
-  const r = buildVmafFilterFn({ minScore: 50 });
+  const r = buildVmafFilter({ minScore: 50 });
   if (!r.includes('min_score=50')) throw new Error(`got: ${r}`);
 });
 
 await run('buildVmafFilter({model:"version=v0.6.1"}) → does not escape "="', () => {
-  const r = buildVmafFilterFn({ model: 'version=v0.6.1' });
+  const r = buildVmafFilter({ model: 'version=v0.6.1' });
   // escaping '=' here would make ffmpeg reject the model name
   if (r.includes('\\=')) throw new Error(`"=" was escaped: ${r}`);
   if (!r.includes("model='version=v0.6.1'")) throw new Error(`got: ${r}`);
@@ -248,7 +247,7 @@ await run('buildVmafFilter({model:"version=v0.6.1"}) → does not escape "="', (
 
 await run('buildVmafFilter({target:101}) → RangeError', () => {
   try {
-    buildVmafFilterFn({ target: 101 });
+    buildVmafFilter({ target: 101 });
   } catch (e) {
     if (!(e instanceof RangeError)) throw new Error(`wrong error type: ${(e as Error).constructor.name}`);
     if (!/between 0 and 100/.test((e as Error).message)) throw new Error(`unhelpful message: ${(e as Error).message}`);
@@ -259,25 +258,25 @@ await run('buildVmafFilter({target:101}) → RangeError', () => {
 
 await run('buildVmafFilter({minScore:-1}) → RangeError', () => {
   let threw = false;
-  try { buildVmafFilterFn({ minScore: -1 }); } catch (e) { threw = e instanceof RangeError; }
+  try { buildVmafFilter({ minScore: -1 }); } catch (e) { threw = e instanceof RangeError; }
   if (!threw) throw new Error('expected RangeError');
 });
 
 await run('buildSsimFilter() → "ssim"', () => {
-  if (buildSsimFilterFn() !== 'ssim') throw new Error(`got: ${buildSsimFilterFn()}`);
+  if (buildSsimFilter() !== 'ssim') throw new Error(`got: ${buildSsimFilter()}`);
 });
 
 await run('buildSsimFilter({statsFile}) → single-quoted stats_file', () => {
-  const r = buildSsimFilterFn({ statsFile: '/tmp/a b/ssim.log' });
+  const r = buildSsimFilter({ statsFile: '/tmp/a b/ssim.log' });
   if (!r.includes("stats_file='/tmp/a b/ssim.log'")) throw new Error(`got: ${r}`);
 });
 
 await run('buildPsnrFilter() → "psnr"', () => {
-  if (buildPsnrFilterFn() !== 'psnr') throw new Error(`got: ${buildPsnrFilterFn()}`);
+  if (buildPsnrFilter() !== 'psnr') throw new Error(`got: ${buildPsnrFilter()}`);
 });
 
 await run('buildPsnrFilter({statsFile}) → includes stats_file', () => {
-  const r = buildPsnrFilterFn({ statsFile: '/tmp/p.log' });
+  const r = buildPsnrFilter({ statsFile: '/tmp/p.log' });
   if (!r.includes("stats_file='/tmp/p.log'")) throw new Error(`got: ${r}`);
 });
 
@@ -290,7 +289,7 @@ await run('parseVmafLog(valid libvmaf JSON) → pooled mean + frame count', () =
     frames: [{ frameNum: 0 }, { frameNum: 1 }, { frameNum: 2 }],
     pooled_metrics: { vmaf: { min: 90, max: 99, mean: 95.5 } },
   });
-  const s = parseVmafLogFn(json);
+  const s = parseVmafLog(json);
   if (s.metric !== 'vmaf') throw new Error(`metric: ${s.metric}`);
   if (s.value !== 95.5) throw new Error(`value: ${s.value}`);
   if (s.vmaf !== 95.5) throw new Error(`vmaf: ${s.vmaf}`);
@@ -299,7 +298,7 @@ await run('parseVmafLog(valid libvmaf JSON) → pooled mean + frame count', () =
 
 await run('parseVmafLog(no pooled metrics) → throws a "did it finish" error', () => {
   try {
-    parseVmafLogFn('{"version":"v3.0.0"}');
+    parseVmafLog('{"version":"v3.0.0"}');
   } catch (e) {
     if (!/pooled_metrics\.vmaf\.mean/.test((e as Error).message)) {
       throw new Error(`unhelpful message: ${(e as Error).message}`);
@@ -311,7 +310,7 @@ await run('parseVmafLog(no pooled metrics) → throws a "did it finish" error', 
 
 await run('parseVmafLog(invalid JSON) → throws mentioning JSON', () => {
   try {
-    parseVmafLogFn('not json at all');
+    parseVmafLog('not json at all');
   } catch (e) {
     if (!/not valid JSON/.test((e as Error).message)) throw new Error(`got: ${(e as Error).message}`);
     return;
@@ -325,7 +324,7 @@ await run('parseStatsFile(ssim) → mean of All: values', () => {
     'n:1 mse_avg:0.20 mse_y:0.22 All:0.996000 (30.1)',
     'n:2 mse_avg:0.30 mse_y:0.32 All:0.994000 (29.4)',
   ].join('\n');
-  const s = parseStatsFileFn(log, 'ssim');
+  const s = parseStatsFile(log, 'ssim');
   const expected = (0.998 + 0.996 + 0.994) / 3;
   if (Math.abs(s.value - expected) > 1e-9) throw new Error(`value: ${s.value} != ${expected}`);
   if (s.frames !== 3) throw new Error(`frames: ${s.frames}`);
@@ -337,7 +336,7 @@ await run('parseStatsFile(psnr) → mean of psnr_avg values', () => {
     'n:1 mse_avg:0.50 mse_y:0.60 psnr_avg:51.13 psnr_y:52.07',
     'n:2 mse_avg:1.20 mse_y:1.40 psnr_avg:47.31 psnr_y:48.02',
   ].join('\n');
-  const s = parseStatsFileFn(log, 'psnr');
+  const s = parseStatsFile(log, 'psnr');
   const expected = (51.13 + 47.31) / 2;
   if (Math.abs(s.value - expected) > 1e-9) throw new Error(`value: ${s.value} != ${expected}`);
   if (s.metric !== 'psnr') throw new Error(`metric: ${s.metric}`);
@@ -346,7 +345,7 @@ await run('parseStatsFile(psnr) → mean of psnr_avg values', () => {
 await run('parseStatsFile(psnr with "inf") → Infinity, not a parse error', () => {
   // ffmpeg emits psnr_avg:inf for identical frames; that is a real result
   const log = 'n:1 mse_avg:0.00 mse_y:0.00 psnr_avg:inf psnr_y:inf';
-  const s = parseStatsFileFn(log, 'psnr');
+  const s = parseStatsFile(log, 'psnr');
   // ffmpeg emits psnr_avg:inf for identical frames. That is a real result, not
   // a parse failure, and Infinity trivially clears any minScore.
   if (s.value !== Number.POSITIVE_INFINITY) throw new Error(`value: ${s.value}`);
@@ -361,13 +360,13 @@ await run('parseStatsFile(psnr, mixed inf + finite) → Infinity wins the mean',
     'n:1 psnr_avg:inf psnr_y:inf',
     'n:2 psnr_avg:40.00 psnr_y:41.00',
   ].join('\n');
-  const s = parseStatsFileFn(log, 'psnr');
+  const s = parseStatsFile(log, 'psnr');
   if (s.value !== Number.POSITIVE_INFINITY) throw new Error(`value: ${s.value}`);
 });
 
 await run('parseStatsFile("") → throws "is empty"', () => {
   try {
-    parseStatsFileFn('   \n  ', 'ssim');
+    parseStatsFile('   \n  ', 'ssim');
   } catch (e) {
     if (!/is empty/.test((e as Error).message)) throw new Error(`got: ${(e as Error).message}`);
     return;
@@ -378,7 +377,7 @@ await run('parseStatsFile("") → throws "is empty"', () => {
 await run('parseStatsFile(ssim log passed as psnr) → throws "is this a psnr stats file?"', () => {
   const log = 'n:0 mse_avg:0.10 All:0.998000 (31.2)';
   try {
-    parseStatsFileFn(log, 'psnr');
+    parseStatsFile(log, 'psnr');
   } catch (e) {
     if (!/is this a psnr stats file/.test((e as Error).message)) throw new Error(`got: ${(e as Error).message}`);
     return;
@@ -389,7 +388,7 @@ await run('parseStatsFile(ssim log passed as psnr) → throws "is this a psnr st
 await run('parseStatsFile(psnr log passed as ssim) → throws "is this an ssim stats file?"', () => {
   const log = 'n:1 psnr_avg:40.00 psnr_y:41.00';
   try {
-    parseStatsFileFn(log, 'ssim');
+    parseStatsFile(log, 'ssim');
   } catch (e) {
     if (!/is this an ssim stats file/.test((e as Error).message)) throw new Error(`got: ${(e as Error).message}`);
     return;
@@ -401,28 +400,28 @@ await run('parseStatsFile(psnr log passed as ssim) → throws "is this an ssim s
 section('44 — QUALITY METRICS: measureQuality() end to end');
 
 await run('measureQuality({metric:"ssim", reference:src, distorted:src}) → 1.0', async () => {
-  const s = await measureQualityFn({ reference: p('src.mp4'), distorted: p('src.mp4'), metric: 'ssim' });
+  const s = await measureQuality({ reference: p('src.mp4'), distorted: p('src.mp4'), metric: 'ssim' });
   if (s.value < 0.999) throw new Error(`expected ~1.0, got ${s.value}`);
   if (!s.frames || s.frames < 1) throw new Error(`frames: ${s.frames}`);
   console.log(`      ssim=${s.value.toFixed(6)} over ${s.frames} frames`);
 });
 
 await run('measureQuality({metric:"psnr", reference:src, distorted:src}) → Infinity', async () => {
-  const s = await measureQualityFn({ reference: p('src.mp4'), distorted: p('src.mp4'), metric: 'psnr' });
+  const s = await measureQuality({ reference: p('src.mp4'), distorted: p('src.mp4'), metric: 'psnr' });
   if (s.value !== Number.POSITIVE_INFINITY) throw new Error(`expected Infinity, got ${s.value}`);
 });
 
 await run('measureQuality(psnr, identical input, minScore:0) → Infinity clears the floor', async () => {
   // Regression: Infinity < Infinity is false, but a naive guard rejecting
   // non-finite scores would wrongly fail a perfect encode.
-  const s = await measureQualityFn({
+  const s = await measureQuality({
     reference: p('src.mp4'), distorted: p('src.mp4'), metric: 'psnr', minScore: 0,
   });
   if (s.value !== Number.POSITIVE_INFINITY) throw new Error(`expected Infinity, got ${s.value}`);
 });
 
 await run('measureQuality({metric:"psnr", src vs lossy}) → finite score below identical', async () => {
-  const s = await measureQualityFn({ reference: p('src.mp4'), distorted: p('lossy.mp4'), metric: 'psnr' });
+  const s = await measureQuality({ reference: p('src.mp4'), distorted: p('lossy.mp4'), metric: 'psnr' });
   if (!Number.isFinite(s.value)) throw new Error(`expected finite, got ${s.value}`);
   if (s.value > 60) throw new Error(`crf 40 re-encode should score well under 60dB, got ${s.value}`);
   console.log(`      psnr=${s.value.toFixed(3)} dB`);
@@ -430,7 +429,7 @@ await run('measureQuality({metric:"psnr", src vs lossy}) → finite score below 
 
 await run('measureQuality({metric:"ssim", minScore:0.99}) → throws with both numbers in message', async () => {
   try {
-    await measureQualityFn({
+    await measureQuality({
       reference: p('src.mp4'), distorted: p('lossy.mp4'), metric: 'ssim', minScore: 0.99,
     });
   } catch (e) {
@@ -443,13 +442,13 @@ await run('measureQuality({metric:"ssim", minScore:0.99}) → throws with both n
 });
 
 await run('measureQuality({metric:"ssim", src vs lossy}) → lower than identical', async () => {
-  const s = await measureQualityFn({ reference: p('src.mp4'), distorted: p('lossy.mp4'), metric: 'ssim' });
+  const s = await measureQuality({ reference: p('src.mp4'), distorted: p('lossy.mp4'), metric: 'ssim' });
   if (s.value >= 0.999) throw new Error(`expected < 1.0 for a lossy re-encode, got ${s.value}`);
   console.log(`      ssim=${s.value.toFixed(6)}`);
 });
 
 await run('measureQuality({metric:"ssim", minScore:0}) on a lossy encode → passes', async () => {
-  const s = await measureQualityFn({
+  const s = await measureQuality({
     reference: p('src.mp4'), distorted: p('lossy.mp4'), metric: 'ssim', minScore: 0,
   });
   if (s.value < 0) throw new Error(`value: ${s.value}`);
@@ -457,7 +456,7 @@ await run('measureQuality({metric:"ssim", minScore:0}) on a lossy encode → pas
 
 await run('measureQuality({metric:"ssim", vmaf:{target:80}}) → rejects vmaf.target', async () => {
   try {
-    await measureQualityFn({
+    await measureQuality({
       reference: p('src.mp4'), distorted: p('src.mp4'), metric: 'ssim', vmaf: { target: 80 },
     });
   } catch (e) {
@@ -469,7 +468,7 @@ await run('measureQuality({metric:"ssim", vmaf:{target:80}}) → rejects vmaf.ta
 
 await run('measureQuality leaves no stats/log files behind', async () => {
   const before = fs.readdirSync(process.cwd()).filter(f => f.startsWith('mediaforge-quality-'));
-  await measureQualityFn({ reference: p('src.mp4'), distorted: p('src.mp4'), metric: 'ssim' });
+  await measureQuality({ reference: p('src.mp4'), distorted: p('src.mp4'), metric: 'ssim' });
   const after = fs.readdirSync(process.cwd()).filter(f => f.startsWith('mediaforge-quality-'));
   if (after.length !== before.length) {
     throw new Error(`leftover files: ${after.filter(f => !before.includes(f)).join(', ')}`);
@@ -478,7 +477,7 @@ await run('measureQuality leaves no stats/log files behind', async () => {
 
 if (HAS_LIBMETRIX) {
   await run('measureQuality({metric:"vmaf", src vs lossy}) → 0-100 score', async () => {
-    const s = await measureQualityFn({ reference: p('src.mp4'), distorted: p('lossy.mp4'), metric: 'vmaf' });
+    const s = await measureQuality({ reference: p('src.mp4'), distorted: p('lossy.mp4'), metric: 'vmaf' });
     if (s.metric !== 'vmaf') throw new Error(`metric: ${s.metric}`);
     if (s.value < 0 || s.value > 100) throw new Error(`vmaf out of range: ${s.value}`);
     console.log(`      vmaf=${s.value.toFixed(3)}`);
@@ -490,7 +489,7 @@ if (HAS_LIBMETRIX) {
 await run('measureQuality({metric:"vmaf"}) on a build without libvmaf → clear error', async () => {
   if (HAS_LIBMETRIX) return; // the "not available" branch cannot fire here
   try {
-    await measureQualityFn({ reference: p('src.mp4'), distorted: p('src.mp4'), metric: 'vmaf' });
+    await measureQuality({ reference: p('src.mp4'), distorted: p('src.mp4'), metric: 'vmaf' });
   } catch (e) {
     if (!/not available in this ffmpeg build/.test((e as Error).message)) {
       throw new Error(`unhelpful message: ${(e as Error).message}`);
@@ -519,7 +518,7 @@ await run('HDR_SOURCE_PROPERTIES / SDR_TARGET_PROPERTIES describe bt2020pq → b
 });
 
 await run('buildToneMapFilter() → zscale → tonemap → zscale chain', () => {
-  const r = buildToneMapFilterFn();
+  const r = buildToneMapFilter();
   const parts = r.split(',');
   if (parts.length !== 3) throw new Error(`expected 3 stages, got ${parts.length}: ${r}`);
   if (!parts[0].startsWith('zscale=t=linear')) throw new Error(`stage 1: ${parts[0]}`);
@@ -530,7 +529,7 @@ await run('buildToneMapFilter() → zscale → tonemap → zscale chain', () => 
 await run('buildToneMapFilter uses zscale SHORT option names (t/p/m/r, not width=)', () => {
   // `width=bt2020` is a pixel size to zscale, not a colour space; ffmpeg
   // rejects it with "Invalid size 'bt2020'".
-  const r = buildToneMapFilterFn();
+  const r = buildToneMapFilter();
   if (/zscale=[^,]*\b(width|height)=/.test(r)) throw new Error(`uses long pixel options: ${r}`);
   if (!/zscale=t=linear[^,]*:p=bt2020/.test(r)) throw new Error(`primaries not set via p=: ${r}`);
   if (!/:m=bt2020nc/.test(r)) throw new Error(`matrix not set via m=: ${r}`);
@@ -538,30 +537,30 @@ await run('buildToneMapFilter uses zscale SHORT option names (t/p/m/r, not width
 });
 
 await run('buildToneMapFilter({algorithm:"hable"}) → tonemap=hable', () => {
-  const r = buildToneMapFilterFn({ algorithm: 'hable' });
+  const r = buildToneMapFilter({ algorithm: 'hable' });
   if (!r.includes('tonemap=tonemap=hable')) throw new Error(`got: ${r}`);
 });
 
 await run('buildToneMapFilter({algorithm:"mobius",parameter:0.3}) → param=0.3', () => {
-  const r = buildToneMapFilterFn({ algorithm: 'mobius', parameter: 0.3 });
+  const r = buildToneMapFilter({ algorithm: 'mobius', parameter: 0.3 });
   if (!r.includes('param=0.3')) throw new Error(`got: ${r}`);
 });
 
 await run('buildToneMapFilter({algorithm:"clip"}) → no desat (ffmpeg has no such option)', () => {
-  const r = buildToneMapFilterFn({ algorithm: 'clip' });
+  const r = buildToneMapFilter({ algorithm: 'clip' });
   const tm = r.split(',')[1]!;
   if (tm.includes('desat=')) throw new Error(`desat emitted for clip: ${tm}`);
 });
 
 await run('buildToneMapFilter({algorithm:"spline"}) → no desat', () => {
-  const r = buildToneMapFilterFn({ algorithm: 'spline' });
+  const r = buildToneMapFilter({ algorithm: 'spline' });
   if (r.split(',')[1]!.includes('desat=')) throw new Error('desat emitted for spline');
 });
 
 await run('buildToneMapFilter({algorithm:"hable",parameter:0.3}) → throws (not a parametric algo)', () => {
   for (const algo of ['hable', 'clip', 'spline'] as const) {
     try {
-      buildToneMapFilterFn({ algorithm: algo, parameter: 0.3 });
+      buildToneMapFilter({ algorithm: algo, parameter: 0.3 });
     } catch (e) {
       if (!/parameter only applies/.test((e as Error).message)) throw new Error(`got: ${(e as Error).message}`);
       continue;
@@ -572,7 +571,7 @@ await run('buildToneMapFilter({algorithm:"hable",parameter:0.3}) → throws (not
 
 await run('buildToneMapFilter({algorithm:"bogus"}) → throws listing valid values', () => {
   try {
-    buildToneMapFilterFn({ algorithm: 'bogus' as never });
+    buildToneMapFilter({ algorithm: 'bogus' as never });
   } catch (e) {
     const msg = (e as Error).message;
     if (!/unknown algorithm "bogus"/.test(msg)) throw new Error(`got: ${msg}`);
@@ -593,7 +592,7 @@ await run('buildToneMapFilter validates peak / targetPeak / desaturation', () =>
   ];
   for (const [opts, re] of cases) {
     try {
-      buildToneMapFilterFn(opts as never);
+      buildToneMapFilter(opts as never);
     } catch (e) {
       if (!(e instanceof RangeError)) throw new Error(`${JSON.stringify(opts)}: ${(e as Error).constructor.name}`);
       if (!re.test((e as Error).message)) throw new Error(`${JSON.stringify(opts)}: ${(e as Error).message}`);
@@ -604,13 +603,13 @@ await run('buildToneMapFilter validates peak / targetPeak / desaturation', () =>
 });
 
 await run('buildToneMapFilter({normalizeInput:false}) → drops the leading zscale', () => {
-  const r = buildToneMapFilterFn({ normalizeInput: false });
+  const r = buildToneMapFilter({ normalizeInput: false });
   if (r.split(',').length !== 2) throw new Error(`got: ${r}`);
   if (r.includes('zscale=t=linear')) throw new Error(`normalize zscale should be gone: ${r}`);
 });
 
 await run('buildToneMapFilter({output:"smpte170m"}) → final zscale uses that target', () => {
-  const r = buildToneMapFilterFn({ output: 'smpte170m' });
+  const r = buildToneMapFilter({ output: 'smpte170m' });
   if (!r.endsWith('zscale=t=smpte170m:p=smpte170m:m=smpte170m:r=tv')) {
     throw new Error(`got: ${r}`);
   }
@@ -618,7 +617,7 @@ await run('buildToneMapFilter({output:"smpte170m"}) → final zscale uses that t
 
 if (HAS_ZSCALE && HAS_TONEMAP) {
   await run('toneMapHdrToSdr on a real BT.2020/PQ file → SDR output tagged bt709', async () => {
-    await toneMapHdrToSdrFn({ input: p('hdr.mp4'), output: p('tonemapped.mp4'), videoCodec: 'libx264' });
+    await toneMapHdrToSdr({ input: p('hdr.mp4'), output: p('tonemapped.mp4'), videoCodec: 'libx264' });
     if (!fs.existsSync(p('tonemapped.mp4'))) throw new Error('output not created');
     const info = JSON.parse(
       execFileSync('ffprobe', [
@@ -635,7 +634,7 @@ if (HAS_ZSCALE && HAS_TONEMAP) {
     // Deliberately 10-bit BT.709: zscale in the builds available here fails on
     // 8-bit input ("Generic error in an external library") regardless of the
     // requested colour space, so an 8-bit fixture would test the build, not us.
-    await toneMapHdrToSdrFn({
+    await toneMapHdrToSdr({
       input: p('sdr10.mp4'), output: p('tonemapped_sdr.mp4'),
       requireHdrInput: false, videoCodec: 'libx264',
     });
@@ -657,7 +656,7 @@ if (HAS_ZSCALE && HAS_TONEMAP) {
 
   await run('toneMapHdrToSdr({requireHdrInput:true}) on an SDR file → throws with guidance', async () => {
     try {
-      await toneMapHdrToSdrFn({ input: p('sdr10.mp4'), output: p('nope.mp4') });
+      await toneMapHdrToSdr({ input: p('sdr10.mp4'), output: p('nope.mp4') });
     } catch (e) {
       const msg = (e as Error).message;
       if (!/does not look like HDR/.test(msg)) throw new Error(`got: ${msg}`);
@@ -668,7 +667,7 @@ if (HAS_ZSCALE && HAS_TONEMAP) {
   });
 
   await run('toneMapHdrToSdr({algorithm:"hable",peak:1000,targetPeak:100}) → runs', async () => {
-    await toneMapHdrToSdrFn({
+    await toneMapHdrToSdr({
       input: p('hdr.mp4'), output: p('tonemapped_hable.mp4'),
       algorithm: 'hable', peak: 1000, targetPeak: 100, videoCodec: 'libx264',
     });
@@ -682,7 +681,7 @@ if (HAS_ZSCALE && HAS_TONEMAP) {
 section('46 — TEMPORAL: interpolate, scenes, silence, segments');
 
 await run('buildInterpolateFilter({fps:60}) → minterpolate with mci defaults', () => {
-  const r = buildInterpolateFilterFn({ fps: 60 });
+  const r = buildInterpolateFilter({ fps: 60 });
   if (!r.startsWith('minterpolate=fps=60:')) throw new Error(`got: ${r}`);
   if (!r.includes('mi_mode=mci')) throw new Error(`got: ${r}`);
   if (!r.includes('mc_mode=obmc')) throw new Error(`got: ${r}`);
@@ -690,7 +689,7 @@ await run('buildInterpolateFilter({fps:60}) → minterpolate with mci defaults',
 });
 
 await run('buildInterpolateFilter({method:"blend"}) → omits mb_size/mc_mode (ffmpeg rejects them)', () => {
-  const r = buildInterpolateFilterFn({ fps: 30, method: 'blend' });
+  const r = buildInterpolateFilter({ fps: 30, method: 'blend' });
   if (!r.includes('mi_mode=blend')) throw new Error(`got: ${r}`);
   // ffmpeg errors with "Error setting option mb_size" for dup/blend
   if (r.includes('mb_size=')) throw new Error(`mb_size emitted for blend: ${r}`);
@@ -698,25 +697,25 @@ await run('buildInterpolateFilter({method:"blend"}) → omits mb_size/mc_mode (f
 });
 
 await run('buildInterpolateFilter({method:"dup"}) → omits mb_size/mc_mode', () => {
-  const r = buildInterpolateFilterFn({ fps: 30, method: 'dup' });
+  const r = buildInterpolateFilter({ fps: 30, method: 'dup' });
   if (r.includes('mb_size=')) throw new Error(`mb_size emitted for dup: ${r}`);
   if (!r.includes('mi_mode=dup')) throw new Error(`got: ${r}`);
 });
 
 await run('buildInterpolateFilter({mcMode:"aobmc",meMode:"bilat"}) → emitted for mci', () => {
-  const r = buildInterpolateFilterFn({ fps: 60, mcMode: 'aobmc', meMode: 'bilat' });
+  const r = buildInterpolateFilter({ fps: 60, mcMode: 'aobmc', meMode: 'bilat' });
   if (!r.includes('mc_mode=aobmc')) throw new Error(`got: ${r}`);
   if (!r.includes('me_mode=bilat')) throw new Error(`got: ${r}`);
 });
 
 await run('buildInterpolateFilter({meMethod:"umh"}) → me=umh', () => {
-  const r = buildInterpolateFilterFn({ fps: 60, meMethod: 'umh' });
+  const r = buildInterpolateFilter({ fps: 60, meMethod: 'umh' });
   if (!r.includes('me=umh')) throw new Error(`got: ${r}`);
 });
 
 await run('buildInterpolateFilter({fps:0}) → RangeError', () => {
   try {
-    buildInterpolateFilterFn({ fps: 0 });
+    buildInterpolateFilter({ fps: 0 });
   } catch (e) {
     if (!(e instanceof RangeError)) throw new Error(`wrong type: ${(e as Error).constructor.name}`);
     return;
@@ -726,13 +725,13 @@ await run('buildInterpolateFilter({fps:0}) → RangeError', () => {
 
 await run('buildInterpolateFilter({fps:NaN}) → RangeError', () => {
   let threw = false;
-  try { buildInterpolateFilterFn({ fps: Number.NaN }); } catch (e) { threw = e instanceof RangeError; }
+  try { buildInterpolateFilter({ fps: Number.NaN }); } catch (e) { threw = e instanceof RangeError; }
   if (!threw) throw new Error('expected RangeError');
 });
 
 await run('buildInterpolateFilter({method:"mi"}) → throws (invented value)', () => {
   try {
-    buildInterpolateFilterFn({ fps: 60, method: 'mi' as never });
+    buildInterpolateFilter({ fps: 60, method: 'mi' as never });
   } catch (e) {
     if (!/unknown method "mi"/.test((e as Error).message)) throw new Error(`got: ${(e as Error).message}`);
     if (!/mci, blend, dup/.test((e as Error).message)) throw new Error(`should list valid values`);
@@ -745,7 +744,7 @@ await run('buildInterpolateFilter({method:"mci",mcMode:"mci"}) → throws (inven
   // Regression: the first API used "mci" as a mc_mode, which ffmpeg rejects
   // with 'Error setting option mc_mode to value mci'.
   try {
-    buildInterpolateFilterFn({ fps: 60, method: 'mci', mcMode: 'mci' as never });
+    buildInterpolateFilter({ fps: 60, method: 'mci', mcMode: 'mci' as never });
   } catch (e) {
     if (!/unknown mcMode "mci"/.test((e as Error).message)) throw new Error(`got: ${(e as Error).message}`);
     return;
@@ -755,7 +754,7 @@ await run('buildInterpolateFilter({method:"mci",mcMode:"mci"}) → throws (inven
 
 await run('buildInterpolateFilter({mbSize:2}) → RangeError (ffmpeg needs >= 4)', () => {
   try {
-    buildInterpolateFilterFn({ fps: 60, mbSize: 2 });
+    buildInterpolateFilter({ fps: 60, mbSize: 2 });
   } catch (e) {
     if (!(e instanceof RangeError)) throw new Error(`wrong type: ${(e as Error).constructor.name}`);
     return;
@@ -764,7 +763,7 @@ await run('buildInterpolateFilter({mbSize:2}) → RangeError (ffmpeg needs >= 4)
 });
 
 await run('interpolateFrames({fps:30, method:"dup"}) → real file at 30fps', async () => {
-  await interpolateFramesFn({
+  await interpolateFrames({
     input: p('src.mp4'), output: p('interp_dup.mp4'), fps: 30, method: 'dup',
   });
   if (!fs.existsSync(p('interp_dup.mp4'))) throw new Error('output not created');
@@ -778,7 +777,7 @@ await run('interpolateFrames({fps:30, method:"dup"}) → real file at 30fps', as
 });
 
 await run('buildSceneCutArgs([t=2,t=4]) → windows [0,2] and [2,4]', () => {
-  const args = buildSceneCutArgsFn([
+  const args = buildSceneCutArgs([
     { timestamp: 2, sceneNumber: 1 }, { timestamp: 4, sceneNumber: 1 },
   ]);
   // ffmpeg seeks with -ss/-to; the first clip runs from the START of the file
@@ -790,24 +789,24 @@ await run('buildSceneCutArgs([t=2,t=4]) → windows [0,2] and [2,4]', () => {
 });
 
 await run('buildSceneCutArgs([]) → no windows (single unbroken scene)', () => {
-  if (buildSceneCutArgsFn([]).length !== 0) throw new Error('expected no args');
+  if (buildSceneCutArgs([]).length !== 0) throw new Error('expected no args');
 });
 
 await run('buildSceneCutArgs sorts unsorted boundaries', () => {
-  const args = buildSceneCutArgsFn([{ timestamp: 4, sceneNumber: 1 }, { timestamp: 1, sceneNumber: 1 }]);
+  const args = buildSceneCutArgs([{ timestamp: 4, sceneNumber: 1 }, { timestamp: 1, sceneNumber: 1 }]);
   if (args[1] !== '0.000' || args[3] !== '1.000') throw new Error(`got: ${args.join(' ')}`);
   if (args[5] !== '1.000' || args[7] !== '4.000') throw new Error(`got: ${args.join(' ')}`);
 });
 
 await run('buildSceneCutArgs de-duplicates identical boundaries', () => {
-  const args = buildSceneCutArgsFn([
+  const args = buildSceneCutArgs([
     { timestamp: 2, sceneNumber: 1 }, { timestamp: 2, sceneNumber: 1 }, { timestamp: 2, sceneNumber: 1 },
   ]);
   if (args.length !== 4) throw new Error(`expected one window, got ${args.join(' ')}`);
 });
 
 await run('buildSceneCutArgs({trimStart:0.2}) shortens each window from its END', () => {
-  const args = buildSceneCutArgsFn([{ timestamp: 2, sceneNumber: 1 }, { timestamp: 4, sceneNumber: 1 }], { trimStart: 0.2 });
+  const args = buildSceneCutArgs([{ timestamp: 2, sceneNumber: 1 }, { timestamp: 4, sceneNumber: 1 }], { trimStart: 0.2 });
   if (args[3] !== '1.800') throw new Error(`first window end: ${args[3]}`);
   // the next window still STARTS at the boundary — only the tail is dropped
   if (args[5] !== '2.000') throw new Error(`second window start: ${args[5]}`);
@@ -815,18 +814,18 @@ await run('buildSceneCutArgs({trimStart:0.2}) shortens each window from its END'
 });
 
 await run('buildSceneCutArgs({trimStart:5}) drops windows shorter than the trim', () => {
-  const args = buildSceneCutArgsFn([{ timestamp: 2, sceneNumber: 1 }], { trimStart: 5 });
+  const args = buildSceneCutArgs([{ timestamp: 2, sceneNumber: 1 }], { trimStart: 5 });
   if (args.length !== 0) throw new Error(`expected the window to be dropped, got ${args.join(' ')}`);
 });
 
 await run('buildSceneCutArgs({endTime:3}) clips later boundaries', () => {
-  const args = buildSceneCutArgsFn([{ timestamp: 2, sceneNumber: 1 }, { timestamp: 4, sceneNumber: 1 }], { endTime: 3 });
+  const args = buildSceneCutArgs([{ timestamp: 2, sceneNumber: 1 }, { timestamp: 4, sceneNumber: 1 }], { endTime: 3 });
   if (args[7] !== '3.000') throw new Error(`got: ${args.join(' ')}`);
 });
 
 await run('buildSceneCutArgs({trimStart:-1}) → RangeError', () => {
   try {
-    buildSceneCutArgsFn([{ timestamp: 1, sceneNumber: 1 }], { trimStart: -1 });
+    buildSceneCutArgs([{ timestamp: 1, sceneNumber: 1 }], { trimStart: -1 });
   } catch (e) {
     if (!(e instanceof RangeError)) throw new Error(`wrong type: ${(e as Error).constructor.name}`);
     return;
@@ -835,25 +834,25 @@ await run('buildSceneCutArgs({trimStart:-1}) → RangeError', () => {
 });
 
 await run('cutToScenes on a 3-scene clip → output created', async () => {
-  await cutToScenesFn({ input: p('cut.mp4'), output: p('cut_out.mp4'), threshold: 0.1 });
+  await cutToScenes({ input: p('cut.mp4'), output: p('cut_out.mp4'), threshold: 0.1 });
   if (!fs.existsSync(p('cut_out.mp4'))) throw new Error('output not created');
   if (fs.statSync(p('cut_out.mp4')).size === 0) throw new Error('output is empty');
 });
 
 await run('detectScenes on cut.mp4 finds at least one boundary', async () => {
-  const scenes = await detectScenesFn({ input: p('cut.mp4'), threshold: 0.1 });
+  const scenes = await detectScenes({ input: p('cut.mp4'), threshold: 0.1 });
   if (!Array.isArray(scenes)) throw new Error(`not an array: ${typeof scenes}`);
   console.log(`      scene changes: ${scenes.length}`);
 });
 
 await run('buildSilenceRemoveFilter() → silenceremove', () => {
-  const r = buildSilenceRemoveFilterFn();
+  const r = buildSilenceRemoveFilter();
   if (!r.startsWith('silenceremove=')) throw new Error(`got: ${r}`);
   if (!r.includes('start_periods=1')) throw new Error(`got: ${r}`);
 });
 
 await run('buildSilenceRemoveFilter({threshold:-35,minDuration:0.4}) → real ffmpeg option names', () => {
-  const r = buildSilenceRemoveFilterFn({ threshold: -35, minDuration: 0.4 });
+  const r = buildSilenceRemoveFilter({ threshold: -35, minDuration: 0.4 });
   // silenceremove has no threshold_n; it has start_threshold / stop_threshold.
   if (r.includes('threshold_n')) throw new Error(`invented option: ${r}`);
   if (!r.includes('start_threshold=-35dB')) throw new Error(`got: ${r}`);
@@ -863,7 +862,7 @@ await run('buildSilenceRemoveFilter({threshold:-35,minDuration:0.4}) → real ff
 });
 
 await run('buildSilenceRemoveFilter output is accepted by the real silenceremove filter', () => {
-  const r = buildSilenceRemoveFilterFn({ threshold: -35, minDuration: 0.4 });
+  const r = buildSilenceRemoveFilter({ threshold: -35, minDuration: 0.4 });
   execFileSync('ffmpeg', [
     '-hide_banner', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1',
     '-af', r, '-f', 'null', '-',
@@ -873,7 +872,7 @@ await run('buildSilenceRemoveFilter output is accepted by the real silenceremove
 await run('buildSilenceRemoveFilter rejects an out-of-range threshold/duration', () => {
   for (const opts of [{ threshold: 5 }, { threshold: -500 }, { minDuration: 0 }, { minDuration: -1 }]) {
     try {
-      buildSilenceRemoveFilterFn(opts as never);
+      buildSilenceRemoveFilter(opts as never);
     } catch (e) {
       if (!(e instanceof RangeError)) throw new Error(`${JSON.stringify(opts)}: ${(e as Error).constructor.name}`);
       continue;
@@ -887,7 +886,7 @@ await run('removeSilence on a tone with a silent gap → shorter output', async 
     execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration',
       '-of', 'json', p('tone_gap.wav')], { encoding: 'utf8' }),
   );
-  await removeSilenceFn({
+  await removeSilence({
     input: p('tone_gap.wav'), output: p('tone_trimmed.wav'), threshold: -50, minDuration: 0.2,
   });
   if (!fs.existsSync(p('tone_trimmed.wav'))) throw new Error('output not created');
@@ -902,7 +901,7 @@ await run('removeSilence on a tone with a silent gap → shorter output', async 
 });
 
 await run('buildSegmentArgs forces keyframes at the segment boundaries', () => {
-  const args = buildSegmentArgsFn({ input: 'in.mp4', outputPattern: 'seg%03d.ts', segmentTime: 1 });
+  const args = buildSegmentArgs({ input: 'in.mp4', outputPattern: 'seg%03d.ts', segmentTime: 1 });
   const i = args.indexOf('-force_key_frames');
   if (i === -1) throw new Error('no -force_key_frames; the muxer can only cut on keyframes');
   if (args[i + 1] !== 'expr:gte(t,n_forced*1)') throw new Error(`got: ${args[i + 1]}`);
@@ -911,14 +910,14 @@ await run('buildSegmentArgs forces keyframes at the segment boundaries', () => {
 });
 
 await run('buildSegmentArgs({forceKeyFrames:false}) omits the keyframe expression', () => {
-  const args = buildSegmentArgsFn({
+  const args = buildSegmentArgs({
     input: 'in.mp4', outputPattern: 'seg%03d.ts', forceKeyFrames: false,
   });
   if (args.includes('-force_key_frames')) throw new Error('still forcing keyframes');
 });
 
 await run('buildSegmentArgs({resetTimestamps:false}) omits -reset_timestamps', () => {
-  const args = buildSegmentArgsFn({
+  const args = buildSegmentArgs({
     input: 'in.mp4', outputPattern: 'seg%03d.ts', resetTimestamps: false,
   });
   if (args.includes('-reset_timestamps')) throw new Error('still resetting timestamps');
@@ -926,7 +925,7 @@ await run('buildSegmentArgs({resetTimestamps:false}) omits -reset_timestamps', (
 
 await run('buildSegmentArgs("out.ts" without %d) → throws', () => {
   try {
-    buildSegmentArgsFn({ input: 'in.mp4', outputPattern: 'out.ts' });
+    buildSegmentArgs({ input: 'in.mp4', outputPattern: 'out.ts' });
   } catch (e) {
     if (!/printf-style index/.test((e as Error).message)) throw new Error(`got: ${(e as Error).message}`);
     return;
@@ -936,7 +935,7 @@ await run('buildSegmentArgs("out.ts" without %d) → throws', () => {
 
 await run('buildSegmentArgs({segmentTime:0}) → RangeError', () => {
   try {
-    buildSegmentArgsFn({ input: 'in.mp4', outputPattern: 'seg%03d.ts', segmentTime: 0 });
+    buildSegmentArgs({ input: 'in.mp4', outputPattern: 'seg%03d.ts', segmentTime: 0 });
   } catch (e) {
     if (!(e instanceof RangeError)) throw new Error(`wrong type: ${(e as Error).constructor.name}`);
     return;
@@ -945,7 +944,7 @@ await run('buildSegmentArgs({segmentTime:0}) → RangeError', () => {
 });
 
 await run('writeSegments on a 4s clip with segmentTime 1 → 4 segments', async () => {
-  await writeSegmentsFn({
+  await writeSegments({
     input: p('src.mp4'), outputPattern: p('seg%03d.ts'), segmentTime: 1,
   });
   const segs = fs.readdirSync(TMP).filter(f => /^seg\d{3}\.ts$/.test(f));
@@ -966,12 +965,12 @@ await run('HWACCELS lists ffmpeg\'s -hwaccel values', () => {
 });
 
 await run('buildHwUploadFilter({accel:"cuda"}) → "hwupload"', () => {
-  if (buildHwUploadFilterFn({ accel: 'cuda' }) !== 'hwupload') throw new Error('not "hwupload"');
+  if (buildHwUploadFilter({ accel: 'cuda' }) !== 'hwupload') throw new Error('not "hwupload"');
 });
 
 await run('buildHwUploadFilter({accel:"bogus"}) → throws listing valid accels', () => {
   try {
-    buildHwUploadFilterFn({ accel: 'bogus' as never });
+    buildHwUploadFilter({ accel: 'bogus' as never });
   } catch (e) {
     if (!/Unknown hwaccel "bogus"/.test((e as Error).message)) throw new Error(`got: ${(e as Error).message}`);
     if (!/cuda/.test((e as Error).message)) throw new Error('should list valid values');
@@ -981,12 +980,12 @@ await run('buildHwUploadFilter({accel:"bogus"}) → throws listing valid accels'
 });
 
 await run('buildHwDownloadFilter() → hwdownload=format=nv12 (explicit format)', () => {
-  const r = buildHwDownloadFilterFn();
+  const r = buildHwDownloadFilter();
   if (r !== 'hwdownload=format=nv12') throw new Error(`got: ${r}`);
 });
 
 await run('buildHwDownloadFilter("yuv420p10le") → that format', () => {
-  const r = buildHwDownloadFilterFn('yuv420p10le');
+  const r = buildHwDownloadFilter('yuv420p10le');
   if (r !== 'hwdownload=format=yuv420p10le') throw new Error(`got: ${r}`);
 });
 
@@ -996,13 +995,13 @@ await run('buildHwScaleFilter maps each accel to its GPU scaler', () => {
     ['qsv', 'scale_qsv'], ['vulkan', 'scale_vulkan'],
   ];
   for (const [accel, filter] of cases) {
-    const r = buildHwScaleFilterFn({ accel: accel as never, width: 1280, height: 720 });
+    const r = buildHwScaleFilter({ accel: accel as never, width: 1280, height: 720 });
     if (r !== `${filter}=w=1280:h=720`) throw new Error(`${accel} → ${r}`);
   }
 });
 
 await run('buildHwScaleFilter({format,mode}) → extra options', () => {
-  const r = buildHwScaleFilterFn({
+  const r = buildHwScaleFilter({
     accel: 'vaapi', width: 640, height: 360, format: 'nv12|vaapi', mode: 'bilinear',
   });
   if (r !== 'scale_vaapi=w=640:h=360:format=nv12|vaapi:mode=bilinear') throw new Error(`got: ${r}`);
@@ -1010,7 +1009,7 @@ await run('buildHwScaleFilter({format,mode}) → extra options', () => {
 
 await run('buildHwScaleFilter({accel:"videotoolbox"}) → throws (no GPU scaler exists)', () => {
   try {
-    buildHwScaleFilterFn({ accel: 'videotoolbox', width: 640, height: 360 });
+    buildHwScaleFilter({ accel: 'videotoolbox', width: 640, height: 360 });
   } catch (e) {
     const msg = (e as Error).message;
     if (!/no GPU scaler for "videotoolbox"/.test(msg)) throw new Error(`got: ${msg}`);
@@ -1025,14 +1024,14 @@ await run('buildHwScaleFilter({accel:"videotoolbox"}) → throws (no GPU scaler 
 
 await run('buildHwScaleFilter({accel:"d3d11va"}) → throws (no GPU scaler)', () => {
   let threw = false;
-  try { buildHwScaleFilterFn({ accel: 'd3d11va', width: 640, height: 360 }); }
+  try { buildHwScaleFilter({ accel: 'd3d11va', width: 640, height: 360 }); }
   catch { threw = true; }
   if (!threw) throw new Error('expected a throw');
 });
 
 await run('buildHwScaleFilter({width:0}) → RangeError', () => {
   try {
-    buildHwScaleFilterFn({ accel: 'cuda', width: 0, height: 360 });
+    buildHwScaleFilter({ accel: 'cuda', width: 0, height: 360 });
   } catch (e) {
     if (!(e instanceof RangeError)) throw new Error(`wrong type: ${(e as Error).constructor.name}`);
     return;
@@ -1042,15 +1041,15 @@ await run('buildHwScaleFilter({width:0}) → RangeError', () => {
 
 await run('buildHwScaleFilter({height:1.5}) → RangeError (must be an integer)', () => {
   let threw = false;
-  try { buildHwScaleFilterFn({ accel: 'cuda', width: 640, height: 1.5 }); }
+  try { buildHwScaleFilter({ accel: 'cuda', width: 640, height: 1.5 }); }
   catch (e) { threw = e instanceof RangeError; }
   if (!threw) throw new Error('expected RangeError');
 });
 
 await run('buildHwFilterChain → upload, GPU filters, download, CPU filters in order', () => {
-  const r = buildHwFilterChainFn({
+  const r = buildHwFilterChain({
     accel: 'cuda',
-    gpuFilters: [buildHwScaleFilterFn({ accel: 'cuda', width: 1280, height: 720 })],
+    gpuFilters: [buildHwScaleFilter({ accel: 'cuda', width: 1280, height: 720 })],
     cpuFilters: ['drawtext=text=hi'],
   });
   const parts = r.split(',');
@@ -1062,7 +1061,7 @@ await run('buildHwFilterChain → upload, GPU filters, download, CPU filters in 
 
 await run('buildHwFilterChain({gpuFilters:[]}) → throws (never faster than software)', () => {
   try {
-    buildHwFilterChainFn({ accel: 'cuda', gpuFilters: [] });
+    buildHwFilterChain({ accel: 'cuda', gpuFilters: [] });
   } catch (e) {
     if (!/gpuFilters is empty/.test((e as Error).message)) throw new Error(`got: ${(e as Error).message}`);
     return;
@@ -1071,7 +1070,7 @@ await run('buildHwFilterChain({gpuFilters:[]}) → throws (never faster than sof
 });
 
 await run('buildHwFilterChain honours downloadFormat', () => {
-  const r = buildHwFilterChainFn({
+  const r = buildHwFilterChain({
     accel: 'vaapi', gpuFilters: ['scale_vaapi=w=640:h=360'], downloadFormat: 'yuv420p',
   });
   if (!r.includes('hwdownload=format=yuv420p')) throw new Error(`got: ${r}`);
@@ -1079,7 +1078,7 @@ await run('buildHwFilterChain honours downloadFormat', () => {
 
 await run('buildHwFilterChain({accel:"bogus"}) → throws', () => {
   let threw = false;
-  try { buildHwFilterChainFn({ accel: 'bogus' as never, gpuFilters: ['scale_cuda=w=1:h=1'] }); }
+  try { buildHwFilterChain({ accel: 'bogus' as never, gpuFilters: ['scale_cuda=w=1:h=1'] }); }
   catch { threw = true; }
   if (!threw) throw new Error('expected a throw');
 });
@@ -1093,18 +1092,18 @@ await run('subtitleCodecFor maps formats to real ffmpeg codecs', () => {
     ['vtt', 'webvtt'], ['webvtt', 'webvtt'], ['mov_text', 'mov_text'], ['text', 'text'],
   ];
   for (const [fmt, codec] of cases) {
-    const r = subtitleCodecForFn(fmt as never);
+    const r = subtitleCodecFor(fmt as never);
     if (r !== codec) throw new Error(`${fmt} → ${r} (want ${codec})`);
   }
 });
 
 await run('subtitleCodecFor("vtt") → "webvtt" (ffmpeg has no "vtt" codec)', () => {
-  if (subtitleCodecForFn('vtt') !== 'webvtt') throw new Error('got a bare "vtt"');
+  if (subtitleCodecFor('vtt') !== 'webvtt') throw new Error('got a bare "vtt"');
 });
 
 await run('subtitleCodecFor("bogus") → throws listing valid formats', () => {
   try {
-    subtitleCodecForFn('bogus' as never);
+    subtitleCodecFor('bogus' as never);
   } catch (e) {
     if (!/Unknown subtitle format "bogus"/.test((e as Error).message)) throw new Error(`got: ${(e as Error).message}`);
     return;
@@ -1118,13 +1117,13 @@ await run('subtitleExtensionFor maps formats to the extension ffmpeg picks', () 
     ['vtt', '.vtt'], ['webvtt', '.vtt'], ['mov_text', '.m4v'], ['text', '.txt'],
   ];
   for (const [fmt, ext] of cases) {
-    const r = subtitleExtensionForFn(fmt as never);
+    const r = subtitleExtensionFor(fmt as never);
     if (r !== ext) throw new Error(`${fmt} → ${r} (want ${ext})`);
   }
 });
 
 await run('convertSubtitles mkv → srt sidecar with real cues', async () => {
-  await convertSubtitlesFn({ input: p('with_subs.mkv'), output: p('converted.srt'), format: 'srt' });
+  await convertSubtitles({ input: p('with_subs.mkv'), output: p('converted.srt'), format: 'srt' });
   if (!fs.existsSync(p('converted.srt'))) throw new Error('output not created');
   const body = fs.readFileSync(p('converted.srt'), 'utf8');
   if (!body.includes('Hello world')) throw new Error(`cue text missing: ${JSON.stringify(body.slice(0, 120))}`);
@@ -1132,20 +1131,20 @@ await run('convertSubtitles mkv → srt sidecar with real cues', async () => {
 });
 
 await run('convertSubtitles mkv → webvtt writes a WEBVTT header', async () => {
-  await convertSubtitlesFn({ input: p('with_subs.mkv'), output: p('converted.vtt'), format: 'webvtt' });
+  await convertSubtitles({ input: p('with_subs.mkv'), output: p('converted.vtt'), format: 'webvtt' });
   const body = fs.readFileSync(p('converted.vtt'), 'utf8');
   if (!body.startsWith('WEBVTT')) throw new Error(`no WEBVTT header: ${JSON.stringify(body.slice(0, 40))}`);
 });
 
 await run('convertSubtitles({streamIndex:0}) picks the first subtitle stream', async () => {
-  await convertSubtitlesFn({
+  await convertSubtitles({
     input: p('with_subs.mkv'), output: p('converted2.srt'), format: 'srt', streamIndex: 0,
   });
   if (fs.statSync(p('converted2.srt')).size === 0) throw new Error('empty output');
 });
 
 await run('convertSubtitles({shiftSeconds:1}) delays the cues', async () => {
-  await convertSubtitlesFn({ input: p('with_subs.mkv'), output: p('shifted.srt'), shiftSeconds: 1 });
+  await convertSubtitles({ input: p('with_subs.mkv'), output: p('shifted.srt'), shiftSeconds: 1 });
   const body = fs.readFileSync(p('shifted.srt'), 'utf8');
   const first = /(\d{2}):(\d{2}):(\d{2}),(\d{3}) --> /.exec(body);
   if (!first) throw new Error('no cue timing found');
@@ -1156,7 +1155,7 @@ await run('convertSubtitles({shiftSeconds:1}) delays the cues', async () => {
 
 await run('convertSubtitles({shiftSeconds,fixDuration}) → throws (two timing fixes)', async () => {
   try {
-    await convertSubtitlesFn({
+    await convertSubtitles({
       input: p('with_subs.mkv'), output: p('x.srt'), shiftSeconds: 1, fixDuration: true,
     });
   } catch (e) {
@@ -1168,7 +1167,7 @@ await run('convertSubtitles({shiftSeconds,fixDuration}) → throws (two timing f
 
 await run('convertSubtitles({shiftSeconds:NaN}) → RangeError', async () => {
   try {
-    await convertSubtitlesFn({
+    await convertSubtitles({
       input: p('with_subs.mkv'), output: p('x.srt'), shiftSeconds: Number.NaN,
     });
   } catch (e) {
@@ -1181,7 +1180,7 @@ await run('convertSubtitles({shiftSeconds:NaN}) → RangeError', async () => {
 await run('convertSubtitles({burn:true}) burns into the video AND cleans up its temp dir', async () => {
   if (!HAS_DRAW_TEXT) throw new Error('ffmpeg has no drawtext filter');
   const before = fs.readdirSync('/tmp').filter(f => f.startsWith('mediaforge-subs-'));
-  await convertSubtitlesFn({
+  await convertSubtitles({
     input: p('with_subs.mkv'), output: p('burned.mp4'), format: 'srt', burn: true,
   });
   if (!fs.existsSync(p('burned.mp4'))) throw new Error('output not created');
@@ -1193,13 +1192,13 @@ await run('convertSubtitles({burn:true}) burns into the video AND cleans up its 
 });
 
 await run('fixSubtitleDuration rewrites cue end times', async () => {
-  await fixSubtitleDurationFn({ input: p('with_subs.mkv'), output: p('fixed.srt'), format: 'srt' });
+  await fixSubtitleDuration({ input: p('with_subs.mkv'), output: p('fixed.srt'), format: 'srt' });
   if (!fs.existsSync(p('fixed.srt'))) throw new Error('output not created');
   if (!/-->/.test(fs.readFileSync(p('fixed.srt'), 'utf8'))) throw new Error('no cue timings');
 });
 
 await run('buildVarStreamMap → "v:0,a:0,name:1080p v:1,a:1,name:720p"', () => {
-  const r = buildVarStreamMapFn([
+  const r = buildVarStreamMap([
     { name: '1080p', resolution: '1920x1080', videoBitrate: '5M' },
     { name: '720p', resolution: '1280x720', videoBitrate: '2.5M' },
   ]);
@@ -1209,12 +1208,12 @@ await run('buildVarStreamMap → "v:0,a:0,name:1080p v:1,a:1,name:720p"', () => 
 
 await run('buildVarStreamMap([]) → throws', () => {
   let threw = false;
-  try { buildVarStreamMapFn([]); } catch { threw = true; }
+  try { buildVarStreamMap([]); } catch { threw = true; }
   if (!threw) throw new Error('expected a throw');
 });
 
 await run('validateAbrVariants accepts even dimensions', () => {
-  validateAbrVariantsFn([
+  validateAbrVariants([
     { name: '720p', resolution: '1280x720', videoBitrate: '2M' },
     { name: '360p', resolution: '640x360', videoBitrate: '800k' },
   ]);
@@ -1222,7 +1221,7 @@ await run('validateAbrVariants accepts even dimensions', () => {
 
 await run('validateAbrVariants rejects ODD dimensions (MPEG-TS/yuv420p)', () => {
   try {
-    validateAbrVariantsFn([{ name: 'odd', resolution: '1281x720', videoBitrate: '2M' }]);
+    validateAbrVariants([{ name: 'odd', resolution: '1281x720', videoBitrate: '2M' }]);
   } catch (e) {
     if (!/width of variant "odd" is 1281, which is odd/.test((e as Error).message)) {
       throw new Error(`got: ${(e as Error).message}`);
@@ -1234,7 +1233,7 @@ await run('validateAbrVariants rejects ODD dimensions (MPEG-TS/yuv420p)', () => 
 
 await run('validateAbrVariants rejects odd HEIGHT too', () => {
   try {
-    validateAbrVariantsFn([{ name: 'odd', resolution: '1280x721', videoBitrate: '2M' }]);
+    validateAbrVariants([{ name: 'odd', resolution: '1280x721', videoBitrate: '2M' }]);
   } catch (e) {
     if (!/height of variant "odd" is 721/.test((e as Error).message)) throw new Error(`got: ${(e as Error).message}`);
     return;
@@ -1251,7 +1250,7 @@ await run('validateAbrVariants rejects a bad resolution / missing bitrate / empt
   ];
   for (const [variant, re] of cases) {
     try {
-      validateAbrVariantsFn([variant as never]);
+      validateAbrVariants([variant as never]);
     } catch (e) {
       if (!re.test((e as Error).message)) throw new Error(`${JSON.stringify(variant)}: ${(e as Error).message}`);
       continue;
@@ -1262,7 +1261,7 @@ await run('validateAbrVariants rejects a bad resolution / missing bitrate / empt
 
 await run('validateAbrVariants([]) → throws "at least one variant"', () => {
   try {
-    validateAbrVariantsFn([]);
+    validateAbrVariants([]);
   } catch (e) {
     if (!/at least one variant/.test((e as Error).message)) throw new Error(`got: ${(e as Error).message}`);
     return;
@@ -1271,7 +1270,7 @@ await run('validateAbrVariants([]) → throws "at least one variant"', () => {
 });
 
 await run('buildAbrLadderFilter → split/asplit + one scale per variant', () => {
-  const r = buildAbrLadderFilterFn({
+  const r = buildAbrLadderFilter({
     variants: [
       { name: '720p', resolution: '1280x720', videoBitrate: '2M' },
       { name: '360p', resolution: '640x360', videoBitrate: '800k' },
@@ -1284,14 +1283,14 @@ await run('buildAbrLadderFilter → split/asplit + one scale per variant', () =>
 });
 
 await run('buildAbrLadderFilter does not leave a trailing ";" (ffmpeg 4.x rejects it)', () => {
-  const r = buildAbrLadderFilterFn({
+  const r = buildAbrLadderFilter({
     variants: [{ name: 'x', resolution: '640x360', videoBitrate: '1M' }],
   });
   if (r.endsWith(';')) throw new Error(`trailing semicolon: ${r}`);
 });
 
 await run('buildAbrLadderArgs composes the full single-pass ladder', () => {
-  const args = buildAbrLadderArgsFn({
+  const args = buildAbrLadderArgs({
     input: 'in.mp4',
     outputPattern: 'v%v/index.m3u8',
     variants: [
@@ -1314,7 +1313,7 @@ await run('buildAbrLadderArgs composes the full single-pass ladder', () => {
 await run('buildAbrLadderArgs passes the master playlist as a BARE name', () => {
   // ffmpeg resolves -master_pl_name against the output dir and prepends it
   // even to an absolute path, so an absolute name lands in the wrong place.
-  const args = buildAbrLadderArgsFn({
+  const args = buildAbrLadderArgs({
     input: 'in.mp4',
     outputPattern: 'v%v/index.m3u8',
     variants: [{ name: 'x', resolution: '640x360', videoBitrate: '1M' }],
@@ -1328,7 +1327,7 @@ await run('buildAbrLadderArgs passes the master playlist as a BARE name', () => 
 
 await run('buildAbrLadderArgs(outputPattern without %v) → throws', () => {
   try {
-    buildAbrLadderArgsFn({
+    buildAbrLadderArgs({
       input: 'in.mp4', outputPattern: 'index.m3u8',
       variants: [{ name: 'x', resolution: '640x360', videoBitrate: '1M' }],
     });
@@ -1341,7 +1340,7 @@ await run('buildAbrLadderArgs(outputPattern without %v) → throws', () => {
 
 await run('buildAbrLadderArgs rejects odd dimensions too (same rule as the runner)', () => {
   try {
-    buildAbrLadderArgsFn({
+    buildAbrLadderArgs({
       input: 'in.mp4', outputPattern: 'v%v/i.m3u8',
       variants: [{ name: 'odd', resolution: '641x361', videoBitrate: '1M' }],
     });
@@ -1353,7 +1352,7 @@ await run('buildAbrLadderArgs rejects odd dimensions too (same rule as the runne
 });
 
 await run('buildAbrLadderArgs({hlsFlags}) forwards the flags', () => {
-  const args = buildAbrLadderArgsFn({
+  const args = buildAbrLadderArgs({
     input: 'in.mp4', outputPattern: 'v%v/i.m3u8', hlsFlags: 'independent_segments',
     variants: [{ name: 'x', resolution: '640x360', videoBitrate: '1M' }],
   });
@@ -1365,7 +1364,7 @@ await run('abrLadder() returns a builder that encodes two renditions + a master 
   const outDir = path.join(TMP, 'abr');
   fs.rmSync(outDir, { recursive: true, force: true });
   fs.mkdirSync(outDir, { recursive: true });
-  await abrLadderFn({
+  await abrLadder({
     input: p('src.mp4'),
     outputPattern: path.join(outDir, 'v%v/index.m3u8'),
     variants: [
@@ -1383,19 +1382,19 @@ await run('abrLadder() returns a builder that encodes two renditions + a master 
 });
 
 await run('delogo(opts) standalone → "delogo=x=…:y=…:w=…:h=…"', () => {
-  const r = delogoFn({ x: 10, y: 20, width: 100, height: 50 });
+  const r = delogo({ x: 10, y: 20, width: 100, height: 50 });
   if (r !== 'delogo=x=10:y=20:w=100:h=50') throw new Error(`got: ${r}`);
 });
 
 await run('delogo({show:true}) → show=1', () => {
-  const r = delogoFn({ x: 0, y: 0, width: 10, height: 10, show: true });
+  const r = delogo({ x: 0, y: 0, width: 10, height: 10, show: true });
   if (!r.includes('show=1')) throw new Error(`got: ${r}`);
 });
 
 await run('delogo chain overload appends to an existing FilterChain', async () => {
-  const { FilterChain } = await import('./lib/types/filters.js');
+  const { FilterChain } = await import('../../lib/types/filters.ts');
   const chain = new FilterChain();
-  delogoFn(chain, { x: 5, y: 5, width: 20, height: 20 });
+  delogo(chain, { x: 5, y: 5, width: 20, height: 20 });
   const r = chain.toString();
   if (!r.includes('delogo')) throw new Error(`chain lost the filter: ${r}`);
 });
@@ -1410,7 +1409,7 @@ await run('delogo rejects negative geometry / zero size', () => {
   ];
   for (const opts of bad) {
     try {
-      delogoFn(opts as never);
+      delogo(opts as never);
     } catch (e) {
       if (!(e instanceof RangeError)) throw new Error(`${JSON.stringify(opts)}: ${(e as Error).constructor.name}`);
       continue;
@@ -1420,7 +1419,7 @@ await run('delogo rejects negative geometry / zero size', () => {
 });
 
 await run('delogo produces a real, playable file', async () => {
-  await ffmpegFn(p("src.mp4")).output(p("delogo.mp4")).videoFilter(delogoFn({ x: 10, y: 10, width: 60, height: 40 })).run();
+  await ffmpeg(p("src.mp4")).output(p("delogo.mp4")).videoFilter(delogo({ x: 10, y: 10, width: 60, height: 40 })).run();
   if (!fs.existsSync(p('delogo.mp4'))) throw new Error('output not created');
   if (fs.statSync(p('delogo.mp4')).size === 0) throw new Error('output is empty');
 });
@@ -1428,8 +1427,8 @@ await run('delogo produces a real, playable file', async () => {
 // ─── 49. New encode-control builder methods ────────────────────────────────
 section('49 — ENCODE CONTROLS: preset/profile/level/movflags/rateControl/color');
 
-const argsOf = (fn: (b: ReturnType<typeof ffmpegFn>) => unknown) =>
-  (fn(ffmpegFn(p('src.mp4')).output(p('ec_out.mp4'))) as { buildArgs(): string[] }).buildArgs();
+const argsOf = (fn: (b: ReturnType<typeof ffmpeg>) => unknown) =>
+  (fn(ffmpeg(p('src.mp4')).output(p('ec_out.mp4'))) as { buildArgs(): string[] }).buildArgs();
 
 await run('ffmpeg().preset() → -preset', () => {
   const args = argsOf(b => b.preset('slow'));
@@ -1462,7 +1461,7 @@ await run('ffmpeg().fpsMode("cfr") → a flag this ffmpeg actually accepts', () 
   const joined = args.join(' ');
   // -vsync was renamed to -fps_mode in ffmpeg 5.1. Emitting -fps_mode on 4.x
   // fails with "Unrecognized option 'fps_mode'"; -vsync still works on 5.1+.
-  const v = ffmpegFn('x').getVersion();
+  const v = ffmpeg('x').getVersion();
   const modern = v.major > 5 || (v.major === 5 && v.minor >= 1);
   const expectedFlag = modern ? '-fps_mode' : '-vsync';
   if (!joined.includes(`${expectedFlag} cfr`)) {
@@ -1474,13 +1473,13 @@ await run('ffmpeg().fpsMode("cfr") → a flag this ffmpeg actually accepts', () 
 await run('ffmpeg().fpsMode() with a mode this ffmpeg rejects → not silently passed', () => {
   // 'passthrough' and 'cfr'/'vfr'/'auto' are all valid; a bogus one must throw.
   let threw = false;
-  try { ffmpegFn(p('src.mp4')).output('o.mp4').fpsMode('bogus' as never); } catch { threw = true; }
+  try { ffmpeg(p('src.mp4')).output('o.mp4').fpsMode('bogus' as never); } catch { threw = true; }
   if (!threw) throw new Error('accepted a bogus fps mode');
 });
 
 await run('ffmpeg().fpsMode("bogus") → throws listing the valid modes', () => {
   let msg = '';
-  try { ffmpegFn(p('src.mp4')).output('o.mp4').fpsMode('bogus' as never); } catch (e) { msg = (e as Error).message; }
+  try { ffmpeg(p('src.mp4')).output('o.mp4').fpsMode('bogus' as never); } catch (e) { msg = (e as Error).message; }
   if (!msg) throw new Error('expected a throw');
   for (const m of ['cfr', 'vfr', 'passthrough', 'auto']) {
     if (!msg.includes(m)) throw new Error(`should list ${m}: ${msg}`);
@@ -1505,7 +1504,7 @@ await run('ffmpeg().rateControl({max}) leaves out -minrate and defaults bufsize 
 
 await run('ffmpeg().rateControl({bufferSize}) with no max → throws', () => {
   let msg = '';
-  try { ffmpegFn(p('src.mp4')).output('o.mp4').rateControl({} as never); } catch (e) { msg = (e as Error).message; }
+  try { ffmpeg(p('src.mp4')).output('o.mp4').rateControl({} as never); } catch (e) { msg = (e as Error).message; }
   if (!msg) throw new Error('expected a throw');
   if (!/max/.test(msg)) throw new Error(`error should name the missing option: ${msg}`);
 });
@@ -1527,7 +1526,7 @@ await run('ffmpeg().setColorProperties({colorspace,color_range}) → both flags'
 await run('ffmpeg().setColorProperties({bogus_key}) → throws (no silent pass-through)', () => {
   let msg = '';
   try {
-    ffmpegFn(p('src.mp4')).output('o.mp4').setColorProperties({ not_a_real_key: 'x' } as never);
+    ffmpeg(p('src.mp4')).output('o.mp4').setColorProperties({ not_a_real_key: 'x' } as never);
   } catch (e) { msg = (e as Error).message; }
   if (!msg) throw new Error('expected a throw');
   if (!/not_a_real_key/.test(msg)) throw new Error(`should name the bad key: ${msg}`);
@@ -1536,7 +1535,7 @@ await run('ffmpeg().setColorProperties({bogus_key}) → throws (no silent pass-t
 
 await run('ffmpeg().setColorProperties({}) → throws rather than doing nothing', () => {
   let threw = false;
-  try { ffmpegFn(p('src.mp4')).output('o.mp4').setColorProperties({}); } catch { threw = true; }
+  try { ffmpeg(p('src.mp4')).output('o.mp4').setColorProperties({}); } catch { threw = true; }
   if (!threw) throw new Error('accepted an empty colour property set');
 });
 
@@ -1547,7 +1546,7 @@ await run('COLOR_PROPERTY_KEYS covers the four ffmpeg colour flags', () => {
 });
 
 await run('encode controls are applied to the right output in a multi-output command', () => {
-  const b = ffmpegFn(p('src.mp4'));
+  const b = ffmpeg(p('src.mp4'));
   b.output(p('a.mp4')).preset('slow');
   b.output(p('b.mp4')).preset('fast');
   const args = b.buildArgs();
@@ -1558,7 +1557,7 @@ await run('encode controls are applied to the right output in a multi-output com
 });
 
 await run('fpsMode is per-output, not global', () => {
-  const b = ffmpegFn(p('src.mp4'));
+  const b = ffmpeg(p('src.mp4'));
   b.output(p('a.mp4')).fpsMode('cfr');
   b.output(p('b.mp4'));
   const args = b.buildArgs();
@@ -1583,7 +1582,7 @@ await run('all encode controls together reach the command line in order', () => 
 });
 
 await run('all encode controls together encode a real file', async () => {
-  await ffmpegFn(p('src.mp4')).output(p('controls.mp4'))
+  await ffmpeg(p('src.mp4')).output(p('controls.mp4'))
     .preset('ultrafast').profile('baseline').level('3.0').movflags('+faststart')
     .keyframeInterval(30).fpsMode('cfr')
     .setColorProperties({ color_primaries: 'bt709', color_trc: 'bt709' })
@@ -1614,7 +1613,7 @@ if (errors.length > 0) {
   console.log(`\n${'─'.repeat(60)}`);
   console.log(`  ${errors.length} test(s) failed. See above for details.`);
   console.log('─'.repeat(60));
-  process.exit(1);
+  Deno.exit(1);
 } else {
   fs.rmSync(TMP, { recursive: true, force: true });
   console.log('\n  All new-feature tests passed! 🎉');

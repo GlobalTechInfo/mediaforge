@@ -14,7 +14,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TMP = path.join(__dirname, 'tmp_cli');
-const CLI = path.join(__dirname, 'dist/esm/cli/index.js');
+const CLI = path.join(__dirname, '../../dist/esm/cli/index.js');
 
 const p = (name: string) => path.join(TMP, name);
 const errors: { label: string; error: string; stack: string }[] = [];
@@ -71,8 +71,8 @@ const HAS_DRAW_TEXT = hasFilter('drawtext');
 
 const {
   CLI_TASKS, parseTaskArgs, taskHelpText, taskDetail, toGif,
-} = await import('./lib/index.js');
-const { CLI_TASKS: TASKS_MOD } = await import('./lib/cli/tasks.js');
+} = await import('../../lib/index.js');
+const { CLI_TASKS: TASKS_MOD } = await import('../../lib/cli/tasks.js');
 
 const EXPECTED_TASKS = [
   'trim', 'speed', 'volume', 'normalize', 'extract', 'replace-audio', 'concat',

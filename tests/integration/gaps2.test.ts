@@ -70,12 +70,12 @@ function throws(fn: () => unknown, re: RegExp, what: string): string {
   return msg;
 }
 
-const m = await import('./lib/index.js') as Record<string, any>;
-const guards = await import('./lib/compat/guards.js') as Record<string, any>;
-const hw = await import('./lib/helpers/hw.js') as Record<string, any>;
-const progress = await import('./lib/process/progress.js') as Record<string, any>;
-const ffprobe = await import('./lib/probe/ffprobe.js') as Record<string, any>;
-const registryMod = await import('./lib/codecs/registry.js') as Record<string, any>;
+const m = await import('../../lib/index.js') as Record<string, any>;
+const guards = await import('../../lib/compat/guards.js') as Record<string, any>;
+const hw = await import('../../lib/helpers/hw.js') as Record<string, any>;
+const progress = await import('../../lib/process/progress.js') as Record<string, any>;
+const ffprobe = await import('../../lib/probe/ffprobe.js') as Record<string, any>;
+const registryMod = await import('../../lib/codecs/registry.js') as Record<string, any>;
 
 fs.rmSync(TMP, { recursive: true, force: true });
 fs.mkdirSync(TMP, { recursive: true });

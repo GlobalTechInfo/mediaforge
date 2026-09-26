@@ -85,13 +85,13 @@ async function rejects(fn: () => unknown, re: RegExp, what: string): Promise<str
   return msg;
 }
 
-const m = await import('./lib/index.js') as Record<string, any>;
-const proc = await import('./lib/helpers/process.js') as Record<string, any>;
-const ffprobe = await import('./lib/probe/ffprobe.js') as Record<string, any>;
-const streams = await import('./lib/helpers/streams.js') as Record<string, any>;
-const filters = await import('./lib/types/filters.js') as Record<string, any>;
-const events = await import('./lib/process/events.js') as Record<string, any>;
-const hw = await import('./lib/helpers/hw.js') as Record<string, any>;
+const m = await import('../../lib/index.js') as Record<string, any>;
+const proc = await import('../../lib/helpers/process.js') as Record<string, any>;
+const ffprobe = await import('../../lib/probe/ffprobe.js') as Record<string, any>;
+const streams = await import('../../lib/helpers/streams.js') as Record<string, any>;
+const filters = await import('../../lib/types/filters.js') as Record<string, any>;
+const events = await import('../../lib/process/events.js') as Record<string, any>;
+const hw = await import('../../lib/helpers/hw.js') as Record<string, any>;
 
 fs.rmSync(TMP, { recursive: true, force: true });
 fs.mkdirSync(TMP, { recursive: true });
@@ -319,7 +319,7 @@ await run('the xstack layout and the sprite sizing run for real', async () => {
 });
 
 await run('a chain of audio filters switches the stream it runs on', async () => {
-  const tasks = (await import('./lib/cli/tasks.js')).CLI_TASKS as Record<string, any>;
+  const tasks = (await import('../../lib/cli/tasks.js')).CLI_TASKS as Record<string, any>;
   const printed = await capture(tasks, 'filter', [], { chain: 'volume:volume=0.5', print: 'true' });
   ok(printed.includes('volume=0.5'), `no volume in the chain: ${printed}`);
 });

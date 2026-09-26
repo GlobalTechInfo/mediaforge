@@ -93,9 +93,9 @@ const HAS_DRAW_TEXT = hasFilter('drawtext');
 const HAS_VIDSTAB = hasFilter('vidstabdetect');
 const HAS_LUT3D = hasFilter('lut3d');
 
-const m = await import('./lib/index.js') as Record<string, any>;
-const CLI_TASKS = (await import('./lib/cli/tasks.js')).CLI_TASKS as Record<string, any>;
-const extra = await import('./lib/cli/tasks.extra.js');
+const m = await import('../../lib/index.js') as Record<string, any>;
+const CLI_TASKS = (await import('../../lib/cli/tasks.js')).CLI_TASKS as Record<string, any>;
+const extra = await import('../../lib/cli/tasks.extra.js');
 
 /** Run a task and return everything it printed. */
 async function say(task: string, pos: string[], f: Record<string, string> = {}): Promise<string> {
@@ -685,7 +685,7 @@ await run('the new commands keep every public export reachable', () => {
   }
   // "Reachable" means the name appears in the CLI sources: a command name, a flag
   // name, or an identifier passed to one of the library helpers.
-  const dir = path.join(__dirname, 'lib/cli');
+  const dir = path.join(__dirname, '../../lib/cli');
   const named = new Set<string>();
   for (const file of fs.readdirSync(dir)) {
     if (!file.endsWith('.ts')) continue;
