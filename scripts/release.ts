@@ -48,10 +48,24 @@ async function main(): Promise<void> {
   console.log(`  deno.json: ${newVersion}`);
 
   console.log('\n[4/7] Running build, typecheck, lint, and unit tests...');
-  run('npm run build');
-  run('npm run typecheck');
-  run('npm run lint');
-  run('npm run test:unit');
+  try {
+    run('npm run build');
+    run('npm run typecheck');
+    run('npm run lint');
+    run('npm run test:unit');
+  } catch {
+    // package.json / deno.json have already been rewritten to the new version,
+    // but nothing is committed and no tag exists yet. Say so, because "the
+    // working tree is not clean" is otherwise a confusing thing to find next.
+    console.error(
+      '\n  Checks failed — no commit or tag was created.\n' +
+      '  package.json and deno.json are still set to the new version in your working\n' +
+      '  tree. To start over, discard that edit:\n\n' +
+      `      git checkout -- package.json deno.json\n\n` +
+      '  (It is safe: nothing has been committed or tagged at this point.)\n',
+    );
+    process.exit(1);
+  }
   console.log('  All checks passed');
 
   console.log('\n[5/7] Committing version bump...');
@@ -64,8 +78,27 @@ async function main(): Promise<void> {
   console.log(`  Tag created: v${newVersion}`);
 
   console.log('\n[7/7] Pushing to origin...');
-  run('git push origin main');
-  run(`git push origin "v${newVersion}"`);
+  try {
+    run('git push origin main');
+    run(`git push origin "v${newVersion}"`);
+  } catch {
+    // The push is the one step that can fail purely because of the
+    // environment: this script runs `git push` in a child process, and some
+    // sandboxes/agents inject their short-lived git credential only into
+    // git commands they invoke directly, not into nested ones. When that
+    // happens the commit and tag are already created locally, so the release
+    // is *not* lost — it just needs finishing by hand.
+    console.error(
+      '\n  Push failed.\n' +
+      '  The version bump is committed and the tag exists locally, so the release\n' +
+      '  is ready — it only needs to be pushed. Run these yourself:\n\n' +
+      `      git push origin main\n` +
+      `      git push origin v${newVersion}\n\n` +
+      '  If the error is "could not read Username for https://github.com", the\n' +
+      '  credential was not available to this child process rather than missing.\n',
+    );
+    process.exit(1);
+  }
   console.log('  Pushed branch and tag');
 
   console.log('\n' + '='.repeat(50));
