@@ -214,6 +214,19 @@ for (const name of Object.values(BATTLE_SCRIPTS)) {
 if (/\btsx\s+tsx\b/.test(coverageBattle)) {
   problems.push('"coverage:battle" has a doubled `tsx tsx` in a segment');
 }
+
+// The unit coverage run must not measure the test files. It once excluded
+// only dist/**, so 35 of its 36 reported entries were tests/*.test.ts
+// measuring their own execution, and Codecov merged those meaningless numbers
+// into the project total — showing 95.07% for a library measuring 98.08%.
+for (const name of ['coverage', 'coverage:summary', 'test:coverage']) {
+  const body = scripts[name] ?? '';
+  for (const mustExclude of ['tests/**', '*.test.ts']) {
+    if (!body.includes(`--exclude='${mustExclude}'`)) {
+      problems.push(`"${name}" does not exclude ${mustExclude}, so it measures the tests themselves`);
+    }
+  }
+}
 for (const metric of ['--lines', '--functions', '--branches', '--statements']) {
   if (!scripts['coverage:gate']?.includes(metric)) {
     problems.push(`"coverage:gate" sets no threshold for ${metric.replace('--', '')}`);

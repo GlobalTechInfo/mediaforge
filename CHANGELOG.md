@@ -145,9 +145,22 @@ decision, not an oversight.
 
 ### Testing and coverage
 
-- **Library statement coverage is 98.08%** (15,100 / 15,395), up from 80.2%, and
+- **Library statement coverage is 98.08%** (15,159 / 15,455) from the battle
+  suites and 98.20% from the unit suites, up from 80.2%, and
   `npm run coverage:gate` now fails the build below 98% statements / 98%
   functions / 70% branches. The gate runs in CI after `npm run coverage:battle`.
+- **`npm run coverage` was measuring the test files themselves.** It excluded
+  only `dist/**`, so c8 reported on everything it loaded: 35 of its 36 entries
+  were `tests/*.test.ts` measuring their own execution, and Codecov merged
+  those meaningless numbers into the project total. The library was reported at
+  95.07% overall when it actually measured 98.08% — the gap was self-
+  measurement, not untested code. `coverage`, `coverage:summary` and
+  `test:coverage` now exclude `tests/**`, `deno-tests/**`, `runtime-tests/**`
+  and `*.test.ts`, matching what `coverage:battle` already did, and
+  `npm run check:scripts` fails if that exclusion is ever dropped again.
+- The report split also means the number on the Codecov file explorer is a
+  union of two flags, not a single run. The gate reads the battle report, so
+  the enforced figure is the one the in-process suites produce.
 - Four new battle suites close the gap, because the existing ones spawn the built
   binary and so instrument nothing: `tests/integration/gaps.test.ts` (CLI task
   table driven in process against real 2-second clips),
@@ -165,6 +178,17 @@ decision, not an oversight.
 - `npm run check:scripts` fails if any test file on disk is not reachable from
   an `npm run` script or a `deno task` — a suite nobody runs is worse than no
   suite, because it still reads as coverage.
+- `tests/unit/platform-paths.test.ts` covers the branches that only run on
+  another platform or in another runtime: the `beforeunload` handler that
+  Deno and browsers register and Node never sees, a runtime whose
+  `addEventListener` throws, the double-unregister case, and the
+  `ProgressParser` paths for a missing total, a clamped percentage and
+  non-numeric values. `lib/helpers/process.ts` went 82.2% → 88.4% and
+  `lib/process/spawn.ts` 92.4% → 94.8% from this alone.
+- `lib/helpers/process.ts` still shows ~88% because its Windows `renice`
+  branch (lines 54-64) is unreachable on Linux: `isWindows` is a module-load
+  constant, so no runtime stub can reach it. The source is left honest rather
+  than refactored to make a coverage number look better.
 - `npm run battle:all` now runs all eight Node suites; `npm run battle:cov`,
   `:gaps`, `:lib`, `:gaps2` and `:gaps3` run one each. 1,004 assertions in total,
   all in-process for the coverage suites.
