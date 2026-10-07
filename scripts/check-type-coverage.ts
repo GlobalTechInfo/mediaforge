@@ -195,7 +195,11 @@ function measure(): { total: number; anyCount: number; findings: Finding[] } {
 
   for (const sourceFile of program.getSourceFiles()) {
     if (sourceFile.isDeclarationFile) continue;
-    if (!sourceFile.fileName.includes(`${path.sep}lib${path.sep}`)) continue;
+    // Match either separator. TypeScript reports fileName with forward slashes
+    // even on Windows, so comparing against `${path.sep}lib${path.sep}` ('\')
+    // matched nothing there and the gate reported "0 typed positions" - failing
+    // while measuring an empty set rather than reporting a real regression.
+    if (!/[\\/]lib[\\/]/.test(sourceFile.fileName)) continue;
 
     const visit = (node: ts.Node): void => {
       if (ts.isIdentifier(node)) {

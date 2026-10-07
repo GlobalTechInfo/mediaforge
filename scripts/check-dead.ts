@@ -58,7 +58,9 @@ function collect(dir: string, out: string[] = []): string[] {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       collect(full, out);
-    } else if (entry.name.endsWith('.ts') && !full.includes(`${path.sep}tmp`)) {
+    // Either separator: entries from readdir on Windows join with '\' but the
+    // same guard has to work for paths that arrive POSIX-separated too.
+    } else if (entry.name.endsWith('.ts') && !/[\\/]tmp[\\/]/.test(full)) {
       out.push(full);
     }
   }
