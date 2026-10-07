@@ -65,6 +65,40 @@ function hasFilter(name: string): boolean {
   }
 }
 
+/**
+ * Filter presence is not capability, and neither is a fixture that encodes.
+ *
+ * On some ffmpeg builds `-color_primaries` / `-color_trc` are silently dropped
+ * on encode, so a fixture generated with BT.2020/PQ flags comes back tagged
+ * `unknown` and can never be recognised as HDR. This ffmpeg 8.0.1 build drops
+ * them for every codec and container. Probing the fixture that was actually
+ * produced lets these tests skip with an accurate reason instead of reporting
+ * failures that say nothing about mediaforge.
+ */
+let HDR_FIXTURE_TAGGED = false;
+let HDR_PROBE_REASON = '';
+function probeHdrFixture(): void {
+  const file = p('hdr.mp4');
+  if (!fs.existsSync(file)) {
+    HDR_PROBE_REASON = 'the hdr.mp4 fixture was not generated';
+    return;
+  }
+  try {
+    const stream = probeJson(file, ['-select_streams', 'v:0']).streams?.[0] ?? {};
+    const primaries = String(stream.color_primaries ?? 'unknown');
+    const transfer = String(stream.color_transfer ?? 'unknown');
+    HDR_FIXTURE_TAGGED = primaries === 'bt2020';
+    if (!HDR_FIXTURE_TAGGED) {
+      HDR_PROBE_REASON =
+        `this ffmpeg build drops -color_primaries/-color_trc on encode ` +
+        `(fixture came back primaries=${primaries} transfer=${transfer}, so no ` +
+        `encoded fixture can be recognised as HDR)`;
+    }
+  } catch (error) {
+    HDR_PROBE_REASON = `could not probe hdr.mp4: ${(error as Error).message}`;
+  }
+}
+
 const HAS_ZSCALE = hasFilter('zscale');
 const HAS_TONEMAP = hasFilter('tonemap');
 const HAS_DRAW_TEXT = hasFilter('drawtext');
@@ -735,7 +769,9 @@ if (!built) {
     if (!/Infinity/.test(r.stdout)) throw new Error(`expected Infinity in: ${r.stdout.slice(-200)}`);
   });
 
-  if (HAS_ZSCALE && HAS_TONEMAP) {
+  probeHdrFixture();
+
+  if (HAS_ZSCALE && HAS_TONEMAP && HDR_FIXTURE_TAGGED) {
     await run('cli tonemap <in> <out> on a real HDR file → an SDR file', () => {
       const r = cli('tonemap', p('hdr.mp4'), p('cli_tonemap.mp4'));
       ok(r, 'tonemap');
@@ -764,7 +800,10 @@ if (!built) {
       exists(p('cli_tonemap_hable.mp4'));
     });
   } else {
-    skip('cli tonemap', 'ffmpeg build has no zscale/tonemap filters');
+    skip(
+      'cli tonemap',
+      HAS_ZSCALE && HAS_TONEMAP ? HDR_PROBE_REASON : 'ffmpeg build has no zscale/tonemap filters',
+    );
   }
 
   await run('cli interpolate --fps 30 --method dup → a 30fps file', () => {

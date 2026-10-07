@@ -11,7 +11,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 
-import { CLI_TASKS, parseTaskArgs, taskHelpText, taskDetail } from '../../dist/esm/cli/tasks.js';
+import { CLI_TASKS, taskHelpText, taskDetail } from '../../dist/esm/cli/tasks.js';
+// parseTaskArgs now lives in its own module alongside the schema-driven parser
+// the CLI actually uses; see tests/unit/cli-parser.test.ts for the current
+// contract. These cases cover the legacy arity-guessing wrapper it replaced.
+import { parseTaskArgs } from '../../dist/esm/cli/parser.js';
 import { FILTER_REGISTRY, filterNames } from '../../dist/esm/cli/filter-registry.js';
 import { LIBRARY_ONLY, INTERNAL_NOTES, argOpNames, codecBuilderNames } from '../../dist/esm/cli/tasks.extra.js';
 import { FilterChain } from '../../dist/esm/types/filters.js';
@@ -214,9 +218,21 @@ describe('CLI help and errors', () => {
 
   it('rejects an unknown command with a suggestion to run help', () => {
     const r = cli('nonsense');
-    assert.equal(r.status, 1);
+    // 2, not 1: a command line the CLI could not parse is a usage error and must
+    // be distinguishable from a command that ran and failed.
+    assert.equal(r.status, 2);
     assert.ok(r.stderr.includes('unknown command "nonsense"'), r.stderr);
     assert.ok(r.stderr.includes('mediaforge help'), `expected ${r.stderr} to include ${'mediaforge help'}; got ${r.stderr}`);
+  });
+
+  it('distinguishes a usage error from a runtime failure by exit code', () => {
+    // The contract: 0 success, 1 the job ran and failed, 2 the command line was
+    // wrong, 130 interrupted. A single code for every failure made a typo
+    // indistinguishable from an outage.
+    assert.equal(cli('nonsense').status, 2, 'unknown command is a usage error');
+    assert.equal(cli('trim', '--no-such-flag').status, 2, 'unknown flag is a usage error');
+    assert.equal(cli('trim').status, 2, 'missing positional is a usage error');
+    assert.equal(cli('trim', 'no-such-input.mp4', 'out.mp4').status, 1, 'a failed encode is not a usage error');
   });
 
   it('reports a missing required flag', () => {
@@ -227,7 +243,8 @@ describe('CLI help and errors', () => {
 
   it('reports too few positionals and prints the usage', () => {
     const r = cli('trim', 'only-one.mp4');
-    assert.equal(r.status, 1);
+    // A missing positional is a usage error (2), not a runtime failure (1).
+    assert.equal(r.status, 2);
     assert.ok(r.stderr.includes('trim needs 2 arguments'), r.stderr);
     assert.ok(r.stderr.includes('mediaforge trim'), r.stderr);
   });

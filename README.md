@@ -85,6 +85,13 @@ Requires `ffmpeg` (and `ffprobe`) to be installed and on `PATH`, or set `FFMPEG_
 > ```bash
 > deno run --allow-env --allow-run my-script.ts
 > ```
+>
+> The CLI reports the exact grant it needs rather than an opaque failure.
+>
+> **No runtime dependencies.** `package.json` declares no `dependencies` at all —
+> mediaforge is built entirely on the Node.js standard library and drives the
+> system `ffmpeg` as a subprocess. `npm audit --omit=dev` reports zero
+> vulnerabilities for anything a consumer installs.
 
 ---
 
@@ -93,6 +100,11 @@ Requires `ffmpeg` (and `ffprobe`) to be installed and on `PATH`, or set `FFMPEG_
 - [What is mediaforge?](#what-is-mediaforge)
 - [Install](#install)
 - [Runtime Support](#runtime-support)
+- [Cancellation, Timeouts and Bounded Execution](#cancellation-timeouts-and-bounded-execution)
+- [Bounded Concurrency](#bounded-concurrency)
+- [Crash-Safe Output](#crash-safe-output)
+- [Observability](#observability)
+- [Pre-flight Validation](#pre-flight-validation)
 - [Fluent Builder API](#fluent-builder-api)
 - [Screenshots & Frame Extraction](#screenshots-frame-extraction)
 - [Pipe & Stream I/O](#pipe-stream-io)
@@ -1802,6 +1814,259 @@ const engAudio = findStreamByLanguage(info, 'eng', 'audio');
 
 <a name="process-management"></a>
 
+## Cancellation, Timeouts and Bounded Execution
+
+Every run is bounded by default. A cancelled, timed-out or failed encode is
+killed — and, on POSIX, killed as a whole process group so nothing it started
+survives it.
+
+```ts
+import { ffmpeg, FFmpegError, FFmpegAbortError, FFmpegTimeoutError } from 'mediaforge';
+
+// Cancel an encode when the request that triggered it is aborted.
+const controller = new AbortController();
+req.on('close', () => controller.abort());
+
+try {
+  await ffmpeg('input.mp4').output('out.mp4').run({
+    signal: controller.signal,
+    timeout: 30 * 60_000,
+  });
+} catch (err) {
+  if (err instanceof FFmpegAbortError) console.log('cancelled by the caller');
+  else if (err instanceof FFmpegTimeoutError) console.log(`gave up after ${err.timeoutMs}ms`);
+  else throw err;
+}
+```
+
+`SIGTERM` alone is not enough — a child that traps or ignores the signal would
+survive the cancel — so the kill escalates to `SIGKILL` after
+`killGracePeriodMs` (default 2000):
+
+```ts
+await ffmpeg('input.mp4').output('out.mp4').run({
+  signal: controller.signal,
+  killGracePeriodMs: 5000,   // give in-flight writes longer to settle
+});
+```
+
+An already-aborted signal throws **before** a process is created, so a
+cancelled request never leaves a stray ffmpeg behind:
+
+```ts
+const controller = new AbortController();
+controller.abort();
+await ffmpeg('input.mp4').output('out.mp4').run({ signal: controller.signal });
+// throws FFmpegAbortError; `ffmpeg` was never spawned
+```
+
+### Inspecting paths
+
+`inputPaths()` and `outputPaths()` return what the builder will actually read
+and write, which is what you want when validating or logging a job:
+
+```ts
+const job = ffmpeg('in.mp4').videoCodec('libx264').output('out.mp4');
+job.inputPaths();   // ['in.mp4']
+job.outputPaths();  // ['out.mp4']
+job.dry();          // ['-y', '-i', 'in.mp4', '-c:v', 'libx264', 'out.mp4']
+```
+
+### Typed errors
+
+Every error extends `FFmpegError` and carries a stable `code`, so a service can
+branch without matching on message text:
+
+```ts
+import { FFmpegError } from 'mediaforge';
+
+try {
+  await ffmpeg('in.mp4').output('out.mp4').run();
+} catch (err) {
+  if (err instanceof FFmpegError) {
+    switch (err.code) {
+      case 'EXIT_NONZERO':        /* ffmpeg ran and failed — err.command, err.stderrOutput */
+      case 'TIMEOUT':             /* killed on the deadline */
+      case 'ABORTED':             /* cancelled via signal */
+      case 'BINARY_NOT_FOUND':    /* set FFMPEG_PATH */
+      case 'BINARY_NOT_EXECUTABLE':
+      case 'VALIDATION_FAILED':   /* rejected before spawning — err.field */
+      case 'ATOMIC_OUTPUT_UNSUPPORTED':
+      default: throw err;
+    }
+  }
+}
+```
+
+`codes` are `SPAWN_FAILED`, `EXIT_NONZERO`, `TIMEOUT`, `ABORTED`,
+`BINARY_NOT_FOUND`, `BINARY_NOT_EXECUTABLE`, `PROBE_FAILED`,
+`VERSION_UNSUPPORTED`, `GUARD_FAILED`, `VALIDATION_FAILED`,
+`ATOMIC_OUTPUT_UNSUPPORTED`.
+
+### Bounded binary calls
+
+Every invocation of `ffmpeg`/`ffprobe` — `-version`, capability probes, the
+sync `probe()` — has a timeout, because an unbounded call against a wedged
+binary blocks the event loop and stalls every other in-flight request:
+
+```ts
+import { probeVersion, probeVersionAsync, execBounded, execAsync } from 'mediaforge';
+
+const version = probeVersion('ffmpeg');                  // sync, 10s default
+const versionAsync = await probeVersionAsync('ffmpeg');  // cached per binary path
+const stdout = execBounded('ffprobe', ['-version'], { timeoutMs: 2000 });
+const stdoutAsync = await execAsync('ffprobe', ['-version'], { timeoutMs: 2000 });
+```
+
+### Orphan prevention
+
+Children register with one shared set of `exit`/`SIGINT`/`SIGTERM` handlers
+installed lazily and removed once the last child exits. A `SIGTERM` to the host
+therefore cannot leave ffmpeg running and still writing to the output path. Pass
+`autoCleanup: false` to opt out when you own the child's lifetime.
+
+---
+
+## Bounded Concurrency
+
+One ffmpeg already saturates the machine it runs on, so spawning one per request
+past a handful of concurrent jobs *lowers* total throughput as everything
+competes for the same cores. `FFmpegQueue` caps the parallelism and queues the
+rest:
+
+```ts
+import { FFmpegQueue, queued, setDefaultQueue } from 'mediaforge';
+
+const queue = new FFmpegQueue({ concurrency: 2 });
+
+await Promise.all([
+  queue.run(() => transcode('a.mp4', 'a-out.mp4')),
+  queue.run(() => transcode('b.mp4', 'b-out.mp4')),
+  queue.run(() => transcode('c.mp4', 'c-out.mp4')),
+]);
+// at most two ran at once; queue.stats() reports running/pending/completed/failed
+```
+
+`maxPending` turns overload into a fast rejection instead of unbounded growth:
+
+```ts
+const queue = new FFmpegQueue({ concurrency: 2, maxPending: 50 });
+await queue.run(job);   // rejects with VALIDATION_FAILED once 50 are waiting
+```
+
+`queued()` routes through a process-wide queue, tuned by `MEDIAFORGE_CONCURRENCY`:
+
+```ts
+await queued(() => transcode(input, output));              // concurrency 1
+setDefaultQueue(new FFmpegQueue({ concurrency: 4 }));      // or set your own
+```
+
+---
+
+## Crash-Safe Output
+
+An encode that fails, times out or is cancelled still leaves a file at the
+output path — ffmpeg opens its output before it discovers the input is
+unusable — and a truncated `.mp4` is indistinguishable from a good one to
+anything downstream. `withAtomicOutput` writes to a temporary name and renames it
+into place only after ffmpeg exits 0:
+
+```ts
+import { withAtomicOutput } from 'mediaforge';
+
+await withAtomicOutput('out.mp4', async (temp) => {
+  await ffmpeg('in.mp4').output(temp).run();
+});
+// out.mp4 either holds the finished file or does not exist at all
+```
+
+The temp file keeps the target's extension, because ffmpeg infers the container
+from it — writing to `out.mp4.tmp` would pick the wrong muxer and fail *after*
+spending the encode. The parent directory is created for you, since a rename
+cannot cross a filesystem boundary.
+
+Targets ffmpeg writes as several files (`.m3u8`, `.mpd`, `frame_%03d.png`) are
+**refused** with `FFmpegAtomicOutputError` rather than silently written
+non-atomically:
+
+```ts
+await withAtomicOutput('stream.m3u8', runIt);
+// throws FFmpegAtomicOutputError: there is no single path to rename into place
+```
+
+### Retry
+
+Retrying is off by default, because an ffmpeg failure is nearly always
+deterministic. Enable it explicitly, and pair it with atomic output so a retry
+never resumes from a half-written file:
+
+```ts
+import { withAtomicOutput, withRetry } from 'mediaforge';
+
+await withAtomicOutput('out.mp4', (temp) =>
+  ffmpeg('in.mp4').output(temp).run({
+    retry: { retries: 3, initialDelayMs: 250, factor: 2, jitter: 0.2 },
+  }),
+);
+```
+
+Only transient causes are retried — `TIMEOUT` and `SPAWN_FAILED`. An
+`EXIT_NONZERO` (bad arguments, corrupt input) is deterministic and never retried,
+and neither is `ABORTED`, because a caller who cancelled wants the work stopped
+rather than resumed. Jitter is on by default so a fleet that failed together
+does not retry in lockstep.
+
+---
+
+## Observability
+
+The library is silent unless asked, so it can be wired into pino/winston instead
+of scraping stderr:
+
+```ts
+import { setLogger, setDiagnosticHook, stderrLogger } from 'mediaforge';
+
+setLogger({
+  debug: (msg, meta) => log.debug(meta ?? {}, msg),
+  info:  (msg, meta) => log.info(meta ?? {}, msg),
+  warn:  (msg, meta) => log.warn(meta ?? {}, msg),
+  error: (msg, meta) => log.error(meta ?? {}, msg),
+});
+
+// Or, for a CLI:
+setLogger(stderrLogger('info'));
+
+// Metrics and tracing: one event per job transition.
+setDiagnosticHook((event) => {
+  if (event.type === 'end') metrics.histogram('ffmpeg.duration', event.durationMs);
+  if (event.type === 'error') metrics.counter('ffmpeg.error', { code: event.code });
+});
+```
+
+A logger or hook that throws can never fail the encode it is observing.
+
+---
+
+## Pre-flight Validation
+
+Catch a bad path before ffmpeg starts, instead of after it has created a
+zero-byte output and exited non-zero:
+
+```ts
+import { assertValidIo, validateInputs } from 'mediaforge';
+
+await ffmpeg('missing.mp4').output('out.mp4').run({ validate: true });
+// throws FFmpegValidationError: input file does not exist
+//   → Check the path. mediaforge does not expand "~" — pass an absolute path.
+```
+
+Every problem is reported at once, each with a fix. Off by default, because this
+library accepts ffmpeg input syntax that is not a filesystem path — URLs,
+`pipe:0`, `concat:`, `lavfi:` graphs, raw stream specifiers — and those are
+recognised and left alone.
+
+---
+
 ## Process Management
 
 ```ts
@@ -1949,6 +2214,57 @@ mediaforge --help
 
 **Subcommands:** `version`, `probe <file>`, `caps`, `help` (`--help` / `-h`).
 With no arguments the CLI prints usage and exits 0.
+
+### Piping
+
+The CLI is a usable Unix filter in both directions, and neither hangs:
+
+```bash
+cat input.mp3 | mediaforge -i pipe:0 -f wav - > output.wav
+mediaforge -f lavfi -i testsrc=duration=1:size=640x480:rate=30 -f rawvideo pipe:1 > frames.raw
+```
+
+Output-to-stdout inherits the file descriptor rather than being buffered, so a
+payload larger than the 64 KiB pipe buffer does not deadlock, and stdin is piped
+through and closed so ffmpeg sees EOF.
+
+### Exit codes
+
+```bash
+case "$(mediaforge trim in.mp4 out.mp4; echo $?)" in
+  0) echo "ok" ;;
+  1) echo "the encode failed" ;;
+  2) echo "the command line was wrong" ;;
+  130) echo "interrupted" ;;
+esac
+```
+
+| Code | Meaning |
+| ---- | ------- |
+| 0    | success |
+| 1    | the command ran and failed (non-zero ffmpeg exit, failed quality gate) |
+| 2    | the command line was wrong — unknown command or flag, missing or surplus argument |
+| 130  | interrupted with SIGINT (Ctrl-C) |
+| 143  | terminated with SIGTERM (supervisor stop, container shutdown) |
+
+The high codes follow the Unix convention of `128 + signal`. Anything that
+depends on the earlier "every failure is 1" behaviour should test for 1
+specifically.
+
+### Flags
+
+Flag arity comes from each command's flag table, so a boolean flag never
+consumes the next argument:
+
+```bash
+mediaforge analyze --json input.mp3        # --json is boolean; input.mp3 stays a positional
+mediaforge metadata --no-strip in.mp4 out.mp4
+mediaforge trim -- -leading-dash.mp4 out.mp4   # after --, even dashes are literals
+mediaforge metadata in.mp4 out.mp4 --set title=A --set artist=B   # repeatable
+```
+
+A misspelled flag, a missing flag value, a repeated non-repeatable flag and a
+surplus positional are all hard errors, never silent defaults.
 
 ### Task commands
 

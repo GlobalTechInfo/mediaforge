@@ -10,7 +10,7 @@ const run = (cmd: string, opts: ExecSyncOptions = {}): void => {
 const runSilent = (cmd: string): string =>
   execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 
-async function main(): Promise<void> {
+function main(): void {
   const bumpType: string = process.argv[2] ?? 'patch';
 
   console.log('\nMediaForge Release Script');
@@ -27,12 +27,12 @@ async function main(): Promise<void> {
 
   console.log('\n[2/7] Bumping version...');
   const pkg: Record<string, unknown> = JSON.parse(readFileSync('package.json', 'utf8'));
-  const oldVersion = pkg.version as string;
+  const oldVersion = pkg['version'] as string;
   // Resolve and validate before touching either manifest, so a bad argument
   // fails with the working tree still clean.
   const newVersion = bumpVersion(oldVersion, bumpType);
   const { prerelease } = parseVersion(newVersion);
-  pkg.version = newVersion;
+  pkg['version'] = newVersion;
   writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
   console.log(
     `  package.json: ${oldVersion} -> ${newVersion}` +
@@ -41,7 +41,7 @@ async function main(): Promise<void> {
 
   console.log('\n[3/7] Syncing deno.json version...');
   const deno: Record<string, unknown> = JSON.parse(readFileSync('deno.json', 'utf8'));
-  deno.version = newVersion;
+  deno['version'] = newVersion;
   writeFileSync('deno.json', JSON.stringify(deno, null, 2) + '\n');
   console.log(`  deno.json: ${newVersion}`);
 
@@ -111,7 +111,9 @@ async function main(): Promise<void> {
   console.log('='.repeat(50) + '\n');
 }
 
-main().catch((err: unknown) => {
+try {
+  main();
+} catch (err) {
   console.error('\n', (err as Error).message);
   process.exit(1);
-});
+}

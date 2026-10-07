@@ -48,6 +48,11 @@ jobs:
       - name: Build (ESM + CJS)
         run: npm run build
 
+      # Validate the artefact before it is public. A release that is broken for
+      # consumers cannot be recalled as cleanly as a failed build step.
+      - name: Smoke test the packed tarball
+        run: npm run smoke
+
       - name: Publish
         run: |
           PKG_VERSION="$(node -p "require('./package.json').version")"

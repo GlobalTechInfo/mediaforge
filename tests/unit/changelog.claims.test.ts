@@ -70,7 +70,15 @@ describe('CHANGELOG 2.0.0: breaking changes match the code', () => {
 
 describe('CHANGELOG 2.0.0: original 23 fixes still hold', () => {
   it('#1 probe uses -v error', () => assert.match(lib('probe/ffprobe.ts'), /'-v', 'error'/));
-  it('#2 spawn error carries stderr', () => assert.match(lib('process/spawn.ts'), /new FFmpegSpawnError\(code, signal, stderrOutput\)/));
+  it('#2 spawn error carries stderr', () => {
+    const src = lib('process/spawn.ts');
+    // The property under test is that the error is constructed with ffmpeg's
+    // stderr rather than an empty string. Asserting one exact argument list
+    // broke the moment the class gained a `command` field, so match the shape
+    // instead: the exit code, the signal, and a stderr read at error time.
+    assert.match(src, /new FFmpegSpawnError\([^)]*stderr[^)]*\)/);
+    assert.match(src, /stderrSnapshot\(\)/);
+  });
   it('#3 settled flag on timeout', () => assert.match(lib('process/spawn.ts'), /let settled = false/));
   it('#4 hls segments default to .ts', () => assert.match(lib('helpers/hls.ts'), /segment%03d\.ts/));
   it('#5 anullsrc is a valid source filter', () => {
@@ -179,9 +187,13 @@ describe('CHANGELOG 2.0.0: streaming & process lifecycle (#24-#30)', () => {
     assert.match(lib('helpers/streams.ts'), /pass\.on\('close', \(\) => \{[\s\S]*?child\.kill\('SIGTERM'\)/);
   });
   it('#27 start is emitted on a microtask', () => {
-    const re = /queueMicrotask\(\(\) => emitter\.emit\('start', args\)\)/;
-    assert.match(lib('process/spawn.ts'), re);
-    assert.match(lib('helpers/streams.ts'), re);
+    // The property is that 'start' is deferred by a microtask so a caller can
+    // attach listeners before it fires. The emit is no longer the whole body of
+    // that callback — diagnostic events are emitted alongside it — so match the
+    // deferral rather than an exact arrow function.
+    const deferred = /queueMicrotask\([\s\S]{0,400}?emitter\.emit\('start', args\)/;
+    assert.match(lib('process/spawn.ts'), deferred);
+    assert.match(lib('helpers/streams.ts'), /queueMicrotask\(\(\) => emitter\.emit\('start', args\)\)/);
   });
   it('#28 stderr released once on every path', () => {
     assert.match(lib('process/spawn.ts'), /const releaseStderr = \(\): void => \{/);
@@ -281,13 +293,17 @@ describe('CHANGELOG 2.0.0: correctness (#37-#47)', () => {
     assert.doesNotMatch(src, /for \(let end = start \+ 1/);
   });
   it('#43 multi-byte UTF-8 is never corrupted across chunk boundaries', () => {
-    // probeAsync reads a raw stream and needs StringDecoder; probeVersion reads
-    // synchronously with execFileSync, where `encoding: 'utf8'` reassembles the
-    // stream for us. Assert the right mechanism for each.
+    // probeAsync reads a raw stream and needs StringDecoder; the synchronous
+    // probe path hands `encoding: 'utf8'` to the exec layer, which reassembles
+    // the stream for us. Assert the right mechanism for each.
     assert.match(lib('probe/ffprobe.ts'), /StringDecoder/);
+    // Both live in utils/exec.ts now that probeVersion delegates to it.
     const version = lib('utils/version.ts');
-    assert.match(version, /execFileSync/);
-    assert.match(version, /encoding: 'utf8'/);
+    assert.match(version, /execBounded|execAsync/, 'probeVersion should use the bounded exec layer');
+    const exec = lib('utils/exec.ts');
+    assert.match(exec, /encoding: 'utf8'/);
+    assert.match(exec, /Buffer\.concat\(stdout\)\.toString\('utf8'\)/, 'assemble chunks before decoding');
+    assert.doesNotMatch(exec, /chunk\.toString\(\)/, 'per-chunk toString() corrupts split UTF-8');
     assert.doesNotMatch(version, /\.toString\(\)/, 'per-chunk toString() corrupts split UTF-8');
   });
   it('#44 isBinaryAvailableAsync never rejects', async () => {

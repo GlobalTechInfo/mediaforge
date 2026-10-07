@@ -42,7 +42,6 @@ jobs:
 
       - name: Run tests
         run: deno task test
-        continue-on-error: true
 
       - name: Dry run publish
         run: deno publish --dry-run

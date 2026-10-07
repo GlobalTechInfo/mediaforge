@@ -3,6 +3,7 @@
  * These integrate with CapabilityRegistry and VersionInfo to provide
  * actionable errors when a feature isn't available in the detected binary.
  */
+import { FFmpegError } from '../errors.ts';
 
 import type { VersionInfo } from '../types/version.ts';
 import { satisfiesVersion } from '../utils/version.ts';
@@ -194,13 +195,15 @@ export function assertFeatureVersion(
 
 // ─── GuardError ───────────────────────────────────────────────────────────────
 
-export class GuardError extends Error {
+export class GuardError extends FFmpegError {
   constructor(
     message: string,
     public readonly alternative?: string,
   ) {
-    super(alternative !== undefined ? `${message}. Try: ${alternative}` : message);
-    this.name = 'GuardError';
+    super(
+      alternative !== undefined ? `${message}. Try: ${alternative}` : message,
+      'GUARD_FAILED',
+    );
   }
 }
 

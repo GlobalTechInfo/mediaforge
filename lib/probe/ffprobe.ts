@@ -2,6 +2,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import type { Buffer } from 'node:buffer';
 import { resolveProbe } from '../utils/binary.ts';
+import { FFmpegError } from '../errors.ts';
 import type {
   ProbeResult,
   ProbeStream,
@@ -21,6 +22,8 @@ export interface ProbeOptions {
   chapters?: boolean;
   /** Timeout in ms. Default: 30000 */
   timeout?: number;
+  /** Abort the probe from the outside. */
+  signal?: AbortSignal;
   /** Extra ffprobe args to pass */
   extraArgs?: string[];
 }
@@ -40,10 +43,19 @@ export function probe(filePath: string, opts: ProbeOptions = {}): ProbeResult {
 
   let output: string;
   try {
+    if (opts.signal?.aborted === true) {
+      throw new FFmpegError('probe was aborted before it ran', 'ABORTED', {
+        cause: opts.signal.reason,
+      });
+    }
     output = execFileSync(binary, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       encoding: 'utf8',
       timeout: opts.timeout ?? 30000,
+      // SIGKILL, not the default SIGTERM: ffprobe killed by a timeout is by
+      // definition not in a state where it would act on SIGTERM, so the
+      // default signal can leave it running past its own deadline.
+      killSignal: 'SIGKILL',
     });
   } catch (err: unknown) {
     let msg = (err as Error).message ?? String(err);
@@ -65,6 +77,17 @@ export function probeAsync(
     const binary = resolveProbe(opts.binary);
     const args = buildProbeArgs(filePath, opts);
     const timeout = opts.timeout ?? 30000;
+
+    if (opts.signal?.aborted === true) {
+      reject(
+        new ProbeError(
+          filePath,
+          `aborted before it ran: ${String(opts.signal.reason ?? 'no reason given')}`,
+        ),
+      );
+      return;
+    }
+
     const child = spawn(binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
     // Reassemble multi-byte UTF-8 that straddles chunk boundaries.
@@ -84,9 +107,20 @@ export function probeAsync(
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
-      child.kill();
+      signal?.removeEventListener('abort', onAbort);
+      child.kill('SIGKILL');
       reject(new ProbeError(filePath, `ffprobe timed out after ${timeout}ms`));
     }, timeout);
+
+    const signal = opts.signal;
+    function onAbort(): void {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.kill('SIGKILL');
+      reject(new ProbeError(filePath, 'aborted by caller'));
+    }
+    signal?.addEventListener('abort', onAbort, { once: true });
     // The child stays referenced so the loop survives until it exits; only
     // the timer is unref'd so it cannot by itself keep the process alive.
     if (typeof timer.unref === 'function') timer.unref();
@@ -98,6 +132,7 @@ export function probeAsync(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      opts.signal?.removeEventListener('abort', onAbort);
       if (code !== 0) {
         reject(new ProbeError(filePath, stderr.slice(-1000)));
         return;
@@ -114,7 +149,8 @@ export function probeAsync(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      child.kill();
+      opts.signal?.removeEventListener('abort', onAbort);
+      child.kill('SIGKILL');
       reject(new ProbeError(filePath, err.message));
     });
   });
@@ -141,7 +177,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isStreamArray(value: unknown): value is ProbeStream[] {
   if (!Array.isArray(value)) return false;
-  return value.every(
+  // Array.isArray narrows `unknown` to `any[]`, so the elements would be `any`
+  // and every check below would be a runtime-only illusion. Re-widen to
+  // `unknown[]` so `isRecord` is what actually narrows them.
+  return (value as unknown[]).every(
     (item) => isRecord(item) && typeof item['index'] === 'number',
   );
 }
@@ -152,7 +191,7 @@ function isProbeFormat(value: unknown): value is ProbeFormat {
 
 function isChapterArray(value: unknown): value is ProbeChapter[] {
   if (!Array.isArray(value)) return false;
-  return value.every(
+  return (value as unknown[]).every(
     (item) => isRecord(item) && (item['id'] === undefined || typeof item['id'] === 'number'),
   );
 }
@@ -200,13 +239,12 @@ function parseProbeOutput(output: string, filePath: string): ProbeResult {
 
 // ─── Error class ──────────────────────────────────────────────────────────────
 
-export class ProbeError extends Error {
+export class ProbeError extends FFmpegError {
   constructor(
     public readonly filePath: string,
     public readonly detail: string,
   ) {
-    super(`ffprobe failed for "${filePath}": ${detail}`);
-    this.name = 'ProbeError';
+    super(`ffprobe failed for "${filePath}": ${detail}`, 'PROBE_FAILED');
   }
 }
 

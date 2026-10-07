@@ -107,6 +107,47 @@ function hasFilter(name: string): boolean {
 
 const HAS_ZSCALE = hasFilter('zscale');
 const HAS_TONEMAP = hasFilter('tonemap');
+
+/**
+ * Filter presence is not filter capability.
+ *
+ * This ffmpeg 8.0.1 build ships both `zscale` and `tonemap`, yet fails the
+ * 10-bit BT.2020 → BT.709 conversion with "Generic error in an external
+ * library" — raw ffmpeg fails identically, so it is a build limitation rather
+ * than a mediaforge defect. Guarding on presence alone therefore produced four
+ * failures that said nothing about this library, and CI's `continue-on-error`
+ * on this suite hid the difference.
+ *
+ * Probing the conversion itself lets the block skip with an accurate reason.
+ * `hdr.mp4` must already exist, so this runs after the setup section.
+ */
+let ZSCALE_CONVERTS = false;
+let ZSCALE_PROBE_ERROR = '';
+function probeToneMapCapability(): void {
+  const src = p('hdr.mp4');
+  if (!fs.existsSync(src)) {
+    ZSCALE_PROBE_ERROR = 'the hdr.mp4 fixture was not generated';
+    return;
+  }
+  try {
+    execFileSync(
+      'ffmpeg',
+      ['-v', 'error', '-i', src, '-vf', buildToneMapFilter(), '-frames:v', '1', '-f', 'null', '-'],
+      { stdio: ['ignore', 'ignore', 'pipe'] },
+    );
+    ZSCALE_CONVERTS = true;
+  } catch (error) {
+    // `execFileSync` yields stderr as a string when `encoding` is set and as a
+    // Uint8Array (a Buffer on Node.js) when it is not — and Deno always returns
+    // raw bytes here. Decode rather than assume.
+    const raw = (error as { stderr?: unknown }).stderr;
+    let stderr = '';
+    if (typeof raw === 'string') stderr = raw;
+    else if (raw instanceof Uint8Array) stderr = new TextDecoder().decode(raw);
+    const reason = stderr.split('\n').map((l) => l.trim()).filter(Boolean).pop();
+    ZSCALE_PROBE_ERROR = `this ffmpeg build cannot convert 10-bit BT.2020 → BT.709 (${reason ?? 'unknown error'})`;
+  }
+}
 const HAS_LIBMETRIX = hasFilter('libvmaf');
 const HAS_DRAW_TEXT = hasFilter('drawtext');
 
@@ -504,6 +545,22 @@ await run('measureQuality({metric:"vmaf"}) on a build without libvmaf → clear 
 
 // ─── 45. Tone mapping ──────────────────────────────────────────────────────
 section('45 — TONE MAPPING (HDR → SDR)');
+probeToneMapCapability();
+
+// This guard rejects before any encode, so it is meaningful on every ffmpeg
+// build and must run even when the conversion probe above failed.
+await run('toneMapHdrToSdr({requireHdrInput:true}) on an SDR file → throws with guidance', async () => {
+  try {
+    await toneMapHdrToSdr({ input: p('sdr10.mp4'), output: p('nope.mp4') });
+  } catch (e) {
+    const msg = (e as Error).message;
+    if (!/does not look like HDR/.test(msg)) throw new Error(`got: ${msg}`);
+    if (!/requireHdrInput: false/.test(msg)) throw new Error(`should offer the escape hatch: ${msg}`);
+    return;
+  }
+  throw new Error('expected a throw');
+});
+
 
 await run('TONE_MAP_ALGORITHMS covers ffmpeg\'s real option values', () => {
   for (const k of ['hable', 'mobius', 'reinhard', 'clip', 'linear', 'spline']) {
@@ -615,7 +672,7 @@ await run('buildToneMapFilter({output:"smpte170m"}) → final zscale uses that t
   }
 });
 
-if (HAS_ZSCALE && HAS_TONEMAP) {
+if (HAS_ZSCALE && HAS_TONEMAP && ZSCALE_CONVERTS) {
   await run('toneMapHdrToSdr on a real BT.2020/PQ file → SDR output tagged bt709', async () => {
     await toneMapHdrToSdr({ input: p('hdr.mp4'), output: p('tonemapped.mp4'), videoCodec: 'libx264' });
     if (!fs.existsSync(p('tonemapped.mp4'))) throw new Error('output not created');
@@ -654,18 +711,6 @@ if (HAS_ZSCALE && HAS_TONEMAP) {
     console.log(`      output: space=${st.color_space} trc=${st.color_transfer} prim=${st.color_primaries}`);
   });
 
-  await run('toneMapHdrToSdr({requireHdrInput:true}) on an SDR file → throws with guidance', async () => {
-    try {
-      await toneMapHdrToSdr({ input: p('sdr10.mp4'), output: p('nope.mp4') });
-    } catch (e) {
-      const msg = (e as Error).message;
-      if (!/does not look like HDR/.test(msg)) throw new Error(`got: ${msg}`);
-      if (!/requireHdrInput: false/.test(msg)) throw new Error(`should offer the escape hatch: ${msg}`);
-      return;
-    }
-    throw new Error('expected a throw');
-  });
-
   await run('toneMapHdrToSdr({algorithm:"hable",peak:1000,targetPeak:100}) → runs', async () => {
     await toneMapHdrToSdr({
       input: p('hdr.mp4'), output: p('tonemapped_hable.mp4'),
@@ -674,7 +719,10 @@ if (HAS_ZSCALE && HAS_TONEMAP) {
     if (!fs.existsSync(p('tonemapped_hable.mp4'))) throw new Error('output not created');
   });
 } else {
-  skip('toneMapHdrToSdr end-to-end', 'ffmpeg build has no zscale/tonemap filters');
+  skip(
+    'toneMapHdrToSdr end-to-end',
+    HAS_ZSCALE && HAS_TONEMAP ? ZSCALE_PROBE_ERROR : 'ffmpeg build has no zscale/tonemap filters',
+  );
 }
 
 // ─── 46. Temporal: interpolate / scenes / silence / segments ────────────────

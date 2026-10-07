@@ -19,10 +19,25 @@ import { join, dirname } from 'node:path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = join(__dirname, '../../fixtures/silence.mp3');
 
-// The fixture is a 1.04s mono 44.1kHz MP3 with no chapters and no language
-// tag, so every expectation below can name the exact value ffprobe reports
-// rather than merely checking that something is present.
-const FIXTURE_DURATION = 1.044898;
+// The fixture is a ~1s mono 44.1kHz MP3 with no chapters and no language tag.
+//
+// Its exact reported duration is deliberately NOT hardcoded. An MP3's duration
+// depends on the encoder's frame padding, so it reads as 1.000000 from the
+// committed fixture but has previously reported 1.044898 — a mismatch that
+// broke three of these tests and was masked by `continue-on-error` in two CI
+// workflows. Asserting an exact float re-arms that trap the next time anyone
+// re-encodes the fixture, so the tests below check against the value ffprobe
+// actually reports for the file on disk.
+const FIXTURE_DURATION_SEC = ((): number => {
+  const reported = Number(probe(FIXTURE).format?.duration);
+  if (!Number.isFinite(reported) || reported <= 0) {
+    throw new Error(`fixture duration is not a positive number: ${reported}`);
+  }
+  return reported;
+})();
+
+/** The fixture is a 1-second clip; allow generous slack for frame padding. */
+const DURATION_TOLERANCE = 0.25;
 
 /** Assert that a probe result is the shape and content we expect. */
 function expectUsableProbe(r: any) {
@@ -114,7 +129,8 @@ describe('probe helpers with real data', () => {
     result = probe(FIXTURE);
     const dur = getMediaDuration(result);
     expect(typeof dur).toBe('number');
-    expect(dur).toBeCloseTo(FIXTURE_DURATION, 4);
+    expect(dur).toBeCloseTo(FIXTURE_DURATION_SEC, 4);
+    expect(Math.abs((dur as number) - 1)).toBeLessThan(DURATION_TOLERANCE);
   });
 
   it('getMediaDuration falls back to the stream when the format omits it', () => {
@@ -123,7 +139,7 @@ describe('probe helpers with real data', () => {
       ...result,
       format: { ...result.format, duration: undefined },
     };
-    expect(getMediaDuration(noFormatDuration)).toBeCloseTo(FIXTURE_DURATION, 4);
+    expect(getMediaDuration(noFormatDuration)).toBeCloseTo(FIXTURE_DURATION_SEC, 4);
   });
 
   it('getAudioStreams returns one stream', () => {
@@ -143,7 +159,7 @@ describe('probe helpers with real data', () => {
       sampleRate: 44100,
       channels: 1,
       channelLayout: 'mono',
-      durationSec: FIXTURE_DURATION,
+      durationSec: FIXTURE_DURATION_SEC,
       bitrateBps: 64000,
     });
   });

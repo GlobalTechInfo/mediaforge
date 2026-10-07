@@ -127,3 +127,113 @@ export function killAllFFmpeg(signal: NodeJS.Signals = 'SIGTERM'): void {
     try { child.kill(signal); } catch { /* ok */ }
   }
 }
+
+// ─── Exit / signal cleanup ───────────────────────────────────────────────────
+
+/**
+ * Children registered for automatic cleanup.
+ *
+ * Kept separate from `_spawned` so `autoCleanup: false` really does opt out.
+ */
+const _cleanupChildren = new Set<ChildProcess>();
+
+/**
+ * One set of process listeners for the whole library, installed lazily on the
+ * first spawn and removed once nothing is left to protect.
+ *
+ * Registering `process.on('SIGINT')` per child would be a bug twice over: a
+ * long-running server spawning thousands of encodes would trip Node's
+ * `MaxListenersExceededWarning` at 11, and every one of those handlers would
+ * have to be torn down individually. A single handler consulting a Set cannot
+ * leak listeners, because the count does not grow with the number of jobs.
+ */
+let cleanupInstalled = false;
+
+function installCleanupHandlers(): void {
+  if (cleanupInstalled) return;
+  cleanupInstalled = true;
+
+  const handler = (): void => {
+    // SIGKILL on Windows: there is no SIGTERM-equivalent that a child can trap,
+    // and a native addon may not route the signal at all.
+    const safeSignal = isWindows ? 'SIGKILL' : 'SIGTERM';
+    for (const child of [..._cleanupChildren]) {
+      try {
+        child.kill(safeSignal);
+      } catch {
+        // Already gone.
+      }
+    }
+  };
+
+  process.on('exit', handler);
+  process.on('SIGINT', handler);
+  process.on('SIGTERM', handler);
+  if (typeof (globalThis as Record<string, unknown>)['beforeunload'] === 'function') {
+    try {
+      ((globalThis as Record<string, unknown>)['addEventListener'] as (...a: unknown[]) => unknown)(
+        'beforeunload',
+        handler,
+      );
+    } catch {
+      // Not every runtime exposes it.
+    }
+  }
+
+  _cleanupHandlers = handler;
+}
+
+let _cleanupHandlers: (() => void) | undefined;
+
+/**
+ * Ensure a child cannot outlive this process.
+ *
+ * Without this a `SIGTERM` delivered to the host alone leaves ffmpeg running
+ * and still writing to the output path — which is the normal case for a
+ * systemd stop, a container shutdown, or a CI cancellation.
+ */
+export function registerExitCleanup(child: ChildProcess): void {
+  installCleanupHandlers();
+  _cleanupChildren.add(child);
+  const release = (): void => {
+    _cleanupChildren.delete(child);
+    if (_cleanupChildren.size === 0) removeCleanupHandlers();
+  };
+  child.once('close', release);
+  child.once('exit', release);
+}
+
+/**
+ * Drop the global handlers once the last registered child has exited, so a
+ * finished encode leaves no listeners behind to keep a short-lived process
+ * alive or to fire during unrelated later work.
+ */
+function removeCleanupHandlers(): void {
+  if (_cleanupHandlers === undefined) return;
+  process.removeListener('exit', _cleanupHandlers);
+  process.removeListener('SIGINT', _cleanupHandlers);
+  process.removeListener('SIGTERM', _cleanupHandlers);
+  if (typeof (globalThis as Record<string, unknown>)['removeEventListener'] === 'function') {
+    try {
+      ((globalThis as Record<string, unknown>)['removeEventListener'] as (...a: unknown[]) => unknown)(
+        'beforeunload',
+        _cleanupHandlers,
+      );
+    } catch {
+      // Not every runtime exposes it.
+    }
+  }
+  _cleanupHandlers = undefined;
+  cleanupInstalled = false;
+}
+
+/**
+ * Number of children currently registered for exit cleanup.
+ *
+ * Exists so a regression test can assert the registration set drains — an
+ * entry left behind after a job finishes would keep a process-level handler
+ * alive forever. Not part of the public API.
+ */
+export function getCleanupCount(): number {
+  return _cleanupChildren.size;
+}

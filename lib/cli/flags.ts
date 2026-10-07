@@ -5,11 +5,35 @@
  * (and therefore not create a cycle with) the first one.
  */
 
-export type CliFlags = Record<string, string | boolean>;
+/**
+ * Parsed flag values.
+ *
+ * `string[]` appears only for flags declared repeatable (`--set k=v --set k2=v2`),
+ * and only when parsed by `parseArgs`, which knows the declaration. The
+ * single-value accessors below (`str`, `num`, `list`, `bool`) read the array as
+ * its last element or ignore it, so a repeatable flag is still usable through
+ * them when only the final value matters.
+ */
+export type CliFlagValue = string | boolean | string[];
+
+export type CliFlags = Record<string, CliFlagValue>;
+
+/** Last value of a possibly-repeatable flag, or undefined. */
+function last(v: CliFlagValue | undefined): string | boolean | undefined {
+  if (Array.isArray(v)) return v.length > 0 ? v[v.length - 1] : undefined;
+  return v;
+}
+
+/** Every value of a repeatable flag, as strings. */
+export function all(f: CliFlags, k: string): string[] {
+  const v = f[k];
+  if (Array.isArray(v)) return v;
+  return typeof v === 'string' ? [v] : [];
+}
 
 /** Read a flag that is expected to carry a string value. */
 export function str(f: CliFlags, k: string): string | undefined {
-  const v = f[k];
+  const v = last(f[k]);
   return typeof v === 'string' ? v : undefined;
 }
 
@@ -28,9 +52,27 @@ export function list(f: CliFlags, k: string): string[] {
   return v === undefined || v === '' ? [] : v.split(',').map(s => s.trim()).filter(Boolean);
 }
 
+/**
+ * Read a comma-separated flag that may also be repeated.
+ *
+ * `concat --file a.mp4 --file b.mp4` and `concat --file a.mp4,b.mp4` both yield
+ * `['a.mp4', 'b.mp4']`, which is what a user expects from either spelling.
+ */
+export function listOf(f: CliFlags, k: string): string[] {
+  const values = all(f, k);
+  const out: string[] = [];
+  for (const value of values) {
+    for (const part of value.split(',')) {
+      const trimmed = part.trim();
+      if (trimmed !== '') out.push(trimmed);
+    }
+  }
+  return out;
+}
+
 /** Read a boolean flag. `--flag`, `--flag=true` and `--flag=1` are true. */
 export function bool(f: CliFlags, k: string): boolean | undefined {
-  const v = f[k];
+  const v = last(f[k]);
   return v === undefined ? undefined : v !== 'false' && v !== '0';
 }
 

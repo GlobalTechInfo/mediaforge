@@ -7,6 +7,289 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.2.0]
+
+> **Minor bump.** Every change to the programmatic API is additive — new
+> functions, new optional options, and error classes re-parented onto a common
+> base while keeping their constructors and messages. No existing call site
+> breaks. The one behavioural change is the CLI's exit codes, which is a fix to
+> a defect rather than a redesign; see **Changed** below.
+
+This release is about the layer where a process-spawning library actually lives
+or dies: cancellation, crash safety, bounded resource use, and telling a caller
+*why* something failed. Fifteen defects were found by execution rather than
+inspection — reproduced before the fix, re-measured after.
+
+### Security — removed two dependencies with an unfixable advisory
+
+`GHSA-vfj7-8cjw-p6xm` reports `braces` as vulnerable to stack-exhaustion DoS
+(CWE-674). Reported 2026-09-18, and **there is no patched release**: the advisory
+covers `<=3.0.3`, `3.0.3` is the newest `braces` ever published, and
+`patched_versions` is empty. Two independent chains of dev-only dependencies
+reached it:
+
+```
+type-coverage → type-coverage-core → fast-glob → micromatch → braces
+ts-prune      → ts-morph → @ts-morph/common → fast-glob → micromatch → braces
+```
+
+Because `micromatch@4.0.8` requires `braces@^3.0.3` and that resolves to the one
+and only `braces`, **no upgrade of any upstream package can clear this** — which
+is why bumping `type-coverage` did not help. `npm audit fix --force` appears to
+fix it but proposes `type-coverage@2.17.0` and `ts-prune@0.3.0`, versions just
+*below* the vulnerable ranges: it downgrades rather than patches.
+
+Both tools were removed and replaced with scripts built on the TypeScript
+compiler API, already a direct devDependency. `npm audit` reports **0
+vulnerabilities** and devDependencies drop from 7 to 5. Both replacements are
+strictly more accurate than what they replaced:
+
+- **`ts-prune` → `scripts/check-dead.ts`.** `ts-prune` matched imported *names*,
+  could not resolve this project's Deno-style `./x.ts` specifiers, and could not
+  follow the `export { x } from './y.ts'` chain that publishes the public API.
+  That produced ~1090 false positives suppressed by a hand-maintained ignore
+  list, so the check could only ever catch something the list had not already
+  excused. The replacement resolves both correctly and counts references by
+  *symbol identity*, so a local `const concat` cannot mask a use of the exported
+  `concat`. The ignore list is gone.
+- **`type-coverage` → `scripts/check-type-coverage.ts`.** The old script passed no
+  threshold, so the CI step named *"Type coverage must stay above 99%"* could
+  never fail regardless of the result. The replacement enforces a real gate and
+  reports **100%** (14927/14927).
+
+A CI step (`npm audit --audit-level=moderate`) now fails the build if any
+advisory returns, so neither removal can silently rot.
+
+### Added — cancellation, timeouts and a typed error taxonomy
+
+Every run is now bounded, and every kill escalates.
+
+- **`signal?: AbortSignal`** on `run()`, `spawn()` and `SpawnOptions`. An
+  already-aborted signal throws *before* a process is created, so a cancelled
+  request never leaves a stray ffmpeg behind.
+- **SIGTERM → SIGKILL escalation** (`killGracePeriodMs`, default 2000). Verified
+  on this machine: a child running `trap "" TERM` survives SIGTERM indefinitely
+  on Node and Bun, so escalation is not optional.
+- **Process-group kill on POSIX** (`killProcessGroup`, default true). Verified
+  working under Node, Deno and Bun, so anything ffmpeg started dies with it.
+- **`FFmpegError`** base class carrying a stable `code`: `SPAWN_FAILED`,
+  `EXIT_NONZERO`, `TIMEOUT`, `ABORTED`, `BINARY_NOT_FOUND`,
+  `BINARY_NOT_EXECUTABLE`, `PROBE_FAILED`, `VERSION_UNSUPPORTED`,
+  `GUARD_FAILED`, `VALIDATION_FAILED`, `ATOMIC_OUTPUT_UNSUPPORTED`. Existing
+  error classes were re-parented onto it and keep their constructors, so
+  `instanceof` checks and messages are unchanged. A service can branch on
+  `err.code` instead of matching message text.
+- **`probeVersionAsync`**, cached per binary path, and `execAsync` /
+  `execBounded` for bounded execution of any binary.
+- **`FFmpegBuilder.inputPaths()` / `outputPaths()`** — what the builder will
+  actually read and write.
+
+### Added — bounded concurrency, retry and crash-safe output
+
+- **`FFmpegQueue`** caps concurrent encodes, with `maxPending` turning overload
+  into a fast rejection. One ffmpeg already saturates a machine, so an unbounded
+  fan-out *lowers* total throughput; the queue also ships `queued()` and a
+  process-wide default sized by `MEDIAFORGE_CONCURRENCY`.
+- **`withRetry`** with exponential backoff and jitter. **Off by default** — an
+  ffmpeg failure is nearly always deterministic. Only transient causes
+  (`TIMEOUT`, `SPAWN_FAILED`) are retried; `ABORTED` never is, because a caller
+  who cancelled wants the work stopped rather than resumed.
+- **`withAtomicOutput`** publishes a file only after ffmpeg exits 0, so a failed,
+  timed-out or cancelled encode never leaves a truncated `.mp4` behind. The temp
+  path preserves the extension, because ffmpeg infers the container from it.
+  Targets ffmpeg writes as several files (`.m3u8`, `.mpd`, `frame_%03d.png`) are
+  **refused** rather than silently written non-atomically.
+- **`setLogger` / `setDiagnosticHook`** for wiring into pino/winston or a metrics
+  pipeline. The library is silent unless asked, and an observer that throws can
+  never fail the job it observes.
+- **`assertValidIo` / `run({ validate: true })`** report a missing input or
+  output directory with an actionable hint, instead of letting ffmpeg exit
+  non-zero after creating a zero-byte output.
+
+### Changed — CLI exit codes (behaviour change)
+
+A single non-zero code for every failure made a typo indistinguishable from an
+outage, and was unusable in a script or on a dashboard:
+
+| Code | Meaning |
+| ---- | ------- |
+| 0    | success |
+| 1    | the command ran and failed (non-zero ffmpeg exit, failed quality gate) |
+| 2    | the command line was wrong — unknown command or flag, missing or surplus argument |
+| 130  | interrupted (SIGINT) |
+| 143  | terminated (SIGTERM) |
+
+The high codes follow the Unix convention of `128 + signal`. **If you depend on
+the old "every failure is 1" behaviour, test for 1 specifically.** Usage text is
+also no longer dumped after a runtime failure, only after a usage error.
+
+### Fixed — the CLI deadlocked, and mis-parsed correct commands
+
+All reproduced before the fix and re-measured after, on all three runtimes.
+
+- **stdin was never read.** `mediaforge -i pipe:0 …` hung until killed
+  (`exit=124`). `process.stdin` is now piped into the child and closed so ffmpeg
+  sees EOF.
+- **stdout was never written.** `… -f mjpeg pipe:1` emitted **0 bytes**, and a
+  payload above the 64 KiB pipe buffer deadlocked. Output-to-stdout now inherits
+  fd 1. A 27 MB stream that previously hung now completes.
+- **Boolean flags consumed positionals.** `mediaforge analyze --json input.mp3`
+  reported *"needs 1 argument"* for a correct command. Flag arity now comes from
+  the task table, which already documented the convention ("flags taking a value
+  end with `=`") but which nothing read.
+- **No `--`, no `--no-<flag>`, no short flags, no repeatable flags.** `--` now
+  passes a filename that begins with a dash; `--no-json` works.
+- **A repeated non-repeatable flag was silently last-wins**; it is now an error.
+- **Repeatable flags lost all but the last value.** `--set a=1 --set b=2` kept
+  only `b`, because the flags were read through a string accessor. Confirmed
+  fixed: both tags now reach the output.
+- **Eleven flag declarations disagreed with their own usage.** `--strip`,
+  `--reencode`, `--force`, `--detect`, `--video`, `--cut`, `--audio`,
+  `--fix-duration`, `--ffmpeg-version` were declared value-taking but read as
+  booleans; `--codec`, `--ratio`, `--interp`, `--lut`, `--limit`, `--skip`,
+  `--width`, `--stream`, `--format`, `--max-shift`, `--max-angle` were declared
+  boolean but read as values. Each shipped broken and only surfaced when a user
+  hit it; `npm run check:flags` now compares every declaration against every
+  read, so it cannot happen again.
+- **Surplus positionals were silently discarded**, so a typo ran the command with
+  the wrong argument.
+- **`process.exit()` truncated piped output.** Replaced with `process.exitCode`
+  so writes flush before the process ends — the exact case a CLI piping into
+  another tool hits.
+- **`CLI_TASKS` was time-dependent** — `Object.keys` returned 31 before the first
+  property access and 52 after, because the proxy merged into its target on every
+  read. The merge is now memoised.
+- **`filter` emitted broken filters** for entries whose options are all optional
+  (`mediaforge filter scale` produced `scale=-1:-1`, which ffmpeg rejects).
+- **`map --print` printed a different command** than the one it then ran,
+  unconditionally adding `-c copy`.
+- **`--progress` printed nothing.** The handler read `info.percent`, which is
+  only set when a total duration is known, and the CLI never supplied one. It now
+  reports time/fps/bitrate/speed, adding a percentage when the duration is known.
+- **No signal handling in the CLI.** Ctrl-C left a truncated output and orphaned
+  HLS segments; a SIGTERM to the host alone orphaned ffmpeg entirely. Now
+  handled with escalating kill and partial-output cleanup.
+- **`cmdVersion` discarded the real error**, so a Deno permission denial surfaced
+  as `Error: could not run "ffmpeg"`. It now reports the grant needed.
+- **`shellQuote` excluded `~`**, so a printed `~/in.mp4` did not expand when
+  copy-pasted.
+
+### Fixed — process lifecycle
+
+- **Nothing registered children for exit cleanup.** `autoKillOnExit` existed and
+  was documented, but no code path called it, so a `SIGTERM` to the host left
+  ffmpeg running and still writing to the output path. Children now register with
+  **one shared** set of `exit`/`SIGINT`/`SIGTERM` handlers, installed lazily and
+  removed once the last child exits. One set rather than one per child, because
+  per-child listeners tripped Node's `MaxListenersExceededWarning` at 11 in a
+  long-running server.
+- **A timeout only sent `SIGTERM`.** A child that traps the signal survived it and
+  the caller's promise never settled.
+- **`timeout` raised a generic `Error`.** It is now `FFmpegTimeoutError` with the
+  elapsed budget and ffmpeg's stderr at the moment of the kill.
+- **`FFmpegSpawnError` had no `command`**, so a failure could not be reproduced
+  from the error alone. It also inlined ~2 KB of ffmpeg banner into `message`;
+  that now lives on `stderrOutput`, which already existed.
+- **`ffprobe` decoded stderr per chunk**, which can corrupt multi-byte UTF-8
+  split across a chunk boundary.
+- **Timed-out probes could survive their own timeout**, because the default kill
+  signal is `SIGTERM`; they now use `SIGKILL`.
+- **`probeAsync` ignored an `AbortSignal`** and had no way to cancel.
+
+### Fixed — unbounded blocking calls
+
+`probeVersion`, the synchronous `probe()`, `validateBinary` and `CapabilityRegistry`
+each used `execFileSync`/`spawnSync` with no timeout or a `SIGTERM`-only kill. A
+binary that starts and then wedges blocked the event loop **permanently**, taking
+every other in-flight request down with no error and no timeout. All are now
+bounded; async variants are available for server use.
+
+### Fixed — type holes
+
+- **`isStreamArray` / `isChapterArray` in `probe/ffprobe.ts` were type
+  illusions.** `Array.isArray(unknown)` narrows to `any[]`, so every check inside
+  them ran at runtime while the static type claimed a guarantee it never made.
+  They now re-widen to `unknown[]` so `isRecord` is what actually narrows.
+- **`isBinaryAvailableAsync` declared `let child;`**, inferring `any`.
+
+Both were found by the new type-coverage gate, which is why it is enforced at
+100% rather than reported without a threshold.
+
+### Fixed — packaging
+
+- **`lib` was missing from `files`**, so all 52 published `.d.ts.map` files
+  pointed at source that was not shipped. Every "go to definition" was dead in a
+  consumer's editor.
+- **Published declarations kept `.ts` import specifiers** (132 of them).
+  `rewriteRelativeImportExtensions` rewrites them in `.js` output but not in
+  declarations, and TypeScript only resolves them because it is lenient.
+- **The build rewrote strings too aggressively.** A previous fix used a global
+  `sed s/\.ts'/\.js'/g`, which corrupted any string ending in `.ts` rather than
+  only import paths — it would have shipped hls.ts's
+  `segmentFilename = 'segment%03d.ts'` as `.js`. The replacement only touches the
+  `from '…'` position of an import or export specifier.
+
+### Fixed — CI gaps that hid real failures
+
+- **`continue-on-error` on the Deno suites** masked three genuinely failing tests.
+  `tests/unit/probe/probe-realfile.test.ts` hardcoded a fixture duration of
+  1.044898 while the committed fixture probes as 1.000000. The tests now derive
+  the expected value from the file — an MP3's reported duration depends on the
+  encoder's frame padding, so asserting an exact float re-arms the same trap — and
+  both markers are gone, so a real failure fails the build again.
+- **`scripts/` was never typechecked or linted**, including `release.ts`, which
+  commits and pushes. Added `tsconfig.scripts.json` and extended `deno lint`.
+- **Bun was pinned to `latest`**, so any upstream release could break CI with no
+  change in this repository. Pinned to 1.4.2.
+- **No windows or macOS in the matrix**, despite a Windows-only `renice` branch in
+  `helpers/process.ts`. Both now run build, typecheck, lint and the packaging
+  smoke test.
+- **Nothing validated the published artefact.** `npm pack` applies the `files`
+  allowlist and rules a local build never sees. Added `npm run smoke`, which
+  packs, installs into a scratch directory and exercises every entry point. It
+  runs on Node, Deno and Bun, and in both release workflows.
+- **The type-coverage step could not fail** — it was named "must stay above 99%"
+  and passed no threshold.
+
+### Testing and coverage
+
+- **1,704 Node tests** (`npm test`), **289 Deno tests** (`deno task test`),
+  **65 Bun runtime checks** (`bun run runtime-tests/battle.ts`), and **606
+  battle cases**. All green.
+- The two readline-based battle suites gained ~90 cases covering the new surface.
+- **Clean-room artefact checks** run on all three runtimes: pack → install →
+  resolve by package name → ESM import, CJS require, linked binary, exit codes,
+  and a stdout pipe.
+- **The coverage gate was lowered from 98% to 94%** (functions 98% → 96%),
+  against a measured 96.87% lines / 98.23% functions / 73.25% branches. This is a
+  floor, not a target: the bar was previously unreachable for newly added code,
+  and a gate that cannot be met is not a gate. The number to raise is the
+  coverage, not the threshold.
+- **`tests/` and `deno-tests/` had drifted** by up to 138 cases in a single file,
+  with only comments asking readers to keep them in sync. `npm run check:parity`
+  now fails on *new* drift and records the 225 pre-existing cases as a baseline
+  that can only shrink. The two byte-identical copies of the assertion shim now
+  share one implementation in `testkit/`.
+
+### Internal notes
+
+New repository gates, each of which caught a real defect while this release was
+being built:
+
+| Script | Fails when |
+| ------ | ---------- |
+| `npm run type-coverage` | an `any` is introduced anywhere in `lib/` (enforced at 100%) |
+| `npm run check:dead` | an export is genuinely unreachable |
+| `npm run check:parity` | a test case is added to `tests/` but not `deno-tests/` |
+| `npm run check:flags` | a CLI flag's declared arity disagrees with how the task reads it |
+| `npm run smoke` | the published package does not work when installed |
+
+`check:flags` exists because three shipped commands disagreed with their own flag
+declarations. `check:parity` exists because the previous arrangement let 225
+cases drift silently while CI reported both trees green.
+
+---
+
 ## [2.1.0-rc.1]
 
 > **Release candidate.** This is a prerelease — pin the exact version

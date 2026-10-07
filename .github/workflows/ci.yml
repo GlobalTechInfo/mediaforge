@@ -17,7 +17,17 @@ jobs:
       fail-fast: false
       matrix:
         node: ['20', '22', '24']
+        # ubuntu carries the full suite. windows and macOS carry build,
+        # typecheck, lint and the published-artefact smoke test, because those
+        # exercise path handling, the shebang and the bin link — none of which
+        # ubuntu can catch. See lib/helpers/process.ts for the Windows-only
+        # renice branch this covers.
         os: [ubuntu-latest]
+        include:
+          - os: windows-latest
+            node: '22'
+          - os: macos-latest
+            node: '22'
 
     steps:
       - uses: actions/checkout@v5
@@ -28,8 +38,17 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
 
-      - name: Install FFmpeg
+      - name: Install FFmpeg (Linux)
+        if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+
+      - name: Install FFmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+
+      # windows-latest ships ffmpeg on PATH already.
+      - name: Verify FFmpeg is available
+        run: ffmpeg -version
 
       - name: Install dependencies
         run: npm ci
@@ -40,20 +59,30 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Lint
+        run: deno lint
+
+      # The artefact is packed and installed into a scratch directory, then
+      # every published entry point is exercised. This is the only check that
+      # sees what a consumer actually receives, and it has caught packaging
+      # faults that nothing in this repository could see.
+      - name: Smoke test the published package
+        run: npm run smoke
+
       - name: Run all tests with coverage (Node 22 only)
-        if: matrix.node == '22'
+        if: matrix.node == '22' && runner.os == 'Linux'
         run: npm run coverage
 
       - name: Run battle tests with coverage (Node 22 only)
-        if: matrix.node == '22'
+        if: matrix.node == '22' && runner.os == 'Linux'
         run: npm run coverage:battle
 
       - name: Library coverage must stay above 98% (Node 22 only)
-        if: matrix.node == '22'
+        if: matrix.node == '22' && runner.os == 'Linux'
         run: npm run coverage:gate
 
       - name: Upload unit coverage to Codecov (Node 22 only)
-        if: matrix.node == '22'
+        if: matrix.node == '22' && runner.os == 'Linux'
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -62,7 +91,7 @@ jobs:
           fail_ci_if_error: false
 
       - name: Upload battle coverage to Codecov (Node 22 only)
-        if: matrix.node == '22'
+        if: matrix.node == '22' && runner.os == 'Linux'
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -71,14 +100,14 @@ jobs:
           fail_ci_if_error: false
 
       - name: Run all tests (Node 20)
-        if: matrix.node == '20'
+        if: matrix.node == '20' && runner.os == 'Linux'
         run: npm run test
         
       - name: Run battle tests (Node 20)
-        if: matrix.node == '20'
+        if: matrix.node == '20' && runner.os == 'Linux'
         run: npm run battle:all
 
-      - name: Type coverage must stay above 99%
+      - name: Type coverage must stay at 100%
         if: matrix.node == '22'
         run: npm run type-coverage
 
@@ -89,6 +118,30 @@ jobs:
       - name: Every test file is wired to a script
         if: matrix.node == '22'
         run: npm run check:scripts
+
+      # tests/ and deno-tests/ are two hand-maintained copies of one suite. This
+      # blocks new cases being added to only one of them, which had silently left
+      # the Deno and Bun story weaker than the Node one (225 cases of recorded,
+      # pre-existing shortfall) while CI reported both green.
+      - name: No new tests/ vs deno-tests/ drift
+        if: matrix.node == '22'
+        run: npm run check:parity
+
+      # The CLI parser takes flag arity from each flag's description. This checks
+      # that declaration against how every task actually reads the flag, after
+      # three shipped commands disagreed about it.
+      - name: CLI flag declarations match how they are read
+        if: matrix.node == '22'
+        run: npm run check:flags
+
+      # Regression guard for GHSA-vfj7-8cjw-p6xm (braces, CWE-674), which
+      # arrived with no patched release. It reached us through `type-coverage`
+      # and `ts-prune`; both were removed and replaced with scripts built on
+      # `typescript` directly. This step fails if any advisory ever comes back,
+      # so the fix cannot silently rot — see SECURITY.md.
+      - name: No known vulnerabilities
+        if: matrix.node == '22'
+        run: npm audit --audit-level=moderate
 
   bun:
     name: Bun — ubuntu-latest
@@ -102,7 +155,10 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          # Pinned deliberately: `latest` lets any upstream Bun release break
+          # this job with no change in this repository, which makes a real
+          # regression impossible to tell from toolchain drift.
+          bun-version: 1.4.2
 
       - name: Install FFmpeg
         run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
@@ -113,8 +169,14 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Lint
+        run: deno lint
+
       - name: Runtime portability battle test (lib/ under Bun)
         run: bun run runtime-tests/battle.ts
+
+      - name: Installed package: ESM import + CLI (Bun)
+        run: bun run scripts/smoke-bun.ts
 
   deno:
     name: Deno — ubuntu-latest
@@ -150,9 +212,11 @@ jobs:
       - name: Runtime portability battle test (lib/ under Deno)
         run: deno task battle:runtime
 
+      - name: Installed package: ESM import + CLI (Deno)
+        run: deno run -A scripts/smoke-deno.ts
+
       - name: Unit tests
         run: deno task test:unit
 
       - name: Integration tests
         run: deno task test:integration
-        continue-on-error: true
