@@ -44,52 +44,74 @@ function check(name: string, condition: boolean, detail = ''): void {
   }
 }
 
+
 /**
- * Environment for a *nested* npm invocation.
+ * Environment and invocation for a *nested* npm call.
  *
- * `npm run` exports this project's .npmrc settings into the environment as
- * `npm_config_*`, and a child npm inherits them verbatim. This repo's .npmrc
- * carries `allow-scripts=esbuild` (needed so esbuild's postinstall runs under
- * npm 11's script blocking), and npm 11 refuses an `allow-scripts` config in a
- * project-scoped install:
+ * Two platform/npm traps, both of which only show up on one leg of the matrix:
  *
- *   npm error --allow-scripts is not allowed in project-scoped installs.
+ * 1. `npm_config_*` inheritance. `npm run` exports this project's .npmrc
+ *    settings into the environment, and a child npm inherits them verbatim. This
+ *    repo's .npmrc carries `allow-scripts=esbuild` (needed so esbuild's
+ *    postinstall runs under npm 11's script blocking), and npm 11 refuses an
+ *    `allow-scripts` config in a project-scoped install:
+ *    `npm error --allow-scripts is not allowed in project-scoped installs`.
+ *    So `npm install ./mediaforge.tgz` in the scratch directory died with a bare
+ *    exit 1 and no message - only under `npm run`, and only on npm >= 11, which
+ *    is why it passed locally and on Node 20/22 while Node 24 broke. The scratch
+ *    install is not this project, so none of this project's config applies.
  *
- * So `npm install ./mediaforge.tgz` inside the scratch directory failed with a
- * bare exit 1 and no message — it only failed when spawned from `npm run`, and
- * only on npm >= 11, which is why it passed locally and on the Node 20/22 legs
- * while Node 24 broke. The scratch install is not this project, so none of this
- * project's config applies to it. Dropping every inherited `npm_config_*` and
- * `npm_*` key makes the nested install behave like a fresh shell.
+ * 2. Windows has no `npm` binary, only `npm.cmd`, and Node refuses to execute a
+ *    `.cmd` without a shell (the BatBadBut fix). Going through the shell is only
+ *    safe if the arguments are quoted first, since it does not quote them itself.
+ *
+ * Returns the command, its leading arguments, and the environment to use.
  */
-function nestedEnv(): NodeJS.ProcessEnv {
+function npmInvocation(): { cmd: string; args: string[]; env: NodeJS.ProcessEnv } {
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value === undefined) continue;
     if (key.startsWith('npm_config_') || key === 'npm_lifecycle_event' || key === 'npm_lifecycle_script') continue;
     env[key] = value;
   }
-  return env;
+  if (process.platform !== 'win32') return { cmd: 'npm', args: [], env };
+  // cmd.exe does not quote its arguments, so quote anything with a space in it.
+  return {
+    cmd: 'npm.cmd',
+    args: [],
+    env,
+  };
 }
 
+/** Run a non-npm command with the real environment (ffmpeg, the CLI, deno, bun). */
 function run(command: string, args: string[], cwd: string): string {
-  return execFileSync(command, args, {
+  return execFileSync(command, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
+function runNpm(args: string[], cwd: string): string {
+  const inv = npmInvocation();
+  const quoted = process.platform === 'win32'
+    ? args.map((a) => (/\s/.test(a) ? `"${a}"` : a))
+    : args;
+  return execFileSync(inv.cmd, [...inv.args, ...quoted], {
     cwd,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
-    // Only strip for npm: the ffmpeg/CLI probes must keep the real environment.
-    env: command === 'npm' ? nestedEnv() : process.env,
+    env: inv.env,
+    // Required on Windows: Node will not run a `.cmd` without a shell.
+    shell: process.platform === 'win32',
   });
 }
+
 
 try {
   console.log(`smoke(${RUNTIME}): packing and installing`);
 
-  const packOutput = run('npm', ['pack', '--silent', '--pack-destination', scratch], ROOT);
+  const packOutput = runNpm(['pack', '--silent', '--pack-destination', scratch], ROOT);
   const tarball = join(scratch, packOutput.trim().split('\n').pop()!.trim());
 
-  run('npm', ['init', '-y', '--silent'], scratch);
-  run('npm', ['install', tarball, '--silent', '--no-audit', '--no-fund'], scratch);
+  runNpm(['init', '-y', '--silent'], scratch);
+  runNpm(['install', tarball, '--silent', '--no-audit', '--no-fund'], scratch);
 
   const installed = join(scratch, 'node_modules', 'mediaforge');
   check('installed into node_modules', true, installed);
