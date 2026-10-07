@@ -48,7 +48,33 @@ jobs:
 
       - name: Install FFmpeg (Windows)
         if: runner.os == 'Windows'
-        run: choco install ffmpeg -y --no-progress
+        shell: pwsh
+        run: |
+          # community.chocolatey.org intermittently answers 504, which fails the
+          # whole Windows leg before a single test runs - and it did, on an
+          # otherwise-green commit. Retry rather than letting a transient CDN
+          # error masquerade as a real failure.
+          $installed = $false
+          for ($attempt = 1; $attempt -le 4; $attempt++) {
+            Write-Host "::group::choco install ffmpeg (attempt $attempt of 4)"
+            choco install ffmpeg -y --no-progress --limit-output
+            # Chocolatey updates the machine PATH, but not this shell's copy of
+            # it, so refresh before testing whether ffmpeg is reachable.
+            $env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') +
+                        ';' + [System.Environment]::GetEnvironmentVariable('Path', 'User')
+            if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
+              $installed = $true
+              Write-Host "::endgroup::"
+              break
+            }
+            Write-Host "::endgroup::"
+            if ($attempt -lt 4) { Start-Sleep -Seconds 20 }
+          }
+          if (-not $installed) {
+            Write-Error 'ffmpeg is still not on PATH after 4 attempts'
+            exit 1
+          }
+          ffmpeg -version
 
       # Fails fast with a clear message if any of the three install steps above
       # did not put a working binary on PATH.
