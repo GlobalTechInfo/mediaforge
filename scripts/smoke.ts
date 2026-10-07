@@ -141,7 +141,11 @@ try {
     const raw = execFileSync('tar', ['-xzOf', tarball, `package/${entry}`], { encoding: 'utf8' });
     for (const match of raw.matchAll(/"sources":\s*\[([^\]]*)\]/g)) {
       for (const spec of match[1]!.matchAll(/"([^"]+)"/g)) {
-        const resolved = resolvePosix(join(dirname(entry), spec[1]!));
+        // Join with '/' rather than path.join: source maps are POSIX-style and
+        // resolvePosix splits on '/', but path.join emits '\' on Windows, so
+        // the resolved target came out as `lib\utils\args.ts` and matched
+        // nothing in the (correctly normalised) entry list.
+        const resolved = resolvePosix(`${dirname(entry)}/${spec[1]!}`);
         if (!declared.has(resolved)) missingTargets.add(resolved);
       }
     }
