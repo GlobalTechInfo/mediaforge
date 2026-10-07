@@ -390,6 +390,7 @@ export function spawnFFmpeg(opts: SpawnOptions): FFmpegProcess {
     child,
     stdin: child.stdin,
     stdout: child.stdout,
+    /** Terminate the child, defaulting to an escalating SIGTERM. */
     kill(signalName: NodeJS.Signals = 'SIGTERM') {
       clearTimers();
       signalChild(child, signalName, killProcessGroup);

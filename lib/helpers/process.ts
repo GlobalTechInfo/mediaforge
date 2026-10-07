@@ -10,6 +10,12 @@ const _spawnedPids = new Set<number>();
 // long-running process leaked one entry per encode.
 const _spawned = new Set<ChildProcess>();
 
+/**
+ * Track a child so it is counted as live and can be killed in bulk.
+ *
+ * Releases on `close`/`exit`, so the set cannot grow across a long-lived
+ * process.
+ */
 export function trackChild(child: ChildProcess): void {
   _spawned.add(child);
   if (child.pid !== undefined) {
@@ -153,37 +159,75 @@ function installCleanupHandlers(): void {
   if (cleanupInstalled) return;
   cleanupInstalled = true;
 
-  const handler = (): void => {
+  /** Kill every registered child. Safe to call more than once. */
+  const killAll = (): void => {
     // SIGKILL on Windows: there is no SIGTERM-equivalent that a child can trap,
     // and a native addon may not route the signal at all.
     const safeSignal = isWindows ? 'SIGKILL' : 'SIGTERM';
     for (const child of [..._cleanupChildren]) {
       try {
+        // Prefer the process group: these children are spawned detached, so a
+        // terminal Ctrl-C never reaches anything they started themselves.
+        if (!isWindows && child.pid !== undefined) {
+          process.kill(-child.pid, safeSignal);
+          continue;
+        }
         child.kill(safeSignal);
       } catch {
-        // Already gone.
+        try {
+          child.kill(safeSignal);
+        } catch {
+          // Already gone.
+        }
       }
     }
   };
 
-  process.on('exit', handler);
-  process.on('SIGINT', handler);
-  process.on('SIGTERM', handler);
+  /**
+   * Handle a termination signal.
+   *
+   * Installing a `SIGINT`/`SIGTERM` listener *removes Node's default behaviour* of
+   * terminating on those signals. Without restoring it here, a server holding a
+   * registered encode would ignore `systemctl stop` and a Ctrl-C would kill only
+   * ffmpeg while the host carried on — the supervisor would then have to escalate
+   * to SIGKILL. Measured: a host with one registered encode survived SIGTERM
+   * indefinitely.
+   *
+   * So after cleaning up, put the default back — but only when this library is
+   * the *sole* owner of the signal. If the application installed its own handler,
+   * exiting is that handler's decision, and yanking the process out from under it
+   * would be worse than the original problem.
+   */
+  const signalHandler = (signal?: NodeJS.Signals): void => {
+    killAll();
+    if (signal !== 'SIGINT' && signal !== 'SIGTERM') return;
+    removeCleanupHandlers();
+    if (process.listenerCount(signal) > 0) return; // the application owns it
+    // Default disposition restored by re-raising on ourselves.
+    process.kill(process.pid, signal);
+  };
+
+  // 'exit' must never re-raise: the process is already on its way out.
+  process.on('exit', killAll);
+  process.on('SIGINT', signalHandler);
+  process.on('SIGTERM', signalHandler);
   if (typeof (globalThis as Record<string, unknown>)['beforeunload'] === 'function') {
     try {
       ((globalThis as Record<string, unknown>)['addEventListener'] as (...a: unknown[]) => unknown)(
         'beforeunload',
-        handler,
+        killAll,
       );
     } catch {
       // Not every runtime exposes it.
     }
   }
 
-  _cleanupHandlers = handler;
+  _cleanupHandlers = { killAll, signalHandler };
 }
 
-let _cleanupHandlers: (() => void) | undefined;
+let _cleanupHandlers:
+  | { killAll: () => void; signalHandler: (signal?: NodeJS.Signals) => void }
+  | undefined;
 
 /**
  * Ensure a child cannot outlive this process.
@@ -207,17 +251,21 @@ export function registerExitCleanup(child: ChildProcess): void {
  * Drop the global handlers once the last registered child has exited, so a
  * finished encode leaves no listeners behind to keep a short-lived process
  * alive or to fire during unrelated later work.
+ *
+ * Called from the signal path too, so that re-raising sees the default
+ * disposition rather than this library's own handler.
  */
 function removeCleanupHandlers(): void {
   if (_cleanupHandlers === undefined) return;
-  process.removeListener('exit', _cleanupHandlers);
-  process.removeListener('SIGINT', _cleanupHandlers);
-  process.removeListener('SIGTERM', _cleanupHandlers);
+  const { killAll, signalHandler } = _cleanupHandlers;
+  process.removeListener('exit', killAll);
+  process.removeListener('SIGINT', signalHandler);
+  process.removeListener('SIGTERM', signalHandler);
   if (typeof (globalThis as Record<string, unknown>)['removeEventListener'] === 'function') {
     try {
       ((globalThis as Record<string, unknown>)['removeEventListener'] as (...a: unknown[]) => unknown)(
         'beforeunload',
-        _cleanupHandlers,
+        killAll,
       );
     } catch {
       // Not every runtime exposes it.

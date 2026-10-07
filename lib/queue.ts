@@ -158,6 +158,7 @@ export class FFmpegQueue {
     }
   }
 
+  /** Start as many queued jobs as the concurrency limit allows. */
   #drain(): void {
     while (this.#running.size < this.#concurrency && this.#queue.length > 0) {
       const job = this.#queue.shift();
@@ -199,39 +200,73 @@ function signalError(reason: unknown): FFmpegError {
  * Set `MEDIAFORGE_CONCURRENCY` to tune it.
  */
 let _defaultQueue: FFmpegQueue | undefined;
+/** Options the current default was built with, so a repeat request can be honoured. */
+let _defaultSettings: QueueOptions | undefined;
 
-export function getDefaultQueue(concurrency?: number): FFmpegQueue {
-  if (concurrency !== undefined) {
-    _defaultQueue = new FFmpegQueue({ concurrency });
+/**
+ * Resolve the process-wide queue, creating or resizing it only when needed.
+ *
+ * Passing the same `concurrency` again must return the *existing* queue. Creating
+ * a fresh one per call looked equivalent but was the opposite of the intent: a
+ * handler that writes `queued(job, { concurrency: 2 })` on every request would
+ * get a new, empty queue each time, so every job started immediately and the cap
+ * was never enforced — precisely the unbounded fan-out this module exists to
+ * prevent. Verified: 10 jobs at `concurrency: 2` reached a peak of 10 before this
+ * was fixed.
+ */
+export function getDefaultQueue(options: QueueOptions | number = {}): FFmpegQueue {
+  const requested: QueueOptions = typeof options === 'number'
+    ? { concurrency: options }
+    : options;
+
+  if (requested.concurrency === undefined) {
+    if (_defaultQueue === undefined) {
+      const fromEnv = Number(process.env['MEDIAFORGE_CONCURRENCY'] ?? '');
+      const concurrency = Number.isInteger(fromEnv) && fromEnv > 0 ? fromEnv : 1;
+      _defaultQueue = new FFmpegQueue({ concurrency });
+      _defaultSettings = { concurrency };
+    }
     return _defaultQueue;
   }
-  if (_defaultQueue === undefined) {
-    const fromEnv = Number(process.env['MEDIAFORGE_CONCURRENCY'] ?? '');
-    _defaultQueue = new FFmpegQueue({
-      concurrency: Number.isInteger(fromEnv) && fromEnv > 0 ? fromEnv : 1,
-    });
+
+  // Reuse when the requested settings match what this queue already enforces.
+  const sameConcurrency = _defaultSettings?.concurrency === requested.concurrency;
+  const samePending = requested.maxPending === undefined
+    || requested.maxPending === _defaultSettings?.maxPending;
+  if (_defaultQueue !== undefined && sameConcurrency && samePending) {
+    return _defaultQueue;
   }
+
+  _defaultQueue = new FFmpegQueue(requested);
+  _defaultSettings = { ...requested };
   return _defaultQueue;
 }
 
 /** Replace the process-wide queue. Intended for tests. */
 export function setDefaultQueue(queue: FFmpegQueue | undefined): void {
   _defaultQueue = queue;
+  _defaultSettings = undefined;
 }
 
 /**
- * Run `fn` through a queue.
+ * Run `fn` through the process-wide queue.
  *
- * Sugar for {@link getDefaultQueue}:
+ * Sugar for {@link getDefaultQueue}. Pass `concurrency` once, or on every call —
+ * the same value reuses the same queue, so the cap is actually enforced:
  *
  * @example
- * await queued(() => transcode(input, output));
+ * // Set it once at startup:
+ * getDefaultQueue({ concurrency: 4 });
+ *
+ * // or per call, with the same value:
+ * await queued(() => transcode(a));
+ * await queued(() => transcode(b));
  */
 export function queued<T>(
   fn: () => Promise<T>,
   options: QueueOptions & { signal?: AbortSignal } = {},
 ): Promise<T> {
-  return getDefaultQueue(options.concurrency).run(fn, {
+  return getDefaultQueue(options).run(fn, {
     ...(options.signal !== undefined ? { signal: options.signal } : {}),
   });
 }

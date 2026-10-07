@@ -15,7 +15,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, extname, join } from 'node:path';
 import { ffmpeg } from '../../lib/FFmpeg.ts';
 import { probeAsync } from '../../lib/probe/ffprobe.ts';
 import { FFmpegAtomicOutputError } from '../../lib/errors.ts';
@@ -38,12 +38,60 @@ describe('extension handling', () => {
     assert.deepEqual(splitExtension('.hidden'), { stem: '.hidden', ext: '' });
   });
 
+  it('delegates to node:path, so it follows the host separator', () => {
+    // Regression guard. The previous implementation split on '/' by hand, which
+    // found no separator at all in `C:\out\video.mp4` and returned the whole
+    // path as `stem` — so the temp name it built was not a valid filename and
+    // every atomic write failed on Windows. node:path uses the *host's*
+    // separator, which is the correct behaviour: on Linux a backslash is a
+    // legal filename character, so it must not be treated as a separator.
+    assert.deepEqual(splitExtension('/home/u/out.mp4'), { stem: 'out', ext: '.mp4' });
+    assert.deepEqual(splitExtension('./rel/out.mp4'), { stem: 'out', ext: '.mp4' });
+    assert.deepEqual(splitExtension('/home/u/a.b/out'), { stem: 'out', ext: '' });
+
+    // Matches node:path exactly, whatever the host separator is.
+    for (const p of ['out.mp4', 'a.b.c.ts', 'noext', '.hidden', '/x/y/out.mp4']) {
+      assert.deepEqual(
+        splitExtension(p),
+        { stem: basename(p, extname(p)) || p, ext: extname(p) },
+        p,
+      );
+    }
+  });
+
   it('recognises multi-file targets that cannot be renamed into place', () => {
     assert.equal(isMultiFileTarget('out.mp4'), false);
     assert.equal(isMultiFileTarget('stream.m3u8'), true);
     assert.equal(isMultiFileTarget('stream.mpd'), true);
     assert.equal(isMultiFileTarget('frames%03d.png'), true);
     assert.equal(isMultiFileTarget('seg_%05d.ts'), true);
+    assert.equal(isMultiFileTarget('out%d.wav'), true);
+    assert.equal(isMultiFileTarget('noext'), false);
+  });
+
+  it('matches the ffmpeg sequence syntax anywhere in a path', () => {
+    // Conservative by design: ffmpeg's image2 muxer expands `%d` wherever it
+    // appears, so `100%done.mp4` really would be treated as a sequence by ffmpeg
+    // too. Refusing it is the safe direction, and the caller gets an error that
+    // says why rather than a non-atomic write they did not ask for.
+    assert.equal(isMultiFileTarget('100%done.mp4'), true);
+    assert.equal(isMultiFileTarget('v%v/playlist.m3u8'), true, 'also caught by the .m3u8 extension');
+  });
+
+  it('has no polynomial backtracking on adversarial input', () => {
+    // Regression guard for a ReDoS: the pattern used to be /%\d*[0-9]*[ds]/,
+    // where two adjacent unbounded quantifiers cover the same character class.
+    // That is the classic polynomial shape and cost 2.4s on 32k zeros, which is
+    // a denial of service for anyone who can influence an output path.
+    const adversarial = `%${'0'.repeat(60_000)}`;
+    const startedAt = Date.now();
+    isMultiFileTarget(adversarial);
+    const elapsed = Date.now() - startedAt;
+    assert.ok(
+      elapsed < 1000,
+      `isMultiFileTarget took ${elapsed}ms on a ${adversarial.length}-char adversarial ` +
+        'path; the sequence pattern must be linear',
+    );
   });
 });
 

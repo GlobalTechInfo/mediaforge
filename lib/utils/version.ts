@@ -90,6 +90,12 @@ export function probeVersion(binaryPath: string, options: ExecOptions = {}): Ver
  */
 const _asyncVersionCache = new Map<string, Promise<VersionInfo>>();
 
+/**
+ * Non-blocking version probe, cached per binary path.
+ *
+ * @throws {FFmpegTimeoutError} when the binary does not answer within the timeout
+ * @throws {FFmpegError} when the binary is missing or not executable
+ */
 export function probeVersionAsync(
   binaryPath: string,
   options: ExecOptions = {},

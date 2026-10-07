@@ -195,6 +195,12 @@ export function assertFeatureVersion(
 
 // ─── GuardError ───────────────────────────────────────────────────────────────
 
+/**
+ * A capability guard refused the request.
+ *
+ * Carries the standard `GUARD_FAILED` code, plus `alternative` — the closest
+ * available substitute — so a caller can suggest one instead of only failing.
+ */
 export class GuardError extends FFmpegError {
   constructor(
     message: string,

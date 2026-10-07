@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { FFmpegQueue, queued, setDefaultQueue } from '../../lib/queue.ts';
+import { FFmpegQueue, getDefaultQueue, queued, setDefaultQueue } from '../../lib/queue.ts';
 import { withRetry, retryDelay, setLogger, setDiagnosticHook, silentLogger, stderrLogger, type DiagnosticEvent } from '../../lib/observability.ts';
 import { assertValidIo, isNonPathInput, validateInputs, validateOutputs } from '../../lib/utils/validate.ts';
 import { FFmpegError, FFmpegValidationError } from '../../lib/errors.ts';
@@ -371,4 +371,41 @@ describe('input validation', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+  it('actually enforces concurrency when it is passed on every call', async () => {
+    // Regression guard. `getDefaultQueue(concurrency)` used to build a *new*
+    // queue on every call, so a handler writing
+    // `queued(job, { concurrency: 2 })` per request got a fresh, empty queue each
+    // time and every job started at once — the unbounded fan-out this module
+    // exists to prevent. Measured peak was 10 for 10 jobs at concurrency 2.
+    setDefaultQueue(undefined);
+    let active = 0;
+    let peak = 0;
+    const job = () => {
+      active++;
+      peak = Math.max(peak, active);
+      return new Promise<string>((resolve) => setTimeout(() => {
+        active--;
+        resolve('ok');
+      }, 25));
+    };
+
+    await Promise.all(
+      Array.from({ length: 10 }, () => queued(job, { concurrency: 2 })),
+    );
+
+    assert.equal(peak, 2, `peak concurrency was ${peak}, expected the requested 2`);
+    setDefaultQueue(undefined);
+  });
+
+  it('replaces the queue when the requested concurrency actually changes', async () => {
+    setDefaultQueue(undefined);
+    const first = getDefaultQueue({ concurrency: 2 });
+    const same = getDefaultQueue({ concurrency: 2 });
+    const wider = getDefaultQueue({ concurrency: 4 });
+    assert.equal(first, same, 'the same request must reuse the queue');
+    assert.notEqual(first, wider, 'a different request must resize it');
+    assert.equal(wider.concurrency, 4);
+    setDefaultQueue(undefined);
+  });
+
 });

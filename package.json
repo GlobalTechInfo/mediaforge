@@ -63,7 +63,9 @@
     "precoverage:summary": "npm run build",
     "coverage:summary": "c8 --exclude='dist/**' --exclude='tests/**' --exclude='deno-tests/**' --exclude='runtime-tests/**' --exclude='*.test.ts' --report-dir=. --reporter=text-summary node --import tsx/esm --test --test-concurrency=1 $(find tests/unit tests/integration -name '*.test.ts' | tr '\\n' ' ')",
     "check:parity": "tsx scripts/check-parity.ts",
-    "check:flags": "tsx scripts/check-flags.ts"
+    "check:flags": "tsx scripts/check-flags.ts",
+    "check:workflows": "tsx scripts/check-workflows.ts",
+    "check:ci": "npm run check:workflows && npm run check:scripts"
   },
   "keywords": [
     "ffmpeg",

@@ -11,8 +11,8 @@
  * ffmpeg exits 0.
  */
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, mkdirSync, renameSync, rmSync, unlinkSync } from 'node:fs';
+import { basename, dirname, extname, join } from 'node:path';
 import { FFmpegAtomicOutputError } from '../errors.ts';
 
 /**
@@ -26,8 +26,17 @@ import { FFmpegAtomicOutputError } from '../errors.ts';
  */
 const MULTI_FILE_EXTENSIONS = new Set(['.m3u8', '.mpd', '.ism', '.ismv', '.f4m']);
 
-/** ffmpeg's own image/segment sequence patterns, e.g. `frame_%03d.png`. */
-const SEQUENCE_PATTERN = /%\d*[0-9]*[ds]/;
+/**
+ * ffmpeg's own image/segment sequence patterns, e.g. `frame_%03d.png`.
+ *
+ * The digit run must be a *single* quantifier. An earlier version used
+ * `/%\d*[0-9]*[ds]/`, where two adjacent unbounded quantifiers cover the same
+ * character class and so admit exponentially many ways to split the run — the
+ * classic polynomial-backtracking shape. On `%` followed by 32k zeros it took
+ * 2.4s versus 0.1ms here, which is a denial of service for anyone who can
+ * influence an output path. `%` + one greedy `[0-9]*` + a literal is linear.
+ */
+const SEQUENCE_PATTERN = /%\d*[ds]/;
 
 export interface AtomicOutputOptions {
   /**
@@ -49,13 +58,16 @@ export interface AtomicOutputOptions {
  * The extension is preserved on the temp path on purpose: ffmpeg infers the
  * container from it, so writing to `out.mp4.tmp` would select the wrong muxer
  * (or none) and fail, and it would fail *after* the encode rather than before.
+ *
+ * Uses `path.basename`/`path.extname` rather than splitting on `/` by hand.
+ * A hand-rolled split finds no separator in `C:\out\video.mp4`, so `stem` came
+ * back as the whole path and the temp file was built from it — which is not a
+ * valid filename, making every atomic write fail on Windows.
  */
 export function splitExtension(path: string): { stem: string; ext: string } {
-  const base = path.slice(path.lastIndexOf('/') + 1);
-  const dot = base.lastIndexOf('.');
-  // A leading dot is part of the name (`.hidden`), not an extension.
-  if (dot <= 0) return { stem: base, ext: '' };
-  return { stem: base.slice(0, dot), ext: base.slice(dot) };
+  const base = basename(path);
+  const ext = extname(base); // '' for `.hidden`, which is a name, not an extension
+  return { stem: ext === '' ? base : base.slice(0, -ext.length), ext };
 }
 
 /** Does this target produce more than one file? */
@@ -68,6 +80,34 @@ export function isMultiFileTarget(path: string): boolean {
 /** True when an error is the atomic-output refusal. */
 export function isAtomicOutputRefused(error: unknown): boolean {
   return error instanceof FFmpegAtomicOutputError;
+}
+
+/**
+ * Move `from` onto `to`, working around Windows rename semantics.
+ *
+ * POSIX `rename(2)` replaces an existing destination atomically. Windows does
+ * not: `renameSync` fails with `EPERM` (or `EEXIST`) when the target is already
+ * there, which it usually is on a re-encode. Unlink the target and retry, so an
+ * atomic write is still possible on a supported platform.
+ *
+ * The window between the unlink and the rename is why this is only ever used to
+ * publish a completed file over a previous one — never to move something the
+ * caller still needs.
+ */
+function publish(from: string, to: string): void {
+  try {
+    renameSync(from, to);
+    return;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== 'EPERM' && code !== 'EEXIST' && code !== 'ENOTEMPTY') throw error;
+    try {
+      unlinkSync(to);
+    } catch {
+      // Already gone, or not removable — let the retry surface the real problem.
+    }
+    renameSync(from, to);
+  }
 }
 
 /**
@@ -109,7 +149,7 @@ export async function withAtomicOutput<T>(
 
   try {
     const result = await fn(tempPath);
-    renameSync(tempPath, target);
+    publish(tempPath, target);
     return result;
   } catch (error) {
     // Best effort: a failure to remove the temp file must not mask the real

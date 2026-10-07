@@ -455,9 +455,28 @@ async function runPassthrough(binary: string, ffmpegArgs: string[]): Promise<voi
   });
 
   if (readsStdin && proc.stdin !== null) {
-    // `end: true` closes the child's stdin once the parent finishes writing.
+    const childStdin = proc.stdin;
+
+    // ffmpeg routinely stops reading early — `-t`, `-frames`, or an encode
+    // error — and the next write to its stdin raises EPIPE. That is expected
+    // here, not a failure, so it must not become an uncaught exception.
+    childStdin.on('error', () => {});
+
+    // `end: true` closes the child's stdin once this process finishes writing.
     // Without it ffmpeg waits forever for an EOF that never arrives.
-    process.stdin.pipe(proc.stdin, { end: true });
+    process.stdin.pipe(childStdin, { end: true });
+
+    // Piping puts process.stdin in flowing mode, which holds an open handle on
+    // the event loop. If ffmpeg has already exited while an endless upstream
+    // producer is still writing, nothing would ever unpip it and the CLI would
+    // hang after the encode finished. Release it whenever the child settles.
+    const releaseStdin = (): void => {
+      process.stdin.unpipe(childStdin);
+      process.stdin.pause();
+    };
+    proc.emitter.once('end', releaseStdin);
+    proc.emitter.once('error', releaseStdin);
+    process.stdin.on('error', () => {});
   }
 
   if (!writesStdout) {

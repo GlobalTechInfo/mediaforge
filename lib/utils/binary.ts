@@ -4,6 +4,7 @@ import { spawnSync, spawn, type ChildProcess } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
 import { FFmpegError } from '../errors.ts';
 
+/** The ffmpeg/ffprobe binary does not exist at the configured path. */
 export class BinaryNotFoundError extends FFmpegError {
   constructor(binary: string) {
     super(
@@ -14,6 +15,7 @@ export class BinaryNotFoundError extends FFmpegError {
   }
 }
 
+/** The binary exists but cannot be executed (missing permission, wrong format). */
 export class BinaryNotExecutableError extends FFmpegError {
   constructor(binary: string) {
     super(`FFmpeg binary is not executable: "${binary}"`, 'BINARY_NOT_EXECUTABLE');

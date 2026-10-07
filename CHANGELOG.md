@@ -251,9 +251,64 @@ Both were found by the new type-coverage gate, which is why it is enforced at
 - **The type-coverage step could not fail** — it was named "must stay above 99%"
   and passed no threshold.
 
+### Fixed — defects found in review, before merge
+
+Every item below was **reproduced first** and re-measured after the fix. Six of
+the nine were found by CodeQL and CodeRabbit on the PR; all were confirmed
+against the code rather than taken at face value.
+
+- **`ci.yml` did not parse, so no check in it ran.** A step name containing a
+  colon — `name: Installed package: ESM import + CLI (Bun)` — is a nested mapping
+  in YAML. GitHub skips an unparseable workflow entirely and reports one failure,
+  so every check the PR claimed (typecheck, tests, coverage gate, smoke, audit,
+  parity, flags) silently did not run. Both names are now quoted, and
+  `npm run check:workflows` parses every workflow on every run so the next one is
+  caught by the commit that introduces it.
+- **A signal handler stopped the host from dying.** Installing a `SIGINT` or
+  `SIGTERM` listener *removes Node's default behaviour* of terminating on it. The
+  shared cleanup handler did exactly that and never restored it, so while any
+  encode was registered a host ignored `systemctl stop` and a Ctrl-C killed only
+  ffmpeg while the host carried on. Measured: a host holding one encode survived
+  SIGTERM indefinitely. The handler now removes itself and re-raises when — and
+  only when — this library is the sole owner of the signal, so an application
+  that installed its own handler keeps control of the exit.
+- **`queued(fn, { concurrency })` enforced no limit.** `getDefaultQueue(concurrency)`
+  built a *new* queue per call, so a handler passing `concurrency: 2` on every
+  request got a fresh empty queue each time. Measured peak concurrency: **10 for
+  10 jobs at `concurrency: 2`** — exactly the unbounded fan-out the module exists
+  to prevent. It now reuses the queue when the settings match and resizes only on
+  a real change.
+- **Piped stdin could crash the CLI with an uncaught `EPIPE`.** ffmpeg routinely
+  stops reading early (`-t`, `-frames`, an encode error), and the next write to its
+  stdin raised `EPIPE` with no listener attached — an uncaught exception that
+  bypassed the exit-code classification entirely. Piping also held `process.stdin`
+  in flowing mode with no unpipe, so an endless upstream producer kept the CLI
+  alive after ffmpeg had already exited. Both handled: `EPIPE` is expected and
+  swallowed, and stdin is released when the child settles.
+- **Atomic output was broken on Windows.** `splitExtension` split on `/` by hand,
+  found no separator in `C:\out\video.mp4`, and returned the whole path as the
+  stem — so the temp filename was invalid and *every* atomic write failed. Now uses
+  `path.basename`/`path.extname`. Publishing also retried `EPERM`/`EEXIST`, which
+  is how Windows `rename` behaves when the target exists.
+- **A ReDoS I introduced** (CodeQL, high): `/%\d*[0-9]*[ds]/` in
+  `isMultiFileTarget` used two adjacent unbounded quantifiers over the same class
+  — the classic polynomial shape. Measured: **2.4 s on a 32 kB filename**, a
+  denial of service for anyone who can influence an output path. Now a single
+  `[0-9]*`: flat 0.1 ms. Verified behaviourally identical across **39 million**
+  generated inputs.
+- **The concat list file could collide.** It was named from `process.pid` and
+  `Date.now()`, so two `concatFiles` calls in one process within the same
+  millisecond produced the same filename and the second clobbered the first's list
+  — the encode then read the wrong inputs. Now randomised.
+- **CI could not have worked on two platforms.** `deno lint` runs in the Node and
+  Bun jobs, but Deno was never installed there; and the Windows leg verified
+  ffmpeg without installing it. Both now set up explicitly.
+- **Docstring coverage** was 69.57% against an 80% threshold. Every undocumented
+  declaration in the files this release touched now has one.
+
 ### Testing and coverage
 
-- **1,704 Node tests** (`npm test`), **289 Deno tests** (`deno task test`),
+- **1,712 Node tests** (`npm test`), **285 Deno unit tests** (`deno task test`),
   **65 Bun runtime checks** (`bun run runtime-tests/battle.ts`), and **606
   battle cases**. All green.
 - The two readline-based battle suites gained ~90 cases covering the new surface.
@@ -283,6 +338,7 @@ being built:
 | `npm run check:parity` | a test case is added to `tests/` but not `deno-tests/` |
 | `npm run check:flags` | a CLI flag's declared arity disagrees with how the task reads it |
 | `npm run smoke` | the published package does not work when installed |
+| `npm run check:workflows` | a GitHub Actions workflow does not parse |
 
 `check:flags` exists because three shipped commands disagreed with their own flag
 declarations. `check:parity` exists because the previous arrangement let 225

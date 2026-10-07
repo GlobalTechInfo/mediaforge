@@ -46,9 +46,20 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install ffmpeg
 
-      # windows-latest ships ffmpeg on PATH already.
+      - name: Install FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg -y --no-progress
+
+      # Fails fast with a clear message if any of the three install steps above
+      # did not put a working binary on PATH.
       - name: Verify FFmpeg is available
         run: ffmpeg -version
+
+      # `deno lint` is the repository linter, and it is run from this job, so Deno
+      # must be installed here rather than assumed present on the runner image.
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
 
       - name: Install dependencies
         run: npm ci
@@ -61,6 +72,13 @@ jobs:
 
       - name: Lint
         run: deno lint
+
+      # A workflow that does not parse is skipped entirely by GitHub, so every
+      # check it claims to run silently stops running. An unquoted colon in a
+      # step name once disabled this entire file.
+      - name: Workflow files parse
+        if: matrix.node == '22'
+        run: npm run check:workflows
 
       # The artefact is packed and installed into a scratch directory, then
       # every published entry point is exercised. This is the only check that
@@ -77,7 +95,7 @@ jobs:
         if: matrix.node == '22' && runner.os == 'Linux'
         run: npm run coverage:battle
 
-      - name: Library coverage must stay above 98% (Node 22 only)
+      - name: Library coverage gate (Node 22 only)
         if: matrix.node == '22' && runner.os == 'Linux'
         run: npm run coverage:gate
 
@@ -163,6 +181,10 @@ jobs:
       - name: Install FFmpeg
         run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
 
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
       - name: Install dependencies
         run: npm ci
 
@@ -175,7 +197,7 @@ jobs:
       - name: Runtime portability battle test (lib/ under Bun)
         run: bun run runtime-tests/battle.ts
 
-      - name: Installed package: ESM import + CLI (Bun)
+      - name: "Installed package: ESM import + CLI (Bun)"
         run: bun run scripts/smoke-bun.ts
 
   deno:
@@ -212,7 +234,7 @@ jobs:
       - name: Runtime portability battle test (lib/ under Deno)
         run: deno task battle:runtime
 
-      - name: Installed package: ESM import + CLI (Deno)
+      - name: "Installed package: ESM import + CLI (Deno)"
         run: deno run -A scripts/smoke-deno.ts
 
       - name: Unit tests

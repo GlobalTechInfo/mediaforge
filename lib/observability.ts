@@ -55,7 +55,16 @@ export function stderrLogger(level: LogLevel = 'info'): MediaForgeLogger {
       const suffix = meta === undefined ? '' : ` ${JSON.stringify(meta)}`;
       process.stderr.write(`[mediaforge:${lvl}] ${message}${suffix}\n`);
     };
-  return { debug: emit('debug'), info: emit('info'), warn: emit('warn'), error: emit('error') };
+  return {
+    /** Below `level`; discarded. */
+    debug: emit('debug'),
+    /** Normal lifecycle detail. */
+    info: emit('info'),
+    /** Recoverable problem the caller may want to surface. */
+    warn: emit('warn'),
+    /** Failure. */
+    error: emit('error'),
+  };
 }
 
 /**
@@ -99,6 +108,7 @@ export function setDiagnosticHook(hook: DiagnosticHook | null): void {
   _onDiagnostic = hook ?? undefined;
 }
 
+/** The installed diagnostic hook, or undefined when none is set. */
 export function getDiagnosticHook(): DiagnosticHook | undefined {
   return _onDiagnostic;
 }
@@ -123,6 +133,7 @@ export function logDebug(message: string, meta?: LogMeta): void {
   }
 }
 
+/** Log a warning through the installed logger. Never throws. */
 export function logWarn(message: string, meta?: LogMeta): void {
   try {
     _logger.warn(message, meta);

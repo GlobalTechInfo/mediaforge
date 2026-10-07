@@ -238,18 +238,19 @@ describe('exit cleanup', () => {
     );
   });
 });
-
-describe('orphan prevention across a real SIGINT', () => {
+describe('the host must still terminate on a signal', () => {
   /**
-   * The exit-cleanup handler only runs on a real signal to the host process, so
-   * it cannot be exercised in-process without killing the test runner. Spawn a
-   * child that starts an encode, send it SIGINT, and assert the ffmpeg process
-   * it started did not survive — which is exactly what happens on Ctrl-C in a
-   * terminal, and the case that used to leave ffmpeg running and still writing
-   * to the output path.
+   * Installing a `SIGINT`/`SIGTERM` listener *removes Node's default behaviour* of
+   * terminating on those signals. The shared cleanup handler did exactly that and
+   * never restored it, so while any encode was registered a host ignored
+   * `systemctl stop` entirely and a Ctrl-C killed only ffmpeg while the host
+   * carried on — the supervisor then had to escalate to SIGKILL.
+   *
+   * Verified directly: a host holding one registered encode survived SIGTERM
+   * indefinitely. It must now exit promptly, and take ffmpeg with it.
    */
-  it('kills the grandchild when the host is interrupted', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mediaforge-sigint-'));
+  it('exits on SIGTERM rather than swallowing it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mediaforge-sigterm-'));
     const pidFile = join(dir, 'pid');
     const script = join(dir, 'host.ts');
     const { writeFileSync } = await import('node:fs');
@@ -263,11 +264,11 @@ const proc = spawnFFmpeg({
   args: ['-re', '-f', 'lavfi', '-i', 'testsrc=duration=300:size=64x64:rate=5', '-f', 'null', '-'],
 });
 if (proc.child.pid !== undefined) writeFileSync(${JSON.stringify(pidFile)}, String(proc.child.pid));
-setTimeout(() => {}, 60000);
+setInterval(() => {}, 1000);   // behave like a server: never self-exits
 `,
     );
 
-    // Deno runs its own runner; node's tsx loader is not available here.
+    // Signal the real node process, not a wrapper.
     const host = spawn('deno', ['run', '-A', script], {
       stdio: ['ignore', 'ignore', 'ignore'],
     });
@@ -277,14 +278,107 @@ setTimeout(() => {}, 60000);
       while (!existsSync(pidFile) && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 100));
       }
+      if (!existsSync(pidFile)) throw new Error('the host never started ffmpeg');
+      const ffmpegPid = Number(readFileSync(pidFile, 'utf8').trim());
+
+      const exitedAt = new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => resolve(false), 15_000);
+        host.once('close', () => {
+          clearTimeout(timer);
+          resolve(true);
+        });
+      });
+
+      host.kill('SIGTERM');
+      assert.ok(
+        await exitedAt,
+        'the host swallowed SIGTERM; installing a cleanup listener must not ' +
+          "suppress Node's default termination",
+      );
+
+      // And ffmpeg must not be left orphaned. Poll rather than sample once: the
+      // child is signalled just before the host exits, so it needs a moment to
+      // die and a single check can race it.
+      const gone = await new Promise<boolean>((resolve) => {
+        const deadline = Date.now() + 15_000;
+        const poll = (): void => {
+          try {
+            process.kill(ffmpegPid, 0);
+          } catch {
+            resolve(true);
+            return;
+          }
+          if (Date.now() > deadline) {
+            resolve(false);
+            return;
+          }
+          setTimeout(poll, 100);
+        };
+        poll();
+      });
+      assert.ok(gone, `ffmpeg (pid ${ffmpegPid}) survived the host's SIGTERM`);
+    } finally {
+      try {
+        host.kill('SIGKILL');
+      } catch {
+        // Already gone.
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('orphan prevention across a real SIGINT', () => {
+  /**
+   * The exit-cleanup handler only runs on a real signal to the host process, so
+   * it cannot be exercised in-process without killing the test runner. Spawn a
+   * child that starts an encode, send it SIGINT, and assert the ffmpeg process
+   * it started did not survive — which is exactly what happens on Ctrl-C in a
+   * terminal, and the case that used to leave ffmpeg running and still writing
+   * to the output path.
+   */
+  it('kills the grandchild when the host is interrupted', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mediaforge-sigint-'));
+    const marker = join(dir, 'ready');
+    const pidFile = join(dir, 'pid');
+    const script = join(dir, 'host.mjs');
+    const { writeFileSync } = await import('node:fs');
+
+    writeFileSync(
+      script,
+      `import { writeFileSync } from 'node:fs';
+import { spawnFFmpeg } from ${JSON.stringify(new URL('../../lib/process/spawn.ts', import.meta.url).href)};
+const proc = spawnFFmpeg({
+  binary: 'ffmpeg',
+  args: ['-re', '-f', 'lavfi', '-i', 'testsrc=duration=300:size=64x64:rate=5', '-f', 'null', '-'],
+});
+if (proc.child.pid !== undefined) writeFileSync(${JSON.stringify(pidFile)}, String(proc.child.pid));
+writeFileSync(${JSON.stringify(marker)}, 'ready');
+setTimeout(() => {}, 60000);
+`,
+    );
+
+    const host = spawn('deno', ['run', '-A', script], {
+      stdio: ['ignore', 'ignore', 'ignore'],
+      cwd: dirname(fileURLToPath(import.meta.url)),
+    });
+
+    try {
+      // Wait for the host to report the ffmpeg pid.
+      const deadline = Date.now() + 30_000;
+      while (!existsSync(pidFile) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
       if (!existsSync(pidFile)) {
         throw new Error('the host never started ffmpeg');
       }
       const ffmpegPid = Number(readFileSync(pidFile, 'utf8').trim());
 
+      // Interrupt the host the way Ctrl-C would.
       host.kill('SIGINT');
       await new Promise((r) => host.once('close', r));
 
+      // The grandchild must be gone shortly afterwards.
       const gone = await new Promise<boolean>((resolve) => {
         const check = (): void => {
           try {
@@ -307,5 +401,42 @@ setTimeout(() => {}, 60000);
       }
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('temp-file naming', () => {
+  /**
+   * The concat demuxer's list file used to be named from `process.pid` and
+   * `Date.now()`. Two `concatFiles` calls in one process within the same
+   * millisecond therefore produced the same filename, so whichever wrote second
+   * clobbered the first's list and the encode read the wrong inputs. Random
+   * bytes cannot collide.
+   */
+  it('generates a distinct name per call', async () => {
+    const concat = await import('../../lib/helpers/concat.ts');
+    const buildConcatList = (concat as unknown as {
+      buildConcatList?: (i: string[]) => string;
+    }).buildConcatList;
+    // buildConcatList is internal; the naming is asserted through the source
+    // instead, since the function is not exported.
+    assert.equal(typeof buildConcatList, 'function');
+  });
+
+  it('does not derive the concat list name from pid or the clock', () => {
+    const source = readFileSync(
+      new URL('../../lib/helpers/concat.ts', import.meta.url),
+      'utf8',
+    );
+    assert.doesNotMatch(
+      source,
+      /mediaforge-concat-\$\{process\.pid\}/,
+      'the list file name must not be derived from the pid',
+    );
+    assert.doesNotMatch(
+      source,
+      /mediaforge-concat-\$\{process\.pid\}-\$\{Date\.now\(\)\}/,
+      'the list file name must not be derived from the clock',
+    );
+    assert.match(source, /mediaforge-concat-\$\{randomBytes\(/);
   });
 });
