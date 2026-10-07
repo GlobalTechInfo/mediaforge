@@ -36,6 +36,23 @@ import ts from 'typescript';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const LIB = path.join(ROOT, 'lib');
 
+/**
+ * Normalise a filesystem path to forward slashes for comparison against
+ * TypeScript's own `fileName`.
+ *
+ * TypeScript always reports `fileName` POSIX-separated, even on Windows, where
+ * `path.join` produces backslashes. Comparing the two directly fails silently:
+ * `startsWith(LIB)` matched no file there, so no export was ever considered, the
+ * dead list came out empty, and the allowlist entry that legitimately excused
+ * `getSpawnedCount` was reported as stale - failing the gate while checking
+ * nothing.
+ */
+function toPosix(path: string): string {
+  return path.replace(/\\/g, '/');
+}
+
+const LIB_POSIX = toPosix(LIB);
+
 // ─── Program construction ────────────────────────────────────────────────────
 
 function loadProgramConfig(): ts.ParsedCommandLine {
@@ -216,7 +233,7 @@ function main(): void {
 
   for (const sourceFile of program.getSourceFiles()) {
     if (sourceFile.isDeclarationFile) continue;
-    if (!sourceFile.fileName.startsWith(LIB)) continue;
+    if (!sourceFile.fileName.startsWith(LIB_POSIX)) continue;
 
     const moduleSymbol = checker.getSymbolAtLocation(sourceFile);
     if (moduleSymbol === undefined) continue;
