@@ -18,18 +18,78 @@
  * @module
  */
 
+// Observability — a logger and diagnostic seam so this library can be wired
+// into pino/winston instead of writing to stderr.
+export {
+  setLogger,
+  getLogger,
+  silentLogger,
+  stderrLogger,
+  setDiagnosticHook,
+  getDiagnosticHook,
+  withRetry,
+  retryDelay,
+} from './observability.ts';
+export type {
+  MediaForgeLogger,
+  DiagnosticEvent,
+  DiagnosticHook,
+  LogMeta,
+  RetryOptions,
+} from './observability.ts';
+
+// Bounded concurrency — one ffmpeg already saturates a machine, so an unbounded
+// fan-out of encodes lowers total throughput rather than raising it.
+export { FFmpegQueue, getDefaultQueue, setDefaultQueue, queued } from './queue.ts';
+export type { QueueOptions, QueueStats } from './queue.ts';
+
+// Atomic output — publish a file only after ffmpeg exits 0, so a failed or
+// cancelled encode never leaves a truncated output behind.
+export {
+  withAtomicOutput,
+  isMultiFileTarget,
+  isAtomicOutputRefused,
+  splitExtension,
+} from './utils/atomic.ts';
+export type { AtomicOutputOptions } from './utils/atomic.ts';
+
+// Pre-flight validation — catch a missing input before ffmpeg creates a
+// zero-byte output and exits non-zero.
+export {
+  assertValidIo,
+  validateInputs,
+  validateOutputs,
+  isNonPathInput,
+} from './utils/validate.ts';
+
+// Error taxonomy — every error thrown by this library extends FFmpegError and
+// carries a stable `code`, so callers can branch without matching message text.
+export {
+  FFmpegError,
+  FFmpegSpawnError,
+  FFmpegTimeoutError,
+  FFmpegAbortError,
+  FFmpegValidationError,
+  FFmpegAtomicOutputError,
+} from './errors.ts';
+export type { FFmpegErrorCode, ValidationIssue } from './errors.ts';
+
 // Primary entry point
 export { ffmpeg, FFmpegBuilder, VersionError } from './FFmpeg.ts';
 
 
 // Process management
-export { spawnFFmpeg, runFFmpeg, FFmpegSpawnError } from './process/spawn.ts';
+export { spawnFFmpeg, runFFmpeg } from './process/spawn.ts';
 export { FFmpegEmitter } from './process/events.ts';
 export { ProgressParser, parseAllProgress } from './process/progress.ts';
 
 // Utilities
 export { resolveBinary, resolveProbe, validateBinary, isBinaryAvailable, isBinaryAvailableAsync, isDeno, BinaryNotFoundError, BinaryNotExecutableError } from './utils/binary.ts';
-export { probeVersion, parseVersionOutput, satisfiesVersion, formatVersion } from './utils/version.ts';
+export { probeVersion, probeVersionAsync, clearVersionCache, parseVersionOutput, satisfiesVersion, formatVersion } from './utils/version.ts';
+// Bounded binary execution. Every call to ffmpeg/ffprobe now has a timeout, so a
+// wedged binary produces an error instead of stalling the host process forever.
+export { execBounded, execAsync, DEFAULT_EXEC_TIMEOUT_MS } from './utils/exec.ts';
+export type { ExecOptions } from './utils/exec.ts';
 export { flattenArgs, buildGlobalArgs, buildInputArgs, buildOutputArgs, toDuration, toBitrate } from './utils/args.ts';
 export { escapeFilterValue } from './utils/filter.ts';
 export { captureStderr } from './utils/stderr.ts';
@@ -80,7 +140,7 @@ export type { VersionInfo, VersionRequirement } from './types/version.ts';
 export type { ProgressInfo } from './types/progress.ts';
 export type { GlobalOptions, InputOptions, OutputOptions, LogLevel } from './types/options.ts';
 export type { FFmpegEvents } from './process/events.ts';
-export type { SpawnOptions, FFmpegProcess } from './process/spawn.ts';
+export type { SpawnOptions, FFmpegProcess, RunOptions } from './process/spawn.ts';
 export type { PixelFormat, SampleFormat, ChannelLayout, CodecFlags, CodecInfo, FilterInfo, FormatInfo } from './types/codecs.ts';
 export type { X264Options, X265Options, SvtAv1Options, Vp9Options } from './codecs/video.ts';
 export type { ProResOptions, DnxhdOptions, MjpegOptions, Mpeg2Options, Mpeg4Options, Vp8Options, TheoraOptions, Ffv1Options } from './codecs/video.ts';
@@ -195,5 +255,9 @@ export { buildPipeThroughArgs, buildStreamOutputArgs } from './helpers/streams.t
 
 // CLI task table — exported so the subcommand surface can be inspected and
 // driven programmatically, exactly like the other builders above.
-export { CLI_TASKS, parseTaskArgs, taskHelpText, taskDetail } from './cli/tasks.ts';
+export { CLI_TASKS, taskHelpText, taskDetail } from './cli/tasks.ts';
+// Schema-driven parsing. `parseTaskArgs` is the legacy arity-guessing wrapper,
+// kept because it is public API; `parseArgs` is the one the CLI itself uses.
+export { parseTaskArgs, parseArgs, buildFlagSpec, CliUsageError } from './cli/parser.ts';
+export type { FlagSpec, ParsedArgs } from './cli/parser.ts';
 export type { CliTask, CliFlags } from './cli/tasks.ts';

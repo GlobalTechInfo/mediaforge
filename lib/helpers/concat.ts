@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { randomBytes } from 'node:crypto';
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnFFmpeg, runFFmpeg } from '../process/spawn.ts';
 import { resolveBinary, resolveProbe } from '../utils/binary.ts';
@@ -227,12 +228,18 @@ export function buildConcatList(files: string[]): string {
  *
  * Lives beside the output rather than in os.tmpdir() so the absolute paths in
  * the list stay valid without `-safe 0` relying on a cross-device guess.
+ *
+ * The name is randomised rather than derived from `process.pid` + `Date.now()`.
+ * Those two collided: two `concatFiles` calls in the same process within the same
+ * millisecond produced the identical filename, so whichever wrote second silently
+ * clobbered the first's list and the encode then read the wrong inputs. Random
+ * bytes cannot collide, and keep an attacker-influenced path out of the name.
  */
 function writeConcatListFile(inputs: string[], output: string): string {
   const dir = path.dirname(path.resolve(output));
   const listFile = path.join(
     dir,
-    `.mediaforge-concat-${process.pid}-${Date.now()}.txt`,
+    `.mediaforge-concat-${randomBytes(8).toString('hex')}.txt`,
   );
   writeFileSync(listFile, buildConcatList(inputs), 'utf8');
   return listFile;

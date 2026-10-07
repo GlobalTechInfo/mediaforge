@@ -10,7 +10,14 @@ export interface CliTask {
   summary: string;
   /** Usage line. */
   usage: string;
-  /** `flag -> description` shown in help. Flags taking a value end with `=`. */
+  /**
+   * `flag -> description` shown in help.
+   *
+   * A description beginning with `=` marks a flag that requires a value; every
+   * other flag is boolean and never consumes the following argument. That
+   * declaration is authoritative — `buildFlagSpec` reads it and the parser acts
+   * on it, so `analyze --json input.mp3` parses `input.mp3` as a positional.
+   */
   flags: Record<string, string>;
   /** Positional argument names, in order, for help text. */
   positionals: string[];

@@ -103,6 +103,43 @@ function hasFilter(name: string): boolean {
 
 const HAS_ZSCALE = hasFilter('zscale');
 const HAS_TONEMAP = hasFilter('tonemap');
+/**
+ * Filter presence is not capability, and neither is a fixture that encodes.
+ *
+ * Some ffmpeg builds silently drop `-color_primaries` / `-color_trc` on encode,
+ * so a fixture generated with BT.2020/PQ flags comes back tagged `unknown` and
+ * can never be recognised as HDR — no encoded fixture can be. This ffmpeg 8.0.1
+ * build drops them for every codec and container, and its zscale additionally
+ * fails the 10-bit BT.2020 -> BT.709 conversion outright (raw ffmpeg fails
+ * identically, so it is a build limitation rather than a mediaforge defect).
+ *
+ * Probing the fixture that was actually produced lets these checks skip with an
+ * accurate reason instead of reporting failures that say nothing about this
+ * library.
+ */
+let HDR_FIXTURE_TAGGED = false;
+let HDR_PROBE_REASON = '';
+function probeHdrFixture(): void {
+  const file = p('hdr.mp4');
+  if (!fs.existsSync(file)) {
+    HDR_PROBE_REASON = 'the hdr.mp4 fixture was not generated';
+    return;
+  }
+  try {
+    const stream = probe(file).streams[0];
+    const primaries = String(stream?.color_primaries ?? 'unknown');
+    const transfer = String(stream?.color_transfer ?? 'unknown');
+    HDR_FIXTURE_TAGGED = primaries === 'bt2020';
+    if (!HDR_FIXTURE_TAGGED) {
+      HDR_PROBE_REASON =
+        `this ffmpeg build drops -color_primaries/-color_trc on encode ` +
+        `(fixture came back primaries=${primaries} transfer=${transfer})`;
+    }
+  } catch (error) {
+    HDR_PROBE_REASON = `could not probe hdr.mp4: ${(error as Error).message}`;
+  }
+}
+
 const HAS_LIBMETRIX = hasFilter('libvmaf');
 const HAS_DRAW_TEXT = hasFilter('drawtext');
 
@@ -550,7 +587,9 @@ if (HAS_LIBMETRIX) {
   });
 }
 
-if (HAS_ZSCALE && HAS_TONEMAP) {
+probeHdrFixture();
+
+if (HAS_ZSCALE && HAS_TONEMAP && HDR_FIXTURE_TAGGED) {
   await run('toneMapHdrToSdr on a real BT.2020/PQ file → tagged bt709', async () => {
     await toneMapHdrToSdr({ input: p('hdr.mp4'), output: p('tonemapped.mp4'), videoCodec: 'libx264' });
     const info = JSON.parse(
@@ -582,13 +621,25 @@ if (HAS_ZSCALE && HAS_TONEMAP) {
     }
   });
 } else {
-  skip('toneMapHdrToSdr', 'ffmpeg build has no zscale/tonemap');
+  skip(
+    'toneMapHdrToSdr',
+    HAS_ZSCALE && HAS_TONEMAP ? HDR_PROBE_REASON : 'ffmpeg build has no zscale/tonemap',
+  );
 }
 
-await run('isHdr() agrees with the fixture', () => {
-  assert(isHdr(probe(p('hdr.mp4'))) === true, 'hdr.mp4 should be HDR');
-  assert(isHdr(probe(p('sdr10.mp4'))) === false, 'sdr10.mp4 should not be HDR');
-});
+if (HDR_FIXTURE_TAGGED) {
+  await run('isHdr() agrees with the fixture', () => {
+    assert(isHdr(probe(p('hdr.mp4'))) === true, 'hdr.mp4 should be HDR');
+    assert(isHdr(probe(p('sdr10.mp4'))) === false, 'sdr10.mp4 should not be HDR');
+  });
+} else {
+  // The negative half still holds and is worth asserting: isHdr must not report
+  // an untagged stream as HDR just because the filter is present.
+  await run('isHdr() reports an untagged stream as not HDR', () => {
+    assert(isHdr(probe(p('sdr10.mp4'))) === false, 'sdr10.mp4 should not be HDR');
+  });
+  skip('isHdr() agrees with the fixture', HDR_PROBE_REASON);
+}
 
 await run('interpolateFrames(dup) → a real 30fps file', async () => {
   await interpolateFrames({ input: p('src.mp4'), output: p('interp.mp4'), fps: 30, method: 'dup' });

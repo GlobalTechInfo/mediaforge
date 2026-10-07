@@ -1,4 +1,5 @@
 import { resolveBinary } from './utils/binary.ts';
+import { FFmpegError } from './errors.ts';
 import {
   probeVersion,
   formatVersion,
@@ -9,7 +10,9 @@ import {
   toBitrate,
   toDuration,
 } from './utils/args.ts';
-import { spawnFFmpeg, runFFmpeg, type FFmpegProcess } from './process/spawn.ts';
+import { spawnFFmpeg, runFFmpeg, type FFmpegProcess, type RunOptions } from './process/spawn.ts';
+import { assertValidIo } from './utils/validate.ts';
+import { withRetry } from './observability.ts';
 import { CapabilityRegistry } from './codecs/registry.ts';
 import {
   guardCodec,
@@ -72,13 +75,13 @@ interface OutputEntry {
   fpsMode: FpsMode | null;
 }
 
-export class VersionError extends Error {
+export class VersionError extends FFmpegError {
   constructor(feature: string, required: number, actual: number) {
     super(
       `"${feature}" requires FFmpeg v${required}+, but found v${actual}. ` +
         'Upgrade your FFmpeg installation.',
+      'VERSION_UNSUPPORTED',
     );
-    this.name = 'VersionError';
   }
 }
 
@@ -610,35 +613,86 @@ export class FFmpegBuilder {
 
   // ─── Execution ────────────────────────────────────────────────────────────
 
-  private _buildSpawnOpts(opts?: { parseProgress?: boolean; totalDurationUs?: number; timeout?: number }): SpawnOptions {
+  private _buildSpawnOpts(opts: RunOptions = {}): SpawnOptions {
     const spawnOpts: SpawnOptions = {
       binary: this._binary,
       args: this.buildArgs(),
-      parseProgress: opts?.parseProgress ?? this._globalOpts.progress === true,
+      parseProgress: opts.parseProgress ?? this._globalOpts.progress === true,
     };
-    if (opts?.totalDurationUs !== undefined) {
-      spawnOpts.totalDurationUs = opts.totalDurationUs;
+    if (opts.totalDurationUs !== undefined) spawnOpts.totalDurationUs = opts.totalDurationUs;
+    if (opts.timeout !== undefined) spawnOpts.timeout = opts.timeout;
+    if (opts.signal !== undefined) spawnOpts.signal = opts.signal;
+    if (opts.killGracePeriodMs !== undefined) spawnOpts.killGracePeriodMs = opts.killGracePeriodMs;
+    if (opts.killProcessGroup !== undefined) spawnOpts.killProcessGroup = opts.killProcessGroup;
+    if (opts.onDiagnostic !== undefined) spawnOpts.onDiagnostic = opts.onDiagnostic;
+    if (opts.logger !== undefined) spawnOpts.logger = opts.logger;
+
+    // Validate before spawning, so a bad path costs one stat() rather than a
+    // full ffmpeg start-up.
+    if (opts.validate === true) {
+      const inputs = this._inputs.map((entry) => entry.path);
+      const outputs = this._outputs.map((entry) => entry.path);
+      assertValidIo(inputs, outputs);
     }
-    if (opts?.timeout !== undefined) {
-      spawnOpts.timeout = opts.timeout;
-    }
+
     return spawnOpts;
+  }
+
+  /** Every input path this builder will read, in order. */
+  inputPaths(): string[] {
+    return this._inputs.map((entry) => entry.path);
+  }
+
+  /** Every output path this builder will write, in order. */
+  outputPaths(): string[] {
+    return this._outputs.map((entry) => entry.path);
   }
 
   /**
    * Spawn the process with full event-emitter control.
    * Useful for streaming progress or piping stdout.
    */
-  spawn(opts?: { parseProgress?: boolean; totalDurationUs?: number; timeout?: number }): FFmpegProcess {
+  spawn(opts: RunOptions = {}): FFmpegProcess {
     return spawnFFmpeg(this._buildSpawnOpts(opts));
   }
 
   /**
    * Run ffmpeg and return a Promise that resolves on success.
-   * Rejects with FFmpegSpawnError on non-zero exit.
+   *
+   * Rejects with a typed error: {@link FFmpegSpawnError} on a non-zero exit,
+   * {@link FFmpegTimeoutError} when `timeout` elapses, {@link FFmpegAbortError}
+   * when `signal` fires.
+   *
+   * @example
+   * // Cancel an encode from an HTTP request being aborted.
+   * const controller = new AbortController();
+   * req.on('close', () => controller.abort());
+   * await ffmpeg('in.mp4').output('out.mp4').run({ signal: controller.signal });
+   *
+   * @example
+   * // Retry a flaky encode, writing atomically so a retry never resumes
+   * // from a half-written file.
+   * await withAtomicOutput('out.mp4', async (temp) =>
+   *   ffmpeg('in.mp4').output(temp).run({ retry: { retries: 3 } }),
+   * );
    */
-  async run(opts?: { parseProgress?: boolean; totalDurationUs?: number; timeout?: number }): Promise<void> {
-    await runFFmpeg(this._buildSpawnOpts(opts));
+  async run(opts: RunOptions = {}): Promise<void> {
+    const spawnOpts = this._buildSpawnOpts(opts);
+
+    // Validation runs before anything is spawned, so a bad path costs no work.
+    if (opts.validate === true) {
+      assertValidIo(
+        this._inputs.map((entry) => entry.path),
+        this._outputs.map((entry) => entry.path),
+      );
+    }
+
+    const retry = opts.retry;
+    if (retry === undefined || (retry.retries ?? 0) < 1) {
+      await runFFmpeg(spawnOpts);
+      return;
+    }
+    await withRetry(() => runFFmpeg(spawnOpts), retry);
   }
 
   /**

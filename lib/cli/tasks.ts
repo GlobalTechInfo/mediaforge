@@ -9,14 +9,24 @@
  */
 import * as m from '../index.ts';
 import { EXTRA_TASKS } from './tasks.extra.ts';
-import { bool, list, num, str } from './flags.ts';
+import { bool, list, listOf, num, str } from './flags.ts';
+import { CliUsageError } from './parser.ts';
 import type { CliFlags, CliTask } from './types.ts';
 
 export type { CliFlags, CliTask };
 
+/**
+ * Require at least `n` positionals.
+ *
+ * Throws a {@link CliUsageError} rather than a plain Error so the CLI can report
+ * a wrong command line as a usage error (exit 2) instead of a runtime failure
+ * (exit 1). A missing argument is a caller mistake, not a job that failed.
+ */
 function require1(pos: string[], task: string, n: number): string[] {
   if (pos.length < n) {
-    throw new Error(`${task} needs ${n} argument${n === 1 ? '' : 's'}. Usage: ${CLI_TASKS[task]?.usage ?? task}`);
+    throw new CliUsageError(
+      `${task} needs ${n} argument${n === 1 ? '' : 's'}. Usage: ${CLI_TASKS[task]?.usage ?? task}`,
+    );
   }
   return pos;
 }
@@ -120,7 +130,7 @@ const TASKS: Record<string, CliTask> = {
     name: 'concat',
     summary: 'Concatenate files without re-encoding when possible',
     usage: 'mediaforge concat <output> --inputs a.mp4,b.mp4 [--reencode]',
-    flags: { inputs: '=comma-separated input files', reencode: '=force a re-encode' },
+    flags: { inputs: '=comma-separated input files', reencode: 'force a re-encode' },
     positionals: ['output'],
     async run(pos, f) {
       const [output] = require1(pos, 'concat', 1);
@@ -270,7 +280,7 @@ const TASKS: Record<string, CliTask> = {
     name: 'metadata',
     summary: 'Write or strip global metadata',
     usage: 'mediaforge metadata <input> <output> --set title=My\\ Film [--strip]',
-    flags: { set: '=comma-separated key=value pairs', strip: '=strip all metadata instead' },
+    flags: { set: '=comma-separated key=value pairs', strip: 'strip all metadata instead' },
     positionals: ['input', 'output'],
     async run(pos, f) {
       const [input, output] = require1(pos, 'metadata', 2);
@@ -279,7 +289,7 @@ const TASKS: Record<string, CliTask> = {
         console.log(`Wrote ${output}`);
         return;
       }
-      const pairs = list(f, 'set');
+      const pairs = listOf(f, 'set');
       if (pairs.length === 0) throw new Error('metadata requires --set or --strip');
       const metadata: Record<string, string> = {};
       for (const p of pairs) {
@@ -434,7 +444,7 @@ const TASKS: Record<string, CliTask> = {
     flags: {
       file: '=subtitle file to burn', convert: '=convert embedded track to this format',
       stream: '=subtitle stream index', shift: '=shift cue timings by N seconds',
-      'fix-duration': '=rescale cue durations to match the video',
+      'fix-duration': 'rescale cue durations to match the video',
     },
     positionals: ['input', 'output'],
     async run(pos, f) {
@@ -481,7 +491,7 @@ const TASKS: Record<string, CliTask> = {
     flags: {
       algorithm: '=hable|mobius|reinhard|clip|linear|spline (default mobius)',
       peak: '=source peak luminance in nits (default 1000)', desat: '=desaturation 0-1',
-      force: '=tone map even if the input does not look like HDR',
+      force: 'tone map even if the input does not look like HDR',
     },
     positionals: ['input', 'output'],
     async run(pos, f) {
@@ -523,7 +533,7 @@ const TASKS: Record<string, CliTask> = {
     usage: 'mediaforge silence <input> <output> [--threshold -50] [--min 0.5] [--detect] [--video]',
     flags: {
       threshold: '=dB threshold', min: '=minimum silence length in seconds',
-      detect: '=report the silent ranges instead of cutting them', video: '=drop the audio track',
+      detect: 'report the silent ranges instead of cutting them', video: 'drop the audio track',
     },
     positionals: ['input', 'output'],
     async run(pos, f) {
@@ -548,7 +558,7 @@ const TASKS: Record<string, CliTask> = {
     name: 'scenes',
     summary: 'Detect scene changes, or auto-cut on them',
     usage: 'mediaforge scenes <input> [output] [--threshold 0.4] [--cut]',
-    flags: { threshold: '=detection threshold 0-1', cut: '=write one clip per scene to output' },
+    flags: { threshold: '=detection threshold 0-1', cut: 'write one clip per scene to output' },
     positionals: ['input', 'output'],
     async run(pos, f) {
       const [input, output] = require1(pos, 'scenes', 1);
@@ -687,17 +697,26 @@ function settleProcess(proc: m.FFmpegProcess): Promise<void> {
  * here so `mediaforge help`, the unknown-flag check and the task tests all see
  * one table.
  */
-const registry: Record<string, CliTask> = { ...TASKS };
-
 /**
  * `tasks.extra.ts` imports the library barrel, and the barrel re-exports this
- * module, so the two form a cycle. Folding `EXTRA_TASKS` in when this module is
- * evaluated would therefore throw for a caller that entered the cycle through
- * `tasks.extra.ts`, so the merge happens on first access instead. The proxy keeps
- * `Object.keys`/`in`/`taskDetail` honest, and the registry object identity stays
- * stable across reads.
+ * module, so the two form a cycle. Folding `EXTRA_TASKS` in while this module is
+ * evaluating would throw for a caller that entered the cycle through
+ * `tasks.extra.ts`.
+ *
+ * The merge is therefore deferred, but memoised: previously `allTasks()` ran
+ * `Object.assign` on *every* property access, which made `Object.keys(CLI_TASKS)`
+ * return 31 before the first read and 52 after it, and made `ownKeys` /
+ * `getOwnPropertyDescriptor` cross a moving target mid-enumeration. Resolving
+ * once and caching means the key set is stable and the identity checks the
+ * proxy traps rely on stay honest.
  */
-const allTasks = (): Record<string, CliTask> => Object.assign(registry, EXTRA_TASKS);
+let merged: Record<string, CliTask> | undefined;
+const allTasks = (): Record<string, CliTask> => {
+  if (merged === undefined) merged = { ...TASKS, ...EXTRA_TASKS };
+  return merged;
+};
+
+const registry: Record<string, CliTask> = {};
 
 export const CLI_TASKS: Record<string, CliTask> = new Proxy(registry, {
   get: (_t, k) => Reflect.get(allTasks(), k),
@@ -706,38 +725,6 @@ export const CLI_TASKS: Record<string, CliTask> = new Proxy(registry, {
   getOwnPropertyDescriptor: (_t, k) => Reflect.getOwnPropertyDescriptor(allTasks(), k),
 });
 
-/**
- * Parse `--flag value` / `--flag` / `-f value` arguments.
- *
- * A `--flag` immediately followed by another `--flag` is treated as boolean, so
- * `scenes in.mp4 --cut` works without a dummy value.
- */
-export function parseTaskArgs(argv: string[]): { positional: string[]; flags: CliFlags } {
-  const positional: string[] = [];
-  const flags: CliFlags = {};
-
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i]!;
-    if (!arg.startsWith('--')) {
-      positional.push(arg);
-      continue;
-    }
-    const body = arg.slice(2);
-    const eq = body.indexOf('=');
-    if (eq !== -1) {
-      flags[body.slice(0, eq)] = body.slice(eq + 1);
-      continue;
-    }
-    const next = argv[i + 1];
-    if (next === undefined || next.startsWith('--')) {
-      flags[body] = true;
-    } else {
-      flags[body] = next;
-      i++;
-    }
-  }
-  return { positional, flags };
-}
 
 /** Human-readable task listing, grouped for `mediaforge help`. */
 export function taskHelpText(): string {

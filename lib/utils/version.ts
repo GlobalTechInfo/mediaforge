@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execBounded, execAsync, type ExecOptions } from './exec.ts';
 import type { VersionInfo } from '../types/version.ts';
 
 /** Matches "ffmpeg version 7.1.1 ...", "ffmpeg version 8.1 ..." and "ffmpeg version N-116912-gabcdef ..." */
@@ -69,14 +69,54 @@ export function parseVersionOutput(output: string): VersionInfo {
 
 /**
  * Probe the given binary and return parsed VersionInfo.
- * Throws if the binary cannot be executed.
+ *
+ * Bounded by a timeout — the previous unbounded `execFileSync` blocked the
+ * event loop forever on a wedged binary, taking every other in-flight request
+ * down with it. Blocking; prefer {@link probeVersionAsync} in a server.
+ *
+ * @throws {FFmpegTimeoutError} when the timeout elapses
+ * @throws {FFmpegError} when the binary is missing or not executable
  */
-export function probeVersion(binaryPath: string): VersionInfo {
-  const output = execFileSync(binaryPath, ['-version'], {
-    stdio: ['ignore', 'pipe', 'pipe'],
-    encoding: 'utf8',
+export function probeVersion(binaryPath: string, options: ExecOptions = {}): VersionInfo {
+  return parseVersionOutput(execBounded(binaryPath, ['-version'], options));
+}
+
+/**
+ * Non-blocking counterpart to {@link probeVersion}.
+ *
+ * Results are cached per binary path because the compatibility guards consult
+ * the version on nearly every builder call, and re-spawning `ffmpeg -version`
+ * each time is pure waste.
+ */
+const _asyncVersionCache = new Map<string, Promise<VersionInfo>>();
+
+/**
+ * Non-blocking version probe, cached per binary path.
+ *
+ * @throws {FFmpegTimeoutError} when the binary does not answer within the timeout
+ * @throws {FFmpegError} when the binary is missing or not executable
+ */
+export function probeVersionAsync(
+  binaryPath: string,
+  options: ExecOptions = {},
+): Promise<VersionInfo> {
+  const key = `${binaryPath}|${options.timeoutMs ?? ''}`;
+  const cached = _asyncVersionCache.get(key);
+  if (cached !== undefined) return cached;
+
+  const pending = execAsync(binaryPath, ['-version'], options).then(parseVersionOutput);
+  _asyncVersionCache.set(key, pending);
+  // A failed probe must not poison the cache: the next caller should retry
+  // rather than receive the same rejection forever.
+  pending.catch(() => {
+    _asyncVersionCache.delete(key);
   });
-  return parseVersionOutput(output);
+  return pending;
+}
+
+/** Drop the async version cache. Intended for tests. */
+export function clearVersionCache(): void {
+  _asyncVersionCache.clear();
 }
 
 /**

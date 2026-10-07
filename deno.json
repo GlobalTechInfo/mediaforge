@@ -1,6 +1,6 @@
 {
   "name": "@globaltech/mediaforge",
-  "version": "2.1.0-rc.1",
+  "version": "2.2.0",
   "author": "Qasim Ali",
   "license": "MIT",
   "nodeModulesDir": "none",
@@ -36,7 +36,8 @@
     "include": [
       "lib/",
       "deno-tests/",
-      "runtime-tests/"
+      "runtime-tests/",
+      "testkit/"
     ],
     "exclude": [
       "tests/",
@@ -48,7 +49,9 @@
   "lint": {
     "include": [
       "lib/",
-      "runtime-tests/"
+      "runtime-tests/",
+      "scripts/",
+      "testkit/"
     ],
     "exclude": [
       "deno-tests",

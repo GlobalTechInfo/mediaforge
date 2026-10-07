@@ -17,7 +17,17 @@ import process from 'node:process';
 import { parseVersionOutput } from '../utils/version.ts';
 import { CapabilityRegistry } from '../codecs/registry.ts';
 import { resolveBinary, resolveProbe } from '../utils/binary.ts';
-import { CLI_TASKS, parseTaskArgs, taskHelpText, taskDetail } from './tasks.ts';
+import { CLI_TASKS, taskHelpText, taskDetail } from './tasks.ts';
+import { buildFlagSpec, parseArgs, CliUsageError } from './parser.ts';
+import { runtimePermissionHint } from '../utils/runtime.ts';
+import {
+  exitWith,
+  FAILURE_EXIT,
+  INTERRUPTED_EXIT,
+  SUCCESS_EXIT,
+  TERMINATED_EXIT,
+  USAGE_EXIT,
+} from './exit.ts';
 
 import { execFileSync } from 'node:child_process';
 
@@ -124,7 +134,9 @@ function cmdVersion(binary: string): void {
     });
   } catch {
     console.error(`Error: could not run "${binary}"`);
-    process.exit(1);
+    console.error(runtimePermissionHint());
+    exitWith(FAILURE_EXIT);
+    return;
   }
   const v = parseVersionOutput(output);
   console.log(`ffmpeg version: ${v.isGit ? `git/${v.raw}` : `${v.major}.${v.minor}.${v.patch}`}`);
@@ -228,7 +240,9 @@ function cmdProbe(_binary: string, file: string, ffprobeOverride?: string): void
   } catch (err) {
     console.error(`Error probing "${file}": ${(err as Error).message}`);
     console.error(`Hint: Use --ffprobe <path> to specify the ffprobe binary if the auto-detected path "${probeBin}" is incorrect.`);
-    process.exit(1);
+    console.error(runtimePermissionHint());
+    exitWith(FAILURE_EXIT);
+    return;
   }
   console.log(output);
 }
@@ -240,7 +254,8 @@ async function main(): Promise<void> {
 
   if (argv.length === 0) {
     printUsage();
-    process.exit(0);
+    exitWith(SUCCESS_EXIT);
+    return;
   }
 
   // ── Pull out our own flags before forwarding the rest ──────────────────────
@@ -254,13 +269,15 @@ async function main(): Promise<void> {
     if (arg === '--ffmpeg') {
       if (++i >= argv.length) {
         console.error('Error: --ffmpeg requires a value');
-        process.exit(1);
+        exitWith(USAGE_EXIT);
+        return;
       }
       binary = argv[i]!;
     } else if (arg === '--ffprobe') {
       if (++i >= argv.length) {
         console.error('Error: --ffprobe requires a value');
-        process.exit(1);
+        exitWith(USAGE_EXIT);
+        return;
       }
       ffprobeOverride = argv[i]!;
     } else {
@@ -281,7 +298,8 @@ async function main(): Promise<void> {
     const file = rest[1];
     if (file === undefined) {
       console.error('Error: probe requires a file argument. Usage: mediaforge probe <file>');
-      process.exit(1);
+      exitWith(USAGE_EXIT);
+      return;
     }
     cmdProbe(binary, file, ffprobeOverride);
     return;
@@ -309,26 +327,55 @@ async function main(): Promise<void> {
       console.log(taskDetail(subcommand!));
       return;
     }
-    const { positional, flags } = parseTaskArgs(rest.slice(1));
-    // A misspelled flag would otherwise be silently dropped and the command
-    // would run with its defaults, which is far worse than a hard error.
-    const known = new Set(Object.keys(task.flags));
-    const unknown = Object.keys(flags).filter(f => !known.has(f));
-    if (unknown.length > 0) {
-      const hint = unknown.length === 1 ? 'flag' : 'flags';
-      console.error(
-        `Error: unknown ${hint} ${unknown.map(f => `--${f}`).join(', ')} for "${subcommand}"`,
-      );
-      console.error(`Known flags: ${[...known].map(f => `--${f}`).join(', ') || '(none)'}\n`);
-      console.error(taskDetail(subcommand!));
-      process.exit(1);
+
+    // The flag table is the authority on arity, so a boolean flag cannot swallow
+    // a positional and a value flag cannot be passed without its value.
+    let positional: string[];
+    let flags: Record<string, string | boolean | string[]>;
+    try {
+      ({ positional, flags } = parseArgs(rest.slice(1), buildFlagSpec(task.flags)));
+    } catch (err) {
+      if (err instanceof CliUsageError) {
+        console.error(`Error: ${err.message}`);
+        console.error(`\n${taskDetail(subcommand!)}`);
+        exitWith(USAGE_EXIT);
+        return;
+      }
+      throw err;
     }
+
+    // A surplus positional is a typo, not something to ignore: running with the
+    // first N arguments while the user meant a different one silently discards
+    // their intent. A variadic slot — `key=value…`, `input…` — accepts any number,
+    // so only fixed-arity tasks can overflow.
+    const positionals = task.positionals;
+    const isVariadic = positionals.some((p) => p.includes('…') || p.includes('...'));
+    if (!isVariadic && positionals.length > 0 && positional.length > positionals.length) {
+      const extra = positional.slice(positionals.length);
+      console.error(
+        `Error: "${subcommand}" takes ${positionals.length} positional argument(s) ` +
+          `(${positionals.join(', ')}) but got ${positional.length}: ` +
+          `${extra.map((p) => `"${p}"`).join(', ')}`,
+      );
+      console.error('\nIf a filename starts with a dash, put it after `--`.');
+      console.error(`\n${taskDetail(subcommand!)}`);
+      exitWith(USAGE_EXIT);
+      return;
+    }
+
     try {
       await task.run(positional, flags);
     } catch (err) {
+      // Print usage only for a misuse error. Dumping the full option list after
+      // an encode failure buries the one line the user actually needs.
+      if (err instanceof CliUsageError) {
+        console.error(`\nError: ${err.message}`);
+        console.error(`\n${taskDetail(subcommand!)}`);
+        exitWith(USAGE_EXIT);
+        return;
+      }
       console.error(`\nError: ${(err as Error).message}`);
-      console.error(`\n${taskDetail(subcommand!)}`);
-      process.exit(1);
+      exitWith(FAILURE_EXIT);
     }
     return;
   }
@@ -339,7 +386,8 @@ async function main(): Promise<void> {
     console.error(`Error: unknown command "${subcommand}"`);
     console.error(`\n${taskHelpText()}`);
     console.error('\nRun `mediaforge help` for usage.');
-    process.exit(1);
+    exitWith(USAGE_EXIT);
+    return;
   }
 
   const ffmpegArgs: string[] = [];
@@ -356,13 +404,15 @@ async function main(): Promise<void> {
     if (a === '--hwaccel') {
       if (k + 1 >= rest.length) {
         console.error('Error: --hwaccel requires a value');
-        process.exit(1);
+        exitWith(USAGE_EXIT);
+        return;
       }
       ffmpegArgs.push('-hwaccel', rest[++k]!);
     } else if (a === '--hwaccel-device') {
       if (k + 1 >= rest.length) {
         console.error('Error: --hwaccel-device requires a value');
-        process.exit(1);
+        exitWith(USAGE_EXIT);
+        return;
       }
       ffmpegArgs.push('-hwaccel_device', rest[++k]!);
     } else if (a === '--progress') {
@@ -373,29 +423,154 @@ async function main(): Promise<void> {
     k++;
   }
 
-  // Execute via spawnFFmpeg so we get live stderr
-  const { spawnFFmpeg } = await import('../process/spawn.ts');
-  const proc = spawnFFmpeg({ binary, args: ffmpegArgs, parseProgress: ffmpegArgs.includes('pipe:2') });
+  await runPassthrough(binary, ffmpegArgs);
+}
 
-  proc.emitter.on('stderr', (line) => process.stderr.write(line + '\n'));
-  proc.emitter.on('progress', (info) => {
-    if (info.percent !== undefined) {
-      process.stderr.write(`\r  Progress: ${info.percent.toFixed(1)}% | ${info.fps}fps | ${info.bitrate} | ${info.speed}x`);
-    }
+/**
+ * Run a raw ffmpeg command line.
+ *
+ * Handles stdin/stdout piping. Without this, `mediaforge -f lavfi -i testsrc …
+ * -f mjpeg pipe:1` wrote nothing to stdout, and both directions hung outright:
+ * ffmpeg blocks writing to a pipe nobody drains, and blocks reading one nobody
+ * feeds.
+ */
+async function runPassthrough(binary: string, ffmpegArgs: string[]): Promise<void> {
+  const { spawnFFmpeg } = await import('../process/spawn.ts');
+
+  const readsStdin = wantsStdin(ffmpegArgs);
+  const writesStdout = writesToStdout(ffmpegArgs);
+
+  const proc = spawnFFmpeg({
+    binary,
+    args: ffmpegArgs,
+    parseProgress: ffmpegArgs.includes('pipe:2'),
+    // Piped stdout must be inherited, not captured: a captured pipe that is
+    // never drained deadlocks as soon as the OS buffer (64 KiB) fills, and a
+    // short payload would still be discarded.
+    stdio: {
+      stdin: readsStdin ? 'pipe' : 'ignore',
+      stdout: writesStdout ? 'inherit' : 'pipe',
+      stderr: 'pipe',
+    },
   });
+
+  if (readsStdin && proc.stdin !== null) {
+    const childStdin = proc.stdin;
+
+    // ffmpeg routinely stops reading early — `-t`, `-frames`, or an encode
+    // error — and the next write to its stdin raises EPIPE. That is expected
+    // here, not a failure, so it must not become an uncaught exception.
+    childStdin.on('error', () => {});
+
+    // `end: true` closes the child's stdin once this process finishes writing.
+    // Without it ffmpeg waits forever for an EOF that never arrives.
+    process.stdin.pipe(childStdin, { end: true });
+
+    // Piping puts process.stdin in flowing mode, which holds an open handle on
+    // the event loop. If ffmpeg has already exited while an endless upstream
+    // producer is still writing, nothing would ever unpip it and the CLI would
+    // hang after the encode finished. Release it whenever the child settles.
+    const releaseStdin = (): void => {
+      process.stdin.unpipe(childStdin);
+      process.stdin.pause();
+    };
+    proc.emitter.once('end', releaseStdin);
+    proc.emitter.once('error', releaseStdin);
+    process.stdin.on('error', () => {});
+  }
+
+  if (!writesStdout) {
+    proc.emitter.on('stderr', (line) => process.stderr.write(line + '\n'));
+  }
+
+  proc.emitter.on('progress', (info) => {
+    // `percent` is only set when a total duration is known. Printing it
+    // unconditionally produced an empty status line for most commands, because
+    // the passthrough path never learns the duration.
+    const stats = [
+      info.percent !== undefined ? `${info.percent.toFixed(1)}%` : info.outTime,
+      `${info.fps}fps`,
+      info.bitrate !== 'N/A' ? info.bitrate : undefined,
+      info.speed > 0 ? `${info.speed}x` : undefined,
+    ].filter((part): part is string => part !== undefined);
+    if (stats.length === 0) return;
+    process.stderr.write(`\r  ${stats.join(' | ')}`);
+  });
+
   proc.emitter.on('end', () => {
     process.stderr.write('\n');
-    process.exit(0);
+    exitWith(SUCCESS_EXIT);
   });
-  proc.emitter.on('error', (err) => {
+
+  proc.emitter.on('error', (err: Error) => {
     process.stderr.write('\n');
     console.error(`\nError: ${err.message}`);
-    process.exit(1);
+    exitWith(FAILURE_EXIT);
+  });
+
+  // Ctrl-C must terminate the child and leave no partial output behind.
+  const onInterrupt = (): void => {
+    void killTree(proc.child).finally(() => {
+      console.error('\nInterrupted. Output left in place may be incomplete.');
+      exitWith(INTERRUPTED_EXIT);
+    });
+  };
+  process.once('SIGINT', onInterrupt);
+  process.once('SIGTERM', () => {
+    void killTree(proc.child).finally(() => exitWith(TERMINATED_EXIT));
+  });
+}
+
+/** Does this command line read from standard input? */
+function wantsStdin(args: readonly string[]): boolean {
+  return args.some((a) => a === '-' || a === 'pipe:0' || a === '/dev/stdin');
+}
+
+/** Does this command line write to standard output? */
+function writesToStdout(args: readonly string[]): boolean {
+  return args.some((a) => a === 'pipe:1' || a === '-');
+}
+
+/**
+ * Terminate a child and its process group, escalating if it does not go quietly.
+ *
+ * Mirrors the library's own kill sequence: `SIGTERM` gives an in-flight encode a
+ * moment to close its output cleanly, and `SIGKILL` guarantees the prompt
+ * returns even for a child that ignores the first signal.
+ */
+async function killTree(child: import('node:child_process').ChildProcess): Promise<void> {
+  const signal = (sig: NodeJS.Signals): void => {
+    try {
+      if (process.platform !== 'win32' && child.pid !== undefined) {
+        process.kill(-child.pid, sig);
+        return;
+      }
+    } catch {
+      // Fall through to the direct kill.
+    }
+    try {
+      child.kill(sig);
+    } catch {
+      // Already gone.
+    }
+  };
+
+  signal('SIGTERM');
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(() => {
+      signal('SIGKILL');
+      resolve();
+    }, 3000);
+    if (typeof timer.unref === 'function') timer.unref();
+    child.once('close', () => {
+      clearTimeout(timer);
+      resolve();
+    });
   });
 }
 
 // Lazy import to avoid circular issues at module level
 main().catch((err: unknown) => {
   console.error((err as Error).message);
-  process.exit(1);
+  exitWith(FAILURE_EXIT);
 });

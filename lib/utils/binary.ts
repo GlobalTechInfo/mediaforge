@@ -1,22 +1,24 @@
 import process from 'node:process';
 import path from 'node:path';
-import { spawnSync, spawn } from 'node:child_process';
+import { spawnSync, spawn, type ChildProcess } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
+import { FFmpegError } from '../errors.ts';
 
-export class BinaryNotFoundError extends Error {
+/** The ffmpeg/ffprobe binary does not exist at the configured path. */
+export class BinaryNotFoundError extends FFmpegError {
   constructor(binary: string) {
     super(
       `FFmpeg binary not found: "${binary}". ` +
         'Set the path via ffmpeg().setBinary() or the FFMPEG_PATH environment variable.',
+      'BINARY_NOT_FOUND',
     );
-    this.name = 'BinaryNotFoundError';
   }
 }
 
-export class BinaryNotExecutableError extends Error {
+/** The binary exists but cannot be executed (missing permission, wrong format). */
+export class BinaryNotExecutableError extends FFmpegError {
   constructor(binary: string) {
-    super(`FFmpeg binary is not executable: "${binary}"`);
-    this.name = 'BinaryNotExecutableError';
+    super(`FFmpeg binary is not executable: "${binary}"`, 'BINARY_NOT_EXECUTABLE');
   }
 }
 
@@ -61,7 +63,15 @@ export function validateBinary(binaryPath: string): void {
     // across Node.js and Deno. On both runtimes, a missing binary sets
     // result.error.code === 'ENOENT'; any other failure means it was found
     // but not executable / crashed, which is BinaryNotExecutableError.
-    const result = spawnSync(binaryPath, ['-version'], { stdio: 'pipe' });
+    //
+    // The 15s ceiling matters: without it, a binary that starts but then hangs
+    // blocks the event loop indefinitely. SIGKILL because a wedged process is
+    // unlikely to be handling SIGTERM.
+    const result = spawnSync(binaryPath, ['-version'], {
+      stdio: 'pipe',
+      timeout: 15_000,
+      killSignal: 'SIGKILL',
+    });
     if (result.error) {
       const code = (result.error as { code?: string }).code;
       if (code === 'ENOENT') throw new BinaryNotFoundError(binaryPath);
@@ -88,7 +98,7 @@ export function isBinaryAvailable(binaryPath: string): boolean {
  */
 export function isBinaryAvailableAsync(binaryPath: string, timeoutMs = 5000): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
-    let child;
+    let child: ChildProcess;
     try {
       child = spawn(binaryPath, ['-version'], { stdio: 'ignore' });
     } catch {

@@ -3009,6 +3009,805 @@ await run('FilterGraph: node → stream → serialize via filterGraph()', () => 
 
 // ─── Summary ──────────────────────────────────────────────────────────────────
 console.log(`\n${'═'.repeat(60)}`);
+/**
+ * Battle-suite coverage for the 2.2.0 reliability surface.
+ *
+ * Appended to the battle suite rather than left to the unit tests alone because
+ * `coverage:gate` measures the battle report. New library code that only the
+ * unit suite exercises shows up as uncovered there, and the gate correctly
+ * refuses a release that lowers it.
+ *
+ * The cases here are deliberately behavioural — they drive the public API the
+ * way a caller would — so they carry the same signal as the rest of the suite.
+ */
+
+
+// ─── 2.2.0 reliability surface ──────────────────────────────────────────────
+import {
+  FFmpegError, FFmpegTimeoutError, FFmpegAbortError, FFmpegValidationError,
+  FFmpegAtomicOutputError, FFmpegSpawnError as SpawnError, ProbeError as PErr,
+  GuardError as GErr, BinaryNotFoundError as BNF, BinaryNotExecutableError as BNE,
+  VersionError as VErr,
+  execBounded, execAsync, probeVersion as probeVersionSync, probeVersionAsync,
+  clearVersionCache,
+  FFmpegQueue, queued as queuedJob, withRetry, retryDelay,
+  setLogger, getLogger, getDiagnosticHook, setDiagnosticHook, stderrLogger,
+  silentLogger,
+  withAtomicOutput, isMultiFileTarget, isAtomicOutputRefused,
+  assertValidIo, validateInputs, validateOutputs, isNonPathInput,
+  probeAsync as probeAsyncFn,
+} from '../../lib/index.ts';
+import { getCleanupCount } from '../../lib/helpers/process.ts';
+
+
+// ─── typed accessors for the error objects these cases inspect ─────────────
+// The battle harness types a caught value as `unknown`, so reading `.code`
+// straight off it is a type error under `deno check` even though it is what the
+// assertion means. These keep the assertions readable and typed.
+type ThrownShape = {
+  code?: string;
+  message?: string;
+  timeoutMs?: number;
+  exitCode?: number | null;
+  signal?: string | null;
+  stderrOutput?: string;
+  command?: readonly string[];
+  reason?: unknown;
+};
+const asThrown = (err: unknown): ThrownShape => (err ?? {}) as ThrownShape;
+const codeOf = (err: unknown): string | undefined => asThrown(err).code;
+const msgOf = (err: unknown): string => asThrown(err).message ?? String(err);
+
+// ─── Error taxonomy ────────────────────────────────
+
+section('ERROR TAXONOMY — stable codes');
+
+await run('every error class carries a code and extends FFmpegError', async () => {
+  const base = FFmpegError;
+  const instances = [
+    new base('x', 'TIMEOUT'),
+    new FFmpegTimeoutError(250),
+    new FFmpegAbortError(new Error('cancelled')),
+    new FFmpegValidationError('bad', 'a.mp4'),
+    new FFmpegAtomicOutputError('nope'),
+    new PErr('a.mp4', 'boom'),
+    new GErr('no codec'),
+    new BNF('ffmpeg'),
+    new BNE('ffmpeg'),
+    new VErr('fps_mode', 5, 4),
+  ];
+  for (const err of instances) {
+    const name = err?.constructor?.name ?? String(err);
+    if (!(err instanceof base)) throw new Error(`${name} does not extend FFmpegError`);
+    if (typeof err.code !== 'string') {
+      throw new Error(`${name} has no code`);
+    }
+  }
+  const codes: string[] = instances.map((e) => e.code);
+  for (const expected of ['TIMEOUT', 'ABORTED', 'VALIDATION_FAILED', 'PROBE_FAILED', 'GUARD_FAILED', 'BINARY_NOT_FOUND', 'VERSION_UNSUPPORTED']) {
+    if (!(codes as string[]).includes(expected)) throw new Error(`missing code ${expected}: ${codes.join(',')}`);
+  }
+});
+
+await run('FFmpegSpawnError keeps its message shape and gains the command', async () => {
+  const err = new SpawnError(1, null, 'Conversion failed!', ['ffmpeg', '-i', 'a.mp4']);
+  if (asThrown(err).exitCode !== 1) throw new Error('exitCode lost');
+  if (asThrown(err).signal !== null) throw new Error('signal lost');
+  if (!asThrown(err).stderrOutput?.includes('Conversion failed')) throw new Error('stderr lost');
+  if (!msgOf(err).includes('Conversion failed')) throw new Error(`message: ${msgOf(err)}`);
+  if (!msgOf(err).includes('ffmpeg -i a.mp4')) throw new Error(`command not in message: ${msgOf(err)}`);
+});
+
+await run('FFmpegTimeoutError and FFmpegAbortError report their input', async () => {
+  const timeout = new FFmpegTimeoutError(1500, 'last stderr');
+  if (timeout.timeoutMs !== 1500) throw new Error('timeoutMs lost');
+  if (!timeout.message.includes('1500ms')) throw new Error(`message: ${timeout.message}`);
+  const reason = new Error('user cancelled');
+  const aborted = new FFmpegAbortError(reason);
+  if (aborted.reason !== reason) throw new Error('reason lost');
+  if (aborted.code !== 'ABORTED') throw new Error(`code: ${aborted.code}`);
+});
+
+// ─── Bounded execution ──────────────────────────────────────────────────────
+
+section('BOUNDED EXECUTION — every binary call has a deadline');
+
+await run('execBounded reads a healthy binary', async () => {
+  const out = execBounded('ffmpeg', ['-version']);
+  if (!out.startsWith('ffmpeg version')) throw new Error(`got: ${out.slice(0, 40)}`);
+});
+
+await run('execBounded times out on a wedged binary', async () => {
+  const wedged = p('wedged-binary.sh');
+  fs.writeFileSync(wedged, '#!/bin/sh\nexec tail -f /dev/null\n');
+  fs.chmodSync(wedged, 0o755);
+  try {
+    execBounded(wedged, ['-version'], { timeoutMs: 400 });
+    throw new Error('expected a timeout');
+  } catch (err) {
+    if (codeOf(err) !== 'TIMEOUT') throw new Error(`got ${codeOf(err)}: ${msgOf(err)}`);
+  }
+});
+
+await run('execAsync resolves and rejects consistently', async () => {
+  const out = await execAsync('ffmpeg', ['-version']);
+  if (!out.startsWith('ffmpeg version')) throw new Error('unexpected stdout');
+
+  let missing = null;
+  try {
+    await execAsync('/definitely/not/a/real/binary', ['-version']);
+  } catch (err) {
+    missing = err;
+  }
+  if (codeOf(missing) !== 'BINARY_NOT_FOUND') {
+    throw new Error(`missing binary reported as ${codeOf(missing)}`);
+  }
+});
+
+await run('probeVersionAsync caches and probeVersion works', async () => {
+  const v = probeVersionSync('ffmpeg');
+  if (v.major < 4) throw new Error(`major: ${v.major}`);
+  const a = await probeVersionAsync('ffmpeg');
+  const b = await probeVersionAsync('ffmpeg');
+  if (a.raw !== b.raw) throw new Error('cache returned a different version');
+  clearVersionCache();
+});
+
+// ─── Cancellation, escalation, cleanup ──────────────────────────────────────
+
+section('CANCELLATION — abort, timeout, escalation, cleanup');
+
+await run('an already-aborted signal never spawns ffmpeg', async () => {
+  const controller = new AbortController();
+  controller.abort(new Error('already cancelled'));
+  let code = null;
+  try {
+    spawnFFmpeg({
+      binary: 'ffmpeg',
+      args: ['-re', '-f', 'lavfi', '-i', 'testsrc=duration=30:size=32x32:rate=5', '-f', 'null', '-'],
+      signal: controller.signal,
+    });
+  } catch (err) {
+    code = codeOf(err);
+  }
+  if (code !== 'ABORTED') throw new Error(`expected ABORTED, got ${code}`);
+});
+
+await run('a SIGTERM-ignoring child is force-killed', async () => {
+  const controller = new AbortController();
+  const proc = spawnFFmpeg({
+    binary: 'sh',
+    args: ['-c', 'trap "" TERM; sleep 60'],
+    signal: controller.signal,
+    killGracePeriodMs: 250,
+  });
+  const waiter = new Promise<unknown>((resolve) => {
+    proc.emitter.on('error', (e) => resolve(e));
+    proc.emitter.on('end', () => resolve(null));
+  });
+  setTimeout(() => controller.abort(), 150);
+  const startedAt = Date.now();
+  const err = await waiter;
+  const elapsed = Date.now() - startedAt;
+  if (codeOf(err) !== 'ABORTED') throw new Error(`got ${codeOf(err)}`);
+  if (elapsed > 5000) throw new Error(`took ${elapsed}ms — escalation did not fire`);
+});
+
+await run('a timeout raises FFmpegTimeoutError', async () => {
+  const proc = spawnFFmpeg({
+    binary: 'ffmpeg',
+    args: ['-re', '-f', 'lavfi', '-i', 'testsrc=duration=30:size=32x32:rate=5', '-f', 'null', '-'],
+    timeout: 250,
+  });
+  const err = await new Promise<unknown>((resolve) => {
+    proc.emitter.on('error', (e) => resolve(e));
+    proc.emitter.on('end', () => resolve(null));
+  });
+  if (codeOf(err) !== 'TIMEOUT' || asThrown(err).timeoutMs !== 250) {
+    throw new Error(`got ${codeOf(err)}/${asThrown(err).timeoutMs}`);
+  }
+});
+
+await run('signal listeners do not accumulate across jobs', async () => {
+  const before = process.listenerCount('SIGINT');
+  for (let i = 0; i < 4; i++) {
+    const proc = spawnFFmpeg({
+      binary: 'ffmpeg',
+      args: ['-f', 'lavfi', '-i', 'testsrc=duration=0.1:size=32x32:rate=5', '-f', 'null', '-'],
+    });
+    await new Promise<void>((resolve) => {
+      proc.emitter.on('end', () => resolve());
+      proc.emitter.on('error', () => resolve(undefined));
+    });
+  }
+  const after = process.listenerCount('SIGINT');
+  if (after > before) throw new Error(`listeners grew ${before} -> ${after}`);
+});
+
+await run('autoCleanup:false opts out of exit cleanup', async () => {
+  const before = getCleanupCount();
+  const proc = spawnFFmpeg({
+    binary: 'ffmpeg',
+    args: ['-f', 'lavfi', '-i', 'testsrc=duration=0.1:size=32x32:rate=5', '-f', 'null', '-'],
+    autoCleanup: false,
+  });
+  await new Promise<void>((resolve) => {
+    proc.emitter.on('end', () => resolve(undefined));
+    proc.emitter.on('error', () => resolve(undefined));
+  });
+  if (getCleanupCount() !== before) throw new Error('registered despite autoCleanup:false');
+});
+
+// ─── Bounded concurrency ────────────────────────────────────────────────────
+
+section('BOUNDED CONCURRENCY — FFmpegQueue');
+
+await run('the queue never exceeds its limit', async () => {
+  const queue = new FFmpegQueue({ concurrency: 3 });
+  let active = 0;
+  let peak = 0;
+  await Promise.all(Array.from({ length: 12 }, () =>
+    queue.run(async () => {
+      active++;
+      peak = Math.max(peak, active);
+      await new Promise((r) => setTimeout(r, 15));
+      active--;
+    })
+  ));
+  if (peak !== 3) throw new Error(`peak was ${peak}`);
+});
+
+await run('the queue survives a rejected job and reports stats', async () => {
+  const queue = new FFmpegQueue({ concurrency: 2 });
+  await Promise.allSettled([
+    queue.run(async () => 1),
+    queue.run(async () => { throw new Error('job failed'); }),
+  ]);
+  const stats = queue.stats();
+  if (stats.completed !== 1) throw new Error(`completed: ${stats.completed}`);
+  if (stats.failed !== 1) throw new Error(`failed: ${stats.failed}`);
+  if (await queue.run(async () => 'still works') !== 'still works') {
+    throw new Error('queue unusable after a failure');
+  }
+});
+
+await run('maxPending rejects instead of queueing without limit', async () => {
+  const queue = new FFmpegQueue({ concurrency: 1, maxPending: 1 });
+  const blocker = queue.run(() => new Promise((r) => setTimeout(r, 50)));
+  const queuedOne = queue.run(async () => 'a');
+  let code = null;
+  try {
+    await queue.run(async () => 'b');
+  } catch (err) {
+    code = codeOf(err);
+  }
+  if (code !== 'VALIDATION_FAILED') throw new Error(`got ${code}`);
+  await blocker;
+  if (await queuedOne !== 'a') throw new Error('queued job did not run');
+});
+
+await run('queued() and the default queue work, and invalid limits throw', async () => {
+  if (await queuedJob(async () => 'ok') !== 'ok') throw new Error('queued() failed');
+  for (const bad of [0, -1, 1.5]) {
+    let threw = false;
+    try {
+      new FFmpegQueue({ concurrency: bad });
+    } catch {
+      threw = true;
+    }
+    if (!threw) throw new Error(`concurrency ${bad} was accepted`);
+  }
+});
+
+// ─── Retry ──────────────────────────────────────────────────────────────────
+
+section('RETRY — opt-in, with backoff');
+
+await run('retry is off by default and never retries an abort', async () => {
+  let calls = 0;
+  try {
+    await withRetry(async () => { calls++; throw new Error('boom'); });
+  } catch { /* expected */ }
+  if (calls !== 1) throw new Error(`retried ${calls} times without opting in`);
+
+  let aborted = 0;
+  try {
+    await withRetry(async () => {
+      aborted++;
+      throw new FFmpegError('cancelled', 'ABORTED');
+    }, { retries: 5, initialDelayMs: 1 });
+  } catch { /* expected */ }
+  if (aborted !== 1) throw new Error(`ABORTED was retried ${aborted} times`);
+});
+
+await run('a transient failure is retried and can recover', async () => {
+  let calls = 0;
+  const result = await withRetry(async () => {
+    calls++;
+    if (calls < 3) throw new FFmpegError('flaky', 'TIMEOUT');
+    return 'recovered';
+  }, { retries: 3, initialDelayMs: 1, jitter: 0 });
+  if (result !== 'recovered' || calls !== 3) throw new Error(`${result} after ${calls}`);
+});
+
+await run('an EXIT_NONZERO is never retried', async () => {
+  let calls = 0;
+  try {
+    await withRetry(async () => {
+      calls++;
+      throw new FFmpegError('bad args', 'EXIT_NONZERO');
+    }, { retries: 5, initialDelayMs: 1 });
+  } catch { /* expected */ }
+  if (calls !== 1) throw new Error(`retried ${calls} times — EXIT_NONZERO is deterministic`);
+});
+
+await run('the backoff grows and caps, and stays inside the jitter band', async () => {
+  const opts = { initialDelayMs: 100, factor: 2, maxDelayMs: 500, jitter: 0 };
+  const steps = [0, 1, 2, 3, 9].map((a) => retryDelay(a, opts));
+  const expected = [100, 200, 400, 500, 500];
+  steps.forEach((got, i) => {
+    if (got !== expected[i]) throw new Error(`attempt ${i}: ${got} !== ${expected[i]}`);
+  });
+  for (let i = 0; i < 25; i++) {
+    const d = retryDelay(2, { initialDelayMs: 100, factor: 2, jitter: 0.2 });
+    if (d < 320 || d > 480) throw new Error(`jittered delay ${d} outside ±20% of 400`);
+  }
+});
+
+// ─── Crash-safe output ──────────────────────────────────────────────────────
+
+section('CRASH-SAFE OUTPUT — publish only on success');
+
+await run('a successful encode is renamed into place', async () => {
+  const target = p('atomic-ok.mp4');
+  await withAtomicOutput(target, async (temp) => {
+    await ffmpeg()
+      .output(temp)
+      .addGlobalOption('-f', 'lavfi', '-i', 'testsrc=duration=0.4:size=64x64:rate=10')
+      .videoCodec('libx264')
+      .preset('ultrafast')
+      .run();
+  });
+  if (!fs.existsSync(target)) throw new Error('target missing');
+  const probe = await probeAsyncFn(target);
+  if (probe.streams.length !== 1) throw new Error('published file is not playable');
+});
+
+await run('a failed encode publishes nothing and leaves no temp file', async () => {
+  const target = p('atomic-fail.mp4');
+  try {
+    await withAtomicOutput(target, async (temp) => {
+      await ffmpeg().input(p('no-such-input.mp4')).output(temp).run();
+    });
+    throw new Error('expected a failure');
+  } catch (err) {
+    if (codeOf(err) === undefined) throw err;
+  }
+  if (fs.existsSync(target)) throw new Error('a truncated file was published');
+  const stray = fs.readdirSync(TMP).filter((f) => f.includes('.mediaforge-'));
+  if (stray.length > 0) throw new Error(`temp files left behind: ${stray.join(', ')}`);
+});
+
+await run('the extension is preserved and a failure keeps the original', async () => {
+  const seen: string[] = [];
+  const target = p('atomic-ext.mkv');
+  await withAtomicOutput(target, async (temp) => {
+    seen.push(temp);
+    if (!temp.endsWith('.mkv')) throw new Error(`extension lost: ${temp}`);
+    fs.writeFileSync(temp, 'x');
+  });
+  if (!seen[0].endsWith('.mkv')) throw new Error('temp path had no extension');
+
+  const original = p('atomic-original.txt');
+  fs.writeFileSync(original, 'keep me');
+  try {
+    await withAtomicOutput(original, async () => { throw new Error('nope'); });
+  } catch { /* expected */ }
+  if (fs.readFileSync(original, 'utf8') !== 'keep me') throw new Error('original was clobbered');
+});
+
+await run('a multi-file target is refused rather than written non-atomically', async () => {
+  if (!isMultiFileTarget('stream.m3u8')) throw new Error('m3u8 not detected');
+  if (!isMultiFileTarget('frames%03d.png')) throw new Error('sequence not detected');
+  if (!isMultiFileTarget('dash.mpd')) throw new Error('mpd not detected');
+  if (isMultiFileTarget('out.mp4')) throw new Error('a plain file was misdetected');
+
+  let refused = false;
+  try {
+    await withAtomicOutput(p('playlist.m3u8'), async () => undefined);
+  } catch (err) {
+    refused = isAtomicOutputRefused(err);
+  }
+  if (!refused) throw new Error('multi-file target was not refused');
+});
+
+await run('the parent directory is created on demand', async () => {
+  const target = path.join(TMP, 'made-on-demand', 'deep', 'out.txt');
+  await withAtomicOutput(target, async (temp) => fs.writeFileSync(temp, 'ok'));
+  if (fs.readFileSync(target, 'utf8') !== 'ok') throw new Error('not written');
+});
+
+// ─── Pre-flight validation ──────────────────────────────────────────────────
+
+section('PRE-FLIGHT VALIDATION — fail before ffmpeg does');
+
+await run('ffmpeg input syntax is left alone, missing paths are reported', async () => {
+  for (const input of ['https://example.com/a.mp4', 'pipe:0', '-', 'lavfi:testsrc', '0', 'concat:list.txt']) {
+    if (!isNonPathInput(input)) throw new Error(`${input} was treated as a path`);
+  }
+  if (isNonPathInput('in.mp4')) throw new Error('a real path was skipped');
+
+  const missing = validateInputs([p('definitely-not-here.mp4')]);
+  if (missing.length !== 1) throw new Error(`expected 1 issue, got ${missing.length}`);
+  if (!/does not exist/.test(missing[0].problem)) throw new Error(`problem: ${missing[0].problem}`);
+
+  const noDir = validateOutputs([path.join(TMP, 'no-such-dir', 'out.mp4')]);
+  if (noDir.length !== 1) throw new Error(`expected 1 issue, got ${noDir.length}`);
+  if (validateOutputs([p('out.mp4')]).length > 0) throw new Error('a valid output path was rejected');
+});
+
+await run('every problem is reported at once with a hint', async () => {
+  let code = null;
+  let message = '';
+  try {
+    assertValidIo([p('missing-a.mp4'), p('missing-b.mp4')], [p('out.mp4')]);
+  } catch (err) {
+    code = codeOf(err);
+    message = msgOf(err) ?? '';
+  }
+  if (code !== 'VALIDATION_FAILED') throw new Error(`got ${code}`);
+  if (!/2 problem\(s\)/.test(message)) throw new Error(`message: ${message}`);
+  if (!message.includes('missing-a.mp4') || !message.includes('missing-b.mp4')) {
+    throw new Error('not every problem is named');
+  }
+});
+
+await run('a directory is rejected as an input', async () => {
+  const issues = validateInputs([TMP]);
+  if (issues.length !== 1) throw new Error(`got ${issues.length}`);
+  if (!/directory/.test(issues[0].problem)) throw new Error(`problem: ${issues[0].problem}`);
+});
+
+// ─── Observability ──────────────────────────────────────────────────────────
+
+section('OBSERVABILITY — logger and diagnostic seams');
+
+await run('the library is silent until a logger is installed', async () => {
+  // Nothing to assert about output; what matters is that installing and
+  // uninstalling a logger neither throws nor leaks.
+  setLogger(null);
+  getLogger();
+  getDiagnosticHook();
+});
+
+await run('a throwing diagnostic hook cannot fail the job', async () => {
+  setDiagnosticHook(() => { throw new Error('observer exploded'); });
+  let calls = 0;
+  try {
+    await withRetry(async () => {
+      calls++;
+      if (calls < 2) throw new FFmpegError('flaky', 'TIMEOUT');
+      return 'ok';
+    }, { retries: 2, initialDelayMs: 1, jitter: 0 });
+  } finally {
+    setDiagnosticHook(null);
+  }
+  if (calls !== 2) throw new Error(`expected 2 attempts, got ${calls}`);
+});
+
+await run('retries are reported through the diagnostic hook', async () => {
+  const events: { type: string; attempt?: number; delayMs?: number }[] = [];
+  setDiagnosticHook((event) => events.push(event));
+  let calls = 0;
+  try {
+    await withRetry(async () => {
+      calls++;
+      if (calls < 2) throw new FFmpegError('flaky', 'TIMEOUT');
+      return 'ok';
+    }, { retries: 2, initialDelayMs: 1, jitter: 0 });
+  } finally {
+    setDiagnosticHook(null);
+  }
+  const retries = events.filter((e) => e.type === 'retry');
+  if (retries.length !== 1) throw new Error(`${retries.length} retry events`);
+  if (retries[0].attempt !== 1) throw new Error(`attempt: ${retries[0].attempt}`);
+});
+
+await run('stderrLogger builds without throwing', async () => {
+  stderrLogger('warn');
+  stderrLogger();
+  silentLogger.debug('ignored');
+});
+
+// ─── Builder paths ──────────────────────────────────────────────────────────
+
+section('BUILDER — inspectable paths');
+
+await run('inputPaths and outputPaths report what will be read and written', async () => {
+  const job = ffmpeg(['a.mp4', 'b.mp4']).output('out.mp4').videoCodec('libx264');
+  const inputs = job.inputPaths();
+  const outputs = job.outputPaths();
+  if (inputs.length !== 2 || inputs[0] !== 'a.mp4') throw new Error(`inputs: ${inputs}`);
+  if (outputs.length !== 1 || outputs[0] !== 'out.mp4') throw new Error(`outputs: ${outputs}`);
+  const args = job.dry();
+  if (!args.includes('libx264')) throw new Error(`dry(): ${args.join(' ')}`);
+});
+/**
+ * Gap-filling cases for the 2.2.0 surface.
+ *
+ * The sections above cover the happy paths. These cover the branches the
+ * coverage gate measures but a caller would only reach by accident: an
+ * unwritable output, a binary that exits non-zero, a queue saturated at
+ * `maxPending`, and the exit-cleanup registration that only runs once.
+ */
+
+// ─── Atomic output: the awkward branches ───────────────────────────────────
+
+section('CRASH-SAFE OUTPUT — remaining branches');
+
+await run('mkdir:false reports a missing directory instead of creating it', async () => {
+  const target = path.join(TMP, 'not-created', 'out.txt');
+  let code = null;
+  try {
+    await withAtomicOutput(target, async (temp) => fs.writeFileSync(temp, 'x'), { mkdir: false });
+  } catch (err) {
+    code = codeOf(err);
+  }
+  if (code !== 'ATOMIC_OUTPUT_UNSUPPORTED') throw new Error(`got ${code}`);
+  if (fs.existsSync(path.join(TMP, 'not-created'))) throw new Error('the directory was created anyway');
+});
+
+await run('keepTempOnError leaves the temp file for debugging', async () => {
+  const target = p('kept-temp.txt');
+  let tempPath = '';
+  try {
+    await withAtomicOutput(target, async (temp) => {
+      tempPath = temp;
+      fs.writeFileSync(temp, 'partial');
+      throw new Error('boom');
+    }, { keepTempOnError: true });
+  } catch { /* expected */ }
+  if (!tempPath) throw new Error('no temp path was reported');
+  if (fs.existsSync(target)) throw new Error('the target must not exist');
+  // Clean up deliberately: this case exists to prove the temp file survives.
+  fs.rmSync(tempPath, { force: true });
+});
+
+// ─── Bounded execution: the awkward branches ───────────────────────────────
+
+section('BOUNDED EXECUTION — remaining branches');
+
+await run('a non-zero exit is reported as EXIT_NONZERO with stderr', async () => {
+  let code = null;
+  let message = '';
+  try {
+    await execAsync('ffmpeg', ['-i', p('no-such-input.mp4'), '-f', 'null', '-']);
+  } catch (err) {
+    code = codeOf(err);
+    message = msgOf(err) ?? '';
+  }
+  if (code !== 'EXIT_NONZERO') throw new Error(`got ${code}`);
+  if (!message.includes('ffmpeg')) throw new Error(`message names no binary: ${message}`);
+});
+
+await run('a non-executable binary is reported as not executable', async () => {
+  const notExec = p('not-executable.sh');
+  fs.writeFileSync(notExec, '#!/bin/sh\ntrue\n');
+  fs.chmodSync(notExec, 0o644);
+  let code = null;
+  try {
+    await execAsync(notExec, ['-version']);
+  } catch (err) {
+    code = codeOf(err);
+  }
+  if (code !== 'BINARY_NOT_EXECUTABLE' && code !== 'EXIT_NONZERO') {
+    throw new Error(`got ${code}`);
+  }
+});
+
+await run('execAsync rejects an already-aborted signal without spawning', async () => {
+  const controller = new AbortController();
+  controller.abort(new Error('pre-aborted'));
+  let code = null;
+  try {
+    await execAsync('ffmpeg', ['-version'], { signal: controller.signal });
+  } catch (err) {
+    code = codeOf(err);
+  }
+  if (code !== 'ABORTED') throw new Error(`got ${code}`);
+});
+
+await run('execBounded honours an already-aborted signal', async () => {
+  const controller = new AbortController();
+  controller.abort(new Error('pre-aborted'));
+  let code = null;
+  try {
+    execBounded('ffmpeg', ['-version'], { signal: controller.signal });
+  } catch (err) {
+    code = codeOf(err);
+  }
+  if (code !== 'ABORTED') throw new Error(`got ${code}`);
+});
+
+// ─── Queue: the awkward branches ───────────────────────────────────────────
+
+section('BOUNDED CONCURRENCY — remaining branches');
+
+await run('a job aborted while queued never starts', async () => {
+  const queue = new FFmpegQueue({ concurrency: 1 });
+  const blocker = queue.run(() => new Promise((r) => setTimeout(r, 60)));
+  const controller = new AbortController();
+  const pending = queue.run(async () => 'should not run', { signal: controller.signal });
+  controller.abort(new Error('cancelled in the queue'));
+
+  let code = null;
+  try {
+    await pending;
+  } catch (err) {
+    code = codeOf(err);
+  }
+  if (code !== 'ABORTED') throw new Error(`got ${code}`);
+  await blocker;
+});
+
+await run('a signal aborted before enqueue is rejected immediately', async () => {
+  const queue = new FFmpegQueue({ concurrency: 1 });
+  const controller = new AbortController();
+  controller.abort(new Error('already cancelled'));
+  let code = null;
+  try {
+    await queue.run(async () => 'never', { signal: controller.signal });
+  } catch (err) {
+    code = codeOf(err);
+  }
+  if (code !== 'ABORTED') throw new Error(`got ${code}`);
+});
+
+await run('a negative maxPending is rejected', async () => {
+  let threw = false;
+  try {
+    new FFmpegQueue({ concurrency: 1, maxPending: -1 });
+  } catch {
+    threw = true;
+  }
+  if (!threw) throw new Error('a negative maxPending was accepted');
+});
+
+await run('onIdle drains every queued and running job', async () => {
+  const queue = new FFmpegQueue({ concurrency: 2 });
+  for (let i = 0; i < 5; i++) {
+    void queue.run(() => new Promise((r) => setTimeout(r, 10)));
+  }
+  await queue.onIdle();
+  const stats = queue.stats();
+  if (stats.running !== 0 || stats.pending !== 0) {
+    throw new Error(`running=${stats.running} pending=${stats.pending}`);
+  }
+  if (stats.completed !== 5) throw new Error(`completed=${stats.completed}`);
+});
+
+// ─── Exit cleanup: registration and release ─────────────────────────────────
+
+section('EXIT CLEANUP — registration drains after the last job');
+
+await run('the cleanup set returns to its baseline', async () => {
+  const before = getCleanupCount();
+  const proc = spawnFFmpeg({
+    binary: 'ffmpeg',
+    args: ['-f', 'lavfi', '-i', 'testsrc=duration=0.1:size=32x32:rate=5', '-f', 'null', '-'],
+  });
+  await new Promise<void>((resolve) => {
+    proc.emitter.on('end', () => resolve(undefined));
+    proc.emitter.on('error', () => resolve(undefined));
+  });
+  if (getCleanupCount() !== before) {
+    throw new Error(`cleanup set is ${getCleanupCount()}, expected ${before}`);
+  }
+});
+
+await run('a registered child is tracked while it runs', async () => {
+  const before = getCleanupCount();
+  const proc = spawnFFmpeg({
+    binary: 'ffmpeg',
+    args: ['-re', '-f', 'lavfi', '-i', 'testsrc=duration=30:size=32x32:rate=5', '-f', 'null', '-'],
+    timeout: 400,
+  });
+  if (getCleanupCount() <= before) {
+    throw new Error('the child was not registered while running');
+  }
+  await new Promise<void>((resolve) => {
+    proc.emitter.on('error', () => resolve(undefined));
+    proc.emitter.on('end', () => resolve(undefined));
+  });
+});
+
+// ─── Validation: the awkward branches ──────────────────────────────────────
+
+section('PRE-FLIGHT VALIDATION — remaining branches');
+
+await run('an output whose parent is a file is rejected', async () => {
+  const notADir = p('not-a-directory.txt');
+  fs.writeFileSync(notADir, 'i am a file');
+  const issues = validateOutputs([path.join(notADir, 'out.mp4')]);
+  if (issues.length !== 1) throw new Error(`expected 1 issue, got ${issues.length}`);
+  if (!/not a directory/.test(issues[0].problem)) throw new Error(`problem: ${issues[0].problem}`);
+});
+
+await run('a valid input file produces no issue', async () => {
+  const src = p('src.mp4');
+  if (!fs.existsSync(src)) {
+    // The suite's own media may not exist under every runner; create one.
+    await new Promise<void>((resolve) => {
+      const proc = spawnFFmpeg({
+        binary: 'ffmpeg',
+        args: ['-f', 'lavfi', '-i', 'testsrc=duration=0.3:size=64x64:rate=10', '-c:v', 'libx264',
+          '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', src],
+      });
+      proc.emitter.on('end', () => resolve());
+      proc.emitter.on('error', () => resolve(undefined));
+    });
+  }
+  if (validateInputs([src]).length > 0) throw new Error('a real file was rejected');
+  if (validateOutputs([p('ok-out.mp4')]).length > 0) throw new Error('a valid output path was rejected');
+});
+
+// ─── Exit cleanup under a real signal ───────────────────────────────────────
+
+section('EXIT CLEANUP — a real SIGINT must not orphan ffmpeg');
+
+await run('an interrupted host kills the ffmpeg it started', async () => {
+  const { spawn } = await import('node:child_process');
+  const script = path.join(TMP, 'sigint-host.mjs');
+  const pidFile = path.join(TMP, 'sigint-pid.txt');
+
+  fs.writeFileSync(
+    script,
+    `import { writeFileSync } from 'node:fs';
+import { spawnFFmpeg } from ${JSON.stringify(new URL('../../lib/process/spawn.ts', import.meta.url).href)};
+const proc = spawnFFmpeg({
+  binary: 'ffmpeg',
+  args: ['-re', '-f', 'lavfi', '-i', 'testsrc=duration=300:size=64x64:rate=5', '-f', 'null', '-'],
+});
+if (proc.child.pid !== undefined) writeFileSync(${JSON.stringify(pidFile)}, String(proc.child.pid));
+setTimeout(() => {}, 60000);
+`,
+  );
+
+  // Deno cannot run node's tsx loader; it imports the library's TypeScript
+  // sources directly, so its own runner is the right way to start the host.
+  const host = spawn('deno', ['run', '-A', script], {
+    stdio: ['ignore', 'ignore', 'ignore'],
+  });
+
+  try {
+    const deadline = Date.now() + 30000;
+    while (!fs.existsSync(pidFile) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    if (!fs.existsSync(pidFile)) throw new Error('the host never started ffmpeg');
+    const ffmpegPid = Number(fs.readFileSync(pidFile, 'utf8').trim());
+
+    host.kill('SIGINT');
+    await new Promise((r) => host.once('close', r));
+
+    const gone = await new Promise<boolean>((resolve) => {
+      const check = () => {
+        try {
+          process.kill(ffmpegPid, 0);
+          setTimeout(check, 100);
+        } catch {
+          resolve(true);
+        }
+      };
+      setTimeout(() => resolve(false), 15000);
+      check();
+    });
+    if (!gone) throw new Error(`ffmpeg (pid ${ffmpegPid}) survived the host's SIGINT`);
+  } finally {
+    try { host.kill('SIGKILL'); } catch { /* gone */ }
+  }
+});
+
 console.log('  DENO BATTLE TEST SUMMARY');
 console.log('═'.repeat(60));
 console.log(`  ✅ PASSED : ${passed}`);

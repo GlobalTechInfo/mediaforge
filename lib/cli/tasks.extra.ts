@@ -12,17 +12,24 @@
  * missing CLI command is always a decision rather than an oversight.
  */
 import * as m from '../index.ts';
+import { CliUsageError } from './parser.ts';
 import { FilterChain } from '../types/filters.ts';
 import { FILTER_REGISTRY, filterNames } from './filter-registry.ts';
-import { bool, list, num, parseOptions, requireFlag, str } from './flags.ts';
+import { bool, list, listOf, num, parseOptions, requireFlag, str } from './flags.ts';
 import type { PcmFormat, PcmOptions } from '../codecs/audio.ts';
 import type { CliFlags, CliTask } from './types.ts';
 
 type Rec = Record<string, string | number | boolean>;
 
+/**
+ * Require at least `n` positionals.
+ *
+ * Throws a {@link CliUsageError} so a wrong command line reports as a usage
+ * error (exit 2) rather than a runtime failure (exit 1).
+ */
 function need(pos: string[], task: string, n: number): string[] {
   if (pos.length < n) {
-    throw new Error(
+    throw new CliUsageError(
       `${task} needs ${n} argument${n === 1 ? '' : 's'}. Usage: ${EXTRA_TASKS[task]?.usage ?? task}`,
     );
   }
@@ -702,7 +709,7 @@ const EXTRA_TASKS: Record<string, CliTask> = {
       list: 'print every filter name with its option keys',
       print: 'print the serialised filter instead of encoding',
       chain: '=apply several filters: name:key=value|name2',
-      audio: '=use -af instead of -vf',
+      audio: 'use -af instead of -vf',
       codec: '=video codec (default libx264)',
       acodec: '=audio codec (default aac)',
     },
@@ -815,7 +822,7 @@ const EXTRA_TASKS: Record<string, CliTask> = {
         .complexFilter(filterComplex)
         .videoCodec(str(f, 'codec') ?? 'libx264')
         .audioCodec(str(f, 'acodec') ?? 'aac');
-      const maps = list(f, 'map');
+      const maps = listOf(f, 'map');
       if (lastLabel !== undefined && !maps.includes(`[${lastLabel}]`)) maps.push(`[${lastLabel}]`);
       for (const spec of maps) b.map(spec);
       await b.run();
@@ -925,7 +932,7 @@ const EXTRA_TASKS: Record<string, CliTask> = {
       pick(str(f, 'audio'), () => m.mapAllAudio(0), i => [...m.mapAudio(0, i)]);
       pick(str(f, 'subs'), () => m.mapAllSubtitles(0), i => [...m.mapSubtitle(0, i)]);
       for (const label of list(f, 'label')) args.push(...m.mapLabel(label));
-      for (const spec of list(f, 'exclude')) args.push(...m.negateMap(spec));
+      for (const spec of listOf(f, 'exclude')) args.push(...m.negateMap(spec));
       for (const d of list(f, 'disposition')) {
         const eq = d.indexOf('=');
         if (eq === -1) throw new Error(`--disposition entry "${d}" must be v:0=default+forced`);
@@ -1062,7 +1069,7 @@ const EXTRA_TASKS: Record<string, CliTask> = {
     summary: 'List ffmpeg feature gates for the installed binary',
     usage: 'mediaforge features [--ffmpeg-version <major.minor>] [--missing]',
     flags: {
-      'ffmpeg-version': 'evaluate the gates for this version instead of the installed binary',
+      'ffmpeg-version': '=evaluate the gates for this version instead of the installed binary',
       missing: 'only print the gates that are unavailable',
     },
     positionals: [],
@@ -1298,8 +1305,8 @@ const EXTRA_TASKS: Record<string, CliTask> = {
     usage: 'mediaforge stabilize <input> <output> [--smoothing 10] [--max-shift -1] [--max-angle -1] [--crop 0]',
     flags: {
       smoothing: '=smoothing strength 1-100',
-      'max-shift': 'max correction in pixels (-1 = no limit)',
-      'max-angle': 'max rotation in degrees (-1 = no limit)',
+      'max-shift': '=max correction in pixels (-1 = no limit)',
+      'max-angle': '=max rotation in degrees (-1 = no limit)',
       crop: '=0=keep black borders 1=crop',
     },
     positionals: ['input', 'output'],
@@ -1320,7 +1327,7 @@ const EXTRA_TASKS: Record<string, CliTask> = {
     name: 'aspect',
     summary: 'Crop to a target aspect ratio',
     usage: 'mediaforge aspect <input> <output> --ratio 1:1 [--codec libx264]',
-    flags: { ratio: 'target W:H (e.g. 16:9, 1:1, 9:16)', codec: 'video codec' },
+    flags: { ratio: '=target W:H (e.g. 16:9, 1:1, 9:16)', codec: '=video codec' },
     positionals: ['input', 'output'],
     async run(pos, f) {
       const [input, output] = need(pos, 'aspect', 2);
@@ -1337,7 +1344,7 @@ const EXTRA_TASKS: Record<string, CliTask> = {
     name: 'lut',
     summary: 'Apply a .cube / .3dl lookup table',
     usage: 'mediaforge lut <input> <output> --lut grade.cube [--interp tetrahedral] [--codec libx264]',
-    flags: { lut: 'path to the .cube or .3dl file', interp: 'trilinear|tetrahedral|nearest', codec: 'video codec' },
+    flags: { lut: '=path to the .cube or .3dl file', interp: '=trilinear|tetrahedral|nearest', codec: '=video codec' },
     positionals: ['input', 'output'],
     async run(pos, f) {
       const [input, output] = need(pos, 'lut', 2);
@@ -1381,7 +1388,7 @@ const EXTRA_TASKS: Record<string, CliTask> = {
     name: 'cropdetect',
     summary: 'Detect the real content region of a video',
     usage: 'mediaforge cropdetect <input> [--limit 100] [--skip 5]',
-    flags: { limit: 'max frames to scan (default 100)', skip: 'skip the first N seconds (default 5)' },
+    flags: { limit: '=max frames to scan (default 100)', skip: '=skip the first N seconds (default 5)' },
     positionals: ['input'],
     async run(pos, f) {
       const [input] = need(pos, 'cropdetect', 1);
@@ -1402,7 +1409,7 @@ const EXTRA_TASKS: Record<string, CliTask> = {
     name: 'gif2mp4',
     summary: 'Convert a GIF to an MP4',
     usage: 'mediaforge gif2mp4 <input.gif> <output.mp4> [--width 480]',
-    flags: { width: 'output width (default: source width)' },
+    flags: { width: '=output width (default: source width)' },
     positionals: ['input', 'output'],
     async run(pos, f) {
       const [input, output] = need(pos, 'gif2mp4', 2);
@@ -1418,7 +1425,7 @@ const EXTRA_TASKS: Record<string, CliTask> = {
     name: 'extract-subs',
     summary: 'Extract a subtitle stream to a file',
     usage: 'mediaforge extract-subs <input> <output.srt> [--stream 0]',
-    flags: { stream: 'subtitle stream index (default 0)' },
+    flags: { stream: '=subtitle stream index (default 0)' },
     positionals: ['input', 'output'],
     async run(pos, f) {
       const [input, output] = need(pos, 'extract-subs', 2);
@@ -1437,8 +1444,8 @@ const EXTRA_TASKS: Record<string, CliTask> = {
     summary: 'Retime a subtitle file to the video it belongs to',
     usage: 'mediaforge retime-subs <input> <output.srt> [--format srt] [--stream 0]',
     flags: {
-      format: 'subtitle format written and read back (default srt)',
-      stream: 'subtitle stream index in the video (default 0)',
+      format: '=subtitle format written and read back (default srt)',
+      stream: '=subtitle stream index in the video (default 0)',
     },
     positionals: ['input', 'output'],
     async run(pos, f) {
@@ -1525,6 +1532,46 @@ export const LIBRARY_ONLY: Record<string, string> = {
   VersionError: 'error class, raised by `mediaforge version` and the feature gates',
   ProbeError: 'error class, raised by `mediaforge analyze` and `mediaforge probe`',
   FFmpegSpawnError: 'error class, raised by every command that spawns ffmpeg',
+  FFmpegError: 'error base class; callers branch on it programmatically rather than via a CLI command',
+  FFmpegTimeoutError: 'error class; a CLI job reports a timeout as a message, not by throwing this',
+  FFmpegAbortError: 'error class; the CLI owns cancellation through SIGINT, which exits rather than throwing',
+  FFmpegValidationError: 'error class, raised by programmatic validation rather than by a CLI flag',
+  FFmpegAtomicOutputError: 'error class; the CLI writes its output path directly and has no temp-file path to reject',
+
+  // ── Process reliability (2.1.0) ──────────────────────────────────────────
+  // These exist for long-running services embedding mediaforge, where the CLI's
+  // single-shot process model does not apply: a server needs a concurrency cap,
+  // cancellation, observability and crash-safety that a one-shot CLI command has
+  // no reason to expose. Each is documented with the API it belongs to.
+  FFmpegQueue: 'library API for bounding concurrent encodes; a CLI invocation runs one job',
+  getDefaultQueue: 'process-wide queue singleton; meaningful only in a long-lived server',
+  setDefaultQueue: 'test seam for the process-wide queue; not a CLI operation',
+  queued: 'library API for routing a job through the shared queue',
+  withRetry: 'library retry helper; the CLI surfaces ffmpeg failures rather than retrying',
+  retryDelay: 'pure backoff calculation exposed for callers building their own retry',
+  setLogger: 'application-level log routing; the CLI writes its own user-facing output',
+  getLogger: 'accessor for the installed logger; not a CLI operation',
+  silentLogger: 'a no-op logger value, not a command',
+  stderrLogger: 'a logger implementation, not a command',
+  setDiagnosticHook: 'metrics/tracing seam for a host application; the CLI has no host to report to',
+  getDiagnosticHook: 'accessor for the installed hook; not a CLI operation',
+  withAtomicOutput: 'library crash-safety wrapper; the CLI owns its own output lifetime',
+  isMultiFileTarget: 'pure predicate backing withAtomicOutput; not a command',
+  isAtomicOutputRefused: 'error-class predicate backing withAtomicOutput',
+  splitExtension: 'pure path helper backing withAtomicOutput',
+  execBounded: 'bounded binary execution used internally; a CLI command calls the operation, not the helper',
+  execAsync: 'non-blocking binary execution for server use; the CLI is already one-shot',
+  probeVersionAsync: 'async version probe for server use; `mediaforge version` uses the sync one',
+  clearVersionCache: 'test seam for the version cache; not a CLI operation',
+  assertValidIo: 'library pre-flight validation; the CLI validates its own flags up front',
+  validateInputs: 'library pre-flight validation helper',
+  validateOutputs: 'library pre-flight validation helper',
+  isNonPathInput: 'pure predicate backing the validators; not a command',
+
+  // ── Argument parsing ─────────────────────────────────────────────────────
+  parseTaskArgs:
+    'legacy arity-guessing wrapper retained for API compatibility; the CLI uses ' +
+    'the schema-driven parseArgs instead',
   GuardError: 'error class, raised by the capability guards behind `caps` and `hwaccel --check`',
   adaptiveHls: 'reached through `mediaforge abr`, which produces the same multi-variant HLS output',
   serializeSpecifier: 'reached through `mediaforge map --spec/--exclude`, which use it internally',
