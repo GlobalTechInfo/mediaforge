@@ -117,9 +117,13 @@ try {
   // ── Manifest contents ──────────────────────────────────────────────────────
   console.log('\nsmoke: published file list');
   const contents = run('tar', ['-tzf', tarball], ROOT);
+  // Normalise to forward slashes. `tar` prints `package/lib/utils/args.ts` on
+  // Unix but `package\lib\utils\args.ts` on Windows, so the entry list did not
+  // match the paths inside the .d.ts.map files (which always use '/'), and the
+  // check below reported sources as missing that were present in the tarball.
   const entries = contents
     .split('\n')
-    .map((l) => l.replace(/^package\//, '').trim())
+    .map((l) => l.replace(/^package[\\/]/, '').replace(/\\/g, '/').trim())
     .filter((l) => l !== '' && !l.endsWith('/'));
 
   // `lib` must ship or every .d.ts.map points at a file that is not published,
