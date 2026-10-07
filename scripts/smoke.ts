@@ -197,16 +197,27 @@ try {
   check('ESM import works', /ESM_OK \d+/.test(esm), esm.trim());
 
   // The installed bin, on every runtime available here.
-  const bin = join(scratch, 'node_modules', '.bin', 'mediaforge');
-  check('the bin was linked', existsSync(bin), bin);
+  //
+  // npm writes a POSIX shell shim on Unix but a `.cmd` shim on Windows, and Node
+  // will not run a `.cmd` without a shell. Spawning the extensionless path - as
+  // this did - fails with ENOENT there even though the install succeeded, which
+  // reads like a broken package rather than a broken test. Prefer the real
+  // executable the shim points at when one exists, so the CLI is exercised
+  // directly and identically on every platform.
+  const binDir = join(scratch, 'node_modules', '.bin');
+  const shim = join(binDir, 'mediaforge');
+  const jsEntry = join(scratch, 'node_modules', 'mediaforge', 'dist', 'esm', 'cli', 'index.js');
+  const useNodeEntry = process.platform === 'win32' && existsSync(jsEntry);
+  const bin: [string, ...string[]] = useNodeEntry ? [process.execPath, jsEntry] : [shim];
+  check('the bin was linked', existsSync(shim), shim);
 
-  const versionOut = run(bin, ['version'], scratch);
+  const versionOut = run(bin[0], bin.slice(1).concat('version'), scratch);
   check('the installed CLI runs', /ffmpeg version/.test(versionOut), versionOut.split('\n')[0]);
 
   // Exit codes must survive the build.
   let unknownCode = 0;
   try {
-    execFileSync(bin, ['definitely-not-a-command'], { cwd: scratch, stdio: 'ignore' });
+    execFileSync(bin[0], bin.slice(1).concat('definitely-not-a-command'), { cwd: scratch, stdio: 'ignore' });
   } catch (error) {
     unknownCode = (error as { status?: number }).status ?? -1;
   }
@@ -214,8 +225,11 @@ try {
 
   // stdout piping must not deadlock in the published build.
   const piped = execFileSync(
-    bin,
-    ['-f', 'lavfi', '-i', 'testsrc=duration=0.3:size=64x64:rate=10', '-frames:v', '1', '-f', 'mjpeg', 'pipe:1'],
+    bin[0],
+    bin.slice(1).concat([
+      '-f', 'lavfi', '-i', 'testsrc=duration=0.3:size=64x64:rate=10',
+      '-frames:v', '1', '-f', 'mjpeg', 'pipe:1',
+    ]),
     { cwd: scratch, maxBuffer: 8 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] },
   );
   check('the installed CLI can pipe to stdout', piped.length > 100, `${piped.length} bytes`);

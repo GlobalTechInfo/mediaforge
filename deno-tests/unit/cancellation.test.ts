@@ -209,12 +209,16 @@ describe('exit cleanup', () => {
 
   it('drains the cleanup registration set when jobs finish', async () => {
     const before = getCleanupCount();
-    await settle(
-      spawnFFmpeg({
-        binary: 'ffmpeg',
-        args: ['-f', 'lavfi', '-i', 'testsrc=duration=0.1:size=32x32:rate=5', '-f', 'null', '-'],
-      }),
-    );
+    const proc = spawnFFmpeg({
+      binary: 'ffmpeg',
+      args: ['-f', 'lavfi', '-i', 'testsrc=duration=0.1:size=32x32:rate=5', '-f', 'null', '-'],
+    });
+    await settle(proc);
+    // `end` on the result emitter can fire before the child's own `close` event,
+    // and trackChild only releases the registration on close/exit. Asserting
+    // straight after `end` was therefore a race - it passed on Node and failed on
+    // Deno. Wait for the terminal event the registration actually keys off.
+    assert.ok(await closed(proc.child), 'the child never closed');
     assert.equal(
       getCleanupCount(),
       before,
