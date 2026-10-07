@@ -3039,7 +3039,26 @@ import {
 } from '../../lib/index.ts';
 import { getCleanupCount } from '../../lib/helpers/process.ts';
 
-// ─── Error taxonomy ─────────────────────────────────────────────────────────
+
+// ─── typed accessors for the error objects these cases inspect ─────────────
+// The battle harness types a caught value as `unknown`, so reading `.code`
+// straight off it is a type error under `deno check` even though it is what the
+// assertion means. These keep the assertions readable and typed.
+type ThrownShape = {
+  code?: string;
+  message?: string;
+  timeoutMs?: number;
+  exitCode?: number | null;
+  signal?: string | null;
+  stderrOutput?: string;
+  command?: readonly string[];
+  reason?: unknown;
+};
+const asThrown = (err: unknown): ThrownShape => (err ?? {}) as ThrownShape;
+const codeOf = (err: unknown): string | undefined => asThrown(err).code;
+const msgOf = (err: unknown): string => asThrown(err).message ?? String(err);
+
+// ─── Error taxonomy ────────────────────────────────
 
 section('ERROR TAXONOMY — stable codes');
 
@@ -3058,24 +3077,25 @@ await run('every error class carries a code and extends FFmpegError', async () =
     new VErr('fps_mode', 5, 4),
   ];
   for (const err of instances) {
-    if (!(err instanceof base)) throw new Error(`${err.name} does not extend FFmpegError`);
-    if (typeof err.code !== 'string' || err.code === '') {
-      throw new Error(`${err.name} has no code`);
+    const name = err?.constructor?.name ?? String(err);
+    if (!(err instanceof base)) throw new Error(`${name} does not extend FFmpegError`);
+    if (typeof err.code !== 'string') {
+      throw new Error(`${name} has no code`);
     }
   }
-  const codes = instances.map((e) => e.code);
+  const codes: string[] = instances.map((e) => e.code);
   for (const expected of ['TIMEOUT', 'ABORTED', 'VALIDATION_FAILED', 'PROBE_FAILED', 'GUARD_FAILED', 'BINARY_NOT_FOUND', 'VERSION_UNSUPPORTED']) {
-    if (!codes.includes(expected)) throw new Error(`missing code ${expected}: ${codes.join(',')}`);
+    if (!(codes as string[]).includes(expected)) throw new Error(`missing code ${expected}: ${codes.join(',')}`);
   }
 });
 
 await run('FFmpegSpawnError keeps its message shape and gains the command', async () => {
   const err = new SpawnError(1, null, 'Conversion failed!', ['ffmpeg', '-i', 'a.mp4']);
-  if (err.exitCode !== 1) throw new Error('exitCode lost');
-  if (err.signal !== null) throw new Error('signal lost');
-  if (!err.stderrOutput.includes('Conversion failed')) throw new Error('stderr lost');
-  if (!err.message.includes('Conversion failed')) throw new Error(`message: ${err.message}`);
-  if (!err.message.includes('ffmpeg -i a.mp4')) throw new Error(`command not in message: ${err.message}`);
+  if (asThrown(err).exitCode !== 1) throw new Error('exitCode lost');
+  if (asThrown(err).signal !== null) throw new Error('signal lost');
+  if (!asThrown(err).stderrOutput?.includes('Conversion failed')) throw new Error('stderr lost');
+  if (!msgOf(err).includes('Conversion failed')) throw new Error(`message: ${msgOf(err)}`);
+  if (!msgOf(err).includes('ffmpeg -i a.mp4')) throw new Error(`command not in message: ${msgOf(err)}`);
 });
 
 await run('FFmpegTimeoutError and FFmpegAbortError report their input', async () => {
@@ -3105,7 +3125,7 @@ await run('execBounded times out on a wedged binary', async () => {
     execBounded(wedged, ['-version'], { timeoutMs: 400 });
     throw new Error('expected a timeout');
   } catch (err) {
-    if (err?.code !== 'TIMEOUT') throw new Error(`got ${err?.code}: ${err?.message}`);
+    if (codeOf(err) !== 'TIMEOUT') throw new Error(`got ${codeOf(err)}: ${msgOf(err)}`);
   }
 });
 
@@ -3119,8 +3139,8 @@ await run('execAsync resolves and rejects consistently', async () => {
   } catch (err) {
     missing = err;
   }
-  if (missing?.code !== 'BINARY_NOT_FOUND') {
-    throw new Error(`missing binary reported as ${missing?.code}`);
+  if (codeOf(missing) !== 'BINARY_NOT_FOUND') {
+    throw new Error(`missing binary reported as ${codeOf(missing)}`);
   }
 });
 
@@ -3148,7 +3168,7 @@ await run('an already-aborted signal never spawns ffmpeg', async () => {
       signal: controller.signal,
     });
   } catch (err) {
-    code = err?.code;
+    code = codeOf(err);
   }
   if (code !== 'ABORTED') throw new Error(`expected ABORTED, got ${code}`);
 });
@@ -3161,15 +3181,15 @@ await run('a SIGTERM-ignoring child is force-killed', async () => {
     signal: controller.signal,
     killGracePeriodMs: 250,
   });
-  const waiter = new Promise((resolve) => {
-    proc.emitter.on('error', resolve);
+  const waiter = new Promise<unknown>((resolve) => {
+    proc.emitter.on('error', (e) => resolve(e));
     proc.emitter.on('end', () => resolve(null));
   });
   setTimeout(() => controller.abort(), 150);
   const startedAt = Date.now();
   const err = await waiter;
   const elapsed = Date.now() - startedAt;
-  if (err?.code !== 'ABORTED') throw new Error(`got ${err?.code}`);
+  if (codeOf(err) !== 'ABORTED') throw new Error(`got ${codeOf(err)}`);
   if (elapsed > 5000) throw new Error(`took ${elapsed}ms — escalation did not fire`);
 });
 
@@ -3179,12 +3199,12 @@ await run('a timeout raises FFmpegTimeoutError', async () => {
     args: ['-re', '-f', 'lavfi', '-i', 'testsrc=duration=30:size=32x32:rate=5', '-f', 'null', '-'],
     timeout: 250,
   });
-  const err = await new Promise((resolve) => {
-    proc.emitter.on('error', resolve);
+  const err = await new Promise<unknown>((resolve) => {
+    proc.emitter.on('error', (e) => resolve(e));
     proc.emitter.on('end', () => resolve(null));
   });
-  if (err?.code !== 'TIMEOUT' || err?.timeoutMs !== 250) {
-    throw new Error(`got ${err?.code}/${err?.timeoutMs}`);
+  if (codeOf(err) !== 'TIMEOUT' || asThrown(err).timeoutMs !== 250) {
+    throw new Error(`got ${codeOf(err)}/${asThrown(err).timeoutMs}`);
   }
 });
 
@@ -3195,9 +3215,9 @@ await run('signal listeners do not accumulate across jobs', async () => {
       binary: 'ffmpeg',
       args: ['-f', 'lavfi', '-i', 'testsrc=duration=0.1:size=32x32:rate=5', '-f', 'null', '-'],
     });
-    await new Promise((resolve) => {
-      proc.emitter.on('end', resolve);
-      proc.emitter.on('error', resolve);
+    await new Promise<void>((resolve) => {
+      proc.emitter.on('end', () => resolve());
+      proc.emitter.on('error', () => resolve(undefined));
     });
   }
   const after = process.listenerCount('SIGINT');
@@ -3211,9 +3231,9 @@ await run('autoCleanup:false opts out of exit cleanup', async () => {
     args: ['-f', 'lavfi', '-i', 'testsrc=duration=0.1:size=32x32:rate=5', '-f', 'null', '-'],
     autoCleanup: false,
   });
-  await new Promise((resolve) => {
-    proc.emitter.on('end', resolve);
-    proc.emitter.on('error', resolve);
+  await new Promise<void>((resolve) => {
+    proc.emitter.on('end', () => resolve(undefined));
+    proc.emitter.on('error', () => resolve(undefined));
   });
   if (getCleanupCount() !== before) throw new Error('registered despite autoCleanup:false');
 });
@@ -3259,7 +3279,7 @@ await run('maxPending rejects instead of queueing without limit', async () => {
   try {
     await queue.run(async () => 'b');
   } catch (err) {
-    code = err?.code;
+    code = codeOf(err);
   }
   if (code !== 'VALIDATION_FAILED') throw new Error(`got ${code}`);
   await blocker;
@@ -3361,7 +3381,7 @@ await run('a failed encode publishes nothing and leaves no temp file', async () 
     });
     throw new Error('expected a failure');
   } catch (err) {
-    if (err?.code === undefined) throw err;
+    if (codeOf(err) === undefined) throw err;
   }
   if (fs.existsSync(target)) throw new Error('a truncated file was published');
   const stray = fs.readdirSync(TMP).filter((f) => f.includes('.mediaforge-'));
@@ -3369,7 +3389,7 @@ await run('a failed encode publishes nothing and leaves no temp file', async () 
 });
 
 await run('the extension is preserved and a failure keeps the original', async () => {
-  const seen = [];
+  const seen: string[] = [];
   const target = p('atomic-ext.mkv');
   await withAtomicOutput(target, async (temp) => {
     seen.push(temp);
@@ -3432,8 +3452,8 @@ await run('every problem is reported at once with a hint', async () => {
   try {
     assertValidIo([p('missing-a.mp4'), p('missing-b.mp4')], [p('out.mp4')]);
   } catch (err) {
-    code = err?.code;
-    message = err?.message ?? '';
+    code = codeOf(err);
+    message = msgOf(err) ?? '';
   }
   if (code !== 'VALIDATION_FAILED') throw new Error(`got ${code}`);
   if (!/2 problem\(s\)/.test(message)) throw new Error(`message: ${message}`);
@@ -3476,7 +3496,7 @@ await run('a throwing diagnostic hook cannot fail the job', async () => {
 });
 
 await run('retries are reported through the diagnostic hook', async () => {
-  const events = [];
+  const events: { type: string; attempt?: number; delayMs?: number }[] = [];
   setDiagnosticHook((event) => events.push(event));
   let calls = 0;
   try {
@@ -3531,7 +3551,7 @@ await run('mkdir:false reports a missing directory instead of creating it', asyn
   try {
     await withAtomicOutput(target, async (temp) => fs.writeFileSync(temp, 'x'), { mkdir: false });
   } catch (err) {
-    code = err?.code;
+    code = codeOf(err);
   }
   if (code !== 'ATOMIC_OUTPUT_UNSUPPORTED') throw new Error(`got ${code}`);
   if (fs.existsSync(path.join(TMP, 'not-created'))) throw new Error('the directory was created anyway');
@@ -3563,8 +3583,8 @@ await run('a non-zero exit is reported as EXIT_NONZERO with stderr', async () =>
   try {
     await execAsync('ffmpeg', ['-i', p('no-such-input.mp4'), '-f', 'null', '-']);
   } catch (err) {
-    code = err?.code;
-    message = err?.message ?? '';
+    code = codeOf(err);
+    message = msgOf(err) ?? '';
   }
   if (code !== 'EXIT_NONZERO') throw new Error(`got ${code}`);
   if (!message.includes('ffmpeg')) throw new Error(`message names no binary: ${message}`);
@@ -3578,7 +3598,7 @@ await run('a non-executable binary is reported as not executable', async () => {
   try {
     await execAsync(notExec, ['-version']);
   } catch (err) {
-    code = err?.code;
+    code = codeOf(err);
   }
   if (code !== 'BINARY_NOT_EXECUTABLE' && code !== 'EXIT_NONZERO') {
     throw new Error(`got ${code}`);
@@ -3592,7 +3612,7 @@ await run('execAsync rejects an already-aborted signal without spawning', async 
   try {
     await execAsync('ffmpeg', ['-version'], { signal: controller.signal });
   } catch (err) {
-    code = err?.code;
+    code = codeOf(err);
   }
   if (code !== 'ABORTED') throw new Error(`got ${code}`);
 });
@@ -3604,7 +3624,7 @@ await run('execBounded honours an already-aborted signal', async () => {
   try {
     execBounded('ffmpeg', ['-version'], { signal: controller.signal });
   } catch (err) {
-    code = err?.code;
+    code = codeOf(err);
   }
   if (code !== 'ABORTED') throw new Error(`got ${code}`);
 });
@@ -3624,7 +3644,7 @@ await run('a job aborted while queued never starts', async () => {
   try {
     await pending;
   } catch (err) {
-    code = err?.code;
+    code = codeOf(err);
   }
   if (code !== 'ABORTED') throw new Error(`got ${code}`);
   await blocker;
@@ -3638,7 +3658,7 @@ await run('a signal aborted before enqueue is rejected immediately', async () =>
   try {
     await queue.run(async () => 'never', { signal: controller.signal });
   } catch (err) {
-    code = err?.code;
+    code = codeOf(err);
   }
   if (code !== 'ABORTED') throw new Error(`got ${code}`);
 });
@@ -3676,9 +3696,9 @@ await run('the cleanup set returns to its baseline', async () => {
     binary: 'ffmpeg',
     args: ['-f', 'lavfi', '-i', 'testsrc=duration=0.1:size=32x32:rate=5', '-f', 'null', '-'],
   });
-  await new Promise((resolve) => {
-    proc.emitter.on('end', resolve);
-    proc.emitter.on('error', resolve);
+  await new Promise<void>((resolve) => {
+    proc.emitter.on('end', () => resolve(undefined));
+    proc.emitter.on('error', () => resolve(undefined));
   });
   if (getCleanupCount() !== before) {
     throw new Error(`cleanup set is ${getCleanupCount()}, expected ${before}`);
@@ -3695,9 +3715,9 @@ await run('a registered child is tracked while it runs', async () => {
   if (getCleanupCount() <= before) {
     throw new Error('the child was not registered while running');
   }
-  await new Promise((resolve) => {
-    proc.emitter.on('error', resolve);
-    proc.emitter.on('end', resolve);
+  await new Promise<void>((resolve) => {
+    proc.emitter.on('error', () => resolve(undefined));
+    proc.emitter.on('end', () => resolve(undefined));
   });
 });
 
@@ -3717,14 +3737,14 @@ await run('a valid input file produces no issue', async () => {
   const src = p('src.mp4');
   if (!fs.existsSync(src)) {
     // The suite's own media may not exist under every runner; create one.
-    await new Promise((resolve) => {
+    await new Promise<void>((resolve) => {
       const proc = spawnFFmpeg({
         binary: 'ffmpeg',
         args: ['-f', 'lavfi', '-i', 'testsrc=duration=0.3:size=64x64:rate=10', '-c:v', 'libx264',
           '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', src],
       });
-      proc.emitter.on('end', resolve);
-      proc.emitter.on('error', resolve);
+      proc.emitter.on('end', () => resolve());
+      proc.emitter.on('error', () => resolve(undefined));
     });
   }
   if (validateInputs([src]).length > 0) throw new Error('a real file was rejected');
@@ -3770,7 +3790,7 @@ setTimeout(() => {}, 60000);
     host.kill('SIGINT');
     await new Promise((r) => host.once('close', r));
 
-    const gone = await new Promise((resolve) => {
+    const gone = await new Promise<boolean>((resolve) => {
       const check = () => {
         try {
           process.kill(ffmpegPid, 0);
