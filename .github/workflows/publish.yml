@@ -39,6 +39,14 @@ jobs:
       - name: Upgrade NPM
         run: npm install -g npm@latest
 
+      # The smoke test below packs and runs the published CLI, which shells out
+      # to ffmpeg. GitHub's Ubuntu image does not ship it, so without this the
+      # job fails at "could not run ffmpeg" and 2.2.0 never reaches npm - which
+      # is exactly what happened. `build-release.yml` installs it for the same
+      # reason.
+      - name: Install FFmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+
       - name: Install dependencies
         run: npm ci
 
