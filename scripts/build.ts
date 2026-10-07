@@ -1,6 +1,7 @@
 import { rmSync, mkdirSync, writeFileSync, chmodSync, readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 
 const root = join(import.meta.dirname, '..');
 
@@ -18,8 +19,15 @@ const root = join(import.meta.dirname, '..');
 rmSync(join(root, 'dist'), { recursive: true, force: true });
 mkdirSync(join(root, 'dist'), { recursive: true });
 
+// Resolve tsc through Node rather than shelling out to `node_modules/.bin/tsc`.
+// That path is a shell script on Unix but a `.cmd` shim on Windows, so the bare
+// path fails there with "'node_modules' is not recognized" — which is how the
+// Windows leg of the matrix died at Build. Running the JS entry point with the
+// current interpreter works identically on every platform.
+const require = createRequire(import.meta.url);
+const tsc = require.resolve('typescript/bin/tsc');
 for (const project of ['tsconfig.build.json', 'tsconfig.cjs.json']) {
-  execSync(`node_modules/.bin/tsc -p ${project}`, { stdio: 'inherit', cwd: root });
+  execFileSync(process.execPath, [tsc, '-p', project], { stdio: 'inherit', cwd: root });
 }
 
 writeFileSync(join(root, 'dist/cjs/package.json'), JSON.stringify({ type: 'commonjs' }) + '\n');

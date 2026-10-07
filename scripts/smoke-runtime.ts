@@ -44,8 +44,42 @@ function check(name: string, condition: boolean, detail = ''): void {
   }
 }
 
+/**
+ * Environment for a *nested* npm invocation.
+ *
+ * `npm run` exports this project's .npmrc settings into the environment as
+ * `npm_config_*`, and a child npm inherits them verbatim. This repo's .npmrc
+ * carries `allow-scripts=esbuild` (needed so esbuild's postinstall runs under
+ * npm 11's script blocking), and npm 11 refuses an `allow-scripts` config in a
+ * project-scoped install:
+ *
+ *   npm error --allow-scripts is not allowed in project-scoped installs.
+ *
+ * So `npm install ./mediaforge.tgz` inside the scratch directory failed with a
+ * bare exit 1 and no message — it only failed when spawned from `npm run`, and
+ * only on npm >= 11, which is why it passed locally and on the Node 20/22 legs
+ * while Node 24 broke. The scratch install is not this project, so none of this
+ * project's config applies to it. Dropping every inherited `npm_config_*` and
+ * `npm_*` key makes the nested install behave like a fresh shell.
+ */
+function nestedEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value === undefined) continue;
+    if (key.startsWith('npm_config_') || key === 'npm_lifecycle_event' || key === 'npm_lifecycle_script') continue;
+    env[key] = value;
+  }
+  return env;
+}
+
 function run(command: string, args: string[], cwd: string): string {
-  return execFileSync(command, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  return execFileSync(command, args, {
+    cwd,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    // Only strip for npm: the ffmpeg/CLI probes must keep the real environment.
+    env: command === 'npm' ? nestedEnv() : process.env,
+  });
 }
 
 try {

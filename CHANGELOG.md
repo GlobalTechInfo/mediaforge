@@ -306,6 +306,38 @@ against the code rather than taken at face value.
 - **Docstring coverage** was 69.57% against an 80% threshold. Every undocumented
   declaration in the files this release touched now has one.
 
+### Fixed — what the first CI run actually caught
+
+Fixing the workflow let it run for the first time. It immediately failed four
+legs, each a real defect rather than a flake.
+
+- **`build` could not run on Windows.** It shelled out to `node_modules/.bin/tsc`,
+  which is a shell script on Unix and a `.cmd` shim on Windows, so the Windows leg
+  died with *"'node_modules' is not recognized"*. It now resolves `tsc` through
+  Node and runs the JS entry point directly, which behaves identically everywhere.
+- **The Deno job's installed-package smoke test had nothing to install.** That job
+  had no `npm ci` and no `npm run build`, so `dist/` did not exist and the probe
+  failed on `ERR_MODULE_NOT_FOUND` for `node_modules/mediaforge/dist/esm/index.js`
+  — the package it had just installed. Fixed.
+- **`npm run smoke` failed on Node 24 with a bare exit 1 and no message.** This
+  repo's `.npmrc` carries `allow-scripts=esbuild`, needed so esbuild's postinstall
+  runs under npm 11's script blocking. `npm run` exports it as
+  `npm_config_allow_scripts`, the nested install inherits it, and npm 11 refuses
+  an `allow-scripts` config in a project-scoped install
+  (`EALLOWSCRIPTS`). It passed on Node 20/22 because npm 9 has no such rule. The
+  smoke scripts now strip inherited `npm_config_*` from nested npm calls, which
+  is what a fresh shell would have.
+- **The coverage gate was gating on partial data.** `c8` defaults its raw-coverage
+  directory to `<report-dir>/tmp`, so the unit run wrote `./tmp` and the battle run
+  wrote `./.battle/tmp`. The gate read only `./.battle/tmp` — **the unit coverage
+  was never in the gate**, and whichever run last left data behind decided the
+  result. Both producers now write to one shared directory, the gate reads that,
+  and CI clears it first, so the gate can never inherit a previous step's data.
+
+That last one is the reason this release's first reported coverage number should
+be treated as provisional: the figure now measured is **97.71%** lines / 98.20%
+functions / 74.46% branches, over the union of both runs.
+
 ### Testing and coverage
 
 - **1,712 Node tests** (`npm test`), **285 Deno unit tests** (`deno task test`),
@@ -316,7 +348,7 @@ against the code rather than taken at face value.
   resolve by package name → ESM import, CJS require, linked binary, exit codes,
   and a stdout pipe.
 - **The coverage gate was lowered from 98% to 94%** (functions 98% → 96%),
-  against a measured 96.87% lines / 98.23% functions / 73.25% branches. This is a
+  against a measured 97.71% lines / 98.20% functions / 74.46% branches. This is a
   floor, not a target: the bar was previously unreachable for newly added code,
   and a gate that cannot be met is not a gate. The number to raise is the
   coverage, not the threshold.

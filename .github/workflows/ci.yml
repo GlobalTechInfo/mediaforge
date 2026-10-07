@@ -87,6 +87,15 @@ jobs:
       - name: Smoke test the published package
         run: npm run smoke
 
+      # Both coverage producers write into one shared raw-coverage directory
+      # (`tmp`), and the gate reads from there. Without this clean, the gate can
+      # inherit leftover data from a previous step and report on coverage that
+      # was never collected — which is exactly how it failed here: the unit step
+      # died on a flaky assertion, and the gate then ran on partial data.
+      - name: Clear collected coverage
+        if: matrix.node == '22' && runner.os == 'Linux'
+        run: npm run coverage:clean
+
       - name: Run all tests with coverage (Node 22 only)
         if: matrix.node == '22' && runner.os == 'Linux'
         run: npm run coverage
@@ -215,6 +224,15 @@ jobs:
 
       - name: Install FFmpeg
         run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+
+      # The "installed package" smoke tests pack and install the real tarball,
+      # so they need a build and the dev dependencies — without these, dist/
+      # does not exist and the probe cannot resolve the package it just installed.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
 
       - name: Type check (lib/, deno-tests/, runtime-tests/)
         run: deno task check

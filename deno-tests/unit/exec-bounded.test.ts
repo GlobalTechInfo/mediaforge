@@ -131,14 +131,30 @@ describe('version probing', () => {
 });
 
 describe('probe() cancellation', () => {
-  it('honours an AbortSignal', async () => {
+  it('rejects with an abort error when the signal fires mid-probe', async () => {
+    // The old version aborted after 50 ms while probing a file that does not
+    // exist, so it was a race between two exits: ffprobe failing instantly with
+    // "No such file or directory", and the timer. It passed locally and failed
+    // on CI with a ProbeError about the missing file instead of an abort — a
+    // test whose result depended on which side won.
+    //
+    // Now the probe targets a binary that never exits on its own, so the abort
+    // is the only thing that can settle it.
     const controller = new AbortController();
+    const pending = probeAsync(join(tmpdir(), 'mediaforge-does-not-exist.mp4'), {
+      binary: HANGING_BINARY,
+      signal: controller.signal,
+    });
     setTimeout(() => controller.abort(new Error('user cancelled')), 50);
+    await assert.rejects(pending, /aborted by caller/);
+  });
+
+  it('rejects without spawning anything when the signal is already aborted', async () => {
     await assert.rejects(
       probeAsync(join(tmpdir(), 'mediaforge-does-not-exist.mp4'), {
-        signal: controller.signal,
+        signal: AbortSignal.abort(new Error('already gone')),
       }),
-      /abort/i,
+      /aborted before it ran/,
     );
   });
 });
