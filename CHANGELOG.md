@@ -338,9 +338,77 @@ That last one is the reason this release's first reported coverage number should
 be treated as provisional: the figure now measured is **97.71%** lines / 98.20%
 functions / 74.46% branches, over the union of both runs.
 
+### Fixed — a quadratic ReDoS in `drawtext` escaping (CodeQL, high)
+
+`escapeDrawtextValue` contained `.replace(/%{[^}]*}/g, (match) => match)`.
+That line is the **identity function** — a no-op whose only observable effect
+was the cost of scanning it — and it was quadratic: with no closing brace in the
+input, every `%{` restarts a scan for `}`, so a **192 KB value took 36.8 seconds**
+of blocked event loop. Measured across doublings: 60 ms → 2.3 s → 36.8 s, 4x per
+2x. Anyone who can influence drawtext content could stall the process.
+
+Rewritten as a single forward pass with a monotonic `indexOf` cursor, so total
+cost is one pass: **36.8 s → 3.5 ms**, and verified linear across four input
+sizes. Removing the no-op line was verified behaviour-preserving across 50,000
+fuzz inputs before the rewrite, and the regression test fails (4 of 9 cases) when
+the old implementation is reinstated.
+
+### Fixed — `%{...}` expansions were not actually preserved
+
+The same function's doc comment claimed `%{...}` was preserved, but it was not:
+the no-op line did nothing, so the following `:` escaping hit the expansion's
+interior and `%{eif:t%b}` came back as `%{eif\:t%b}`, which ffmpeg no longer
+evaluates as an expression. Text is now escaped and expansions are copied
+through verbatim, which is what the comment always claimed. An unterminated `%{`
+is treated as ordinary text, since ffmpeg would not expand it either.
+
+### Coverage — gate raised to 98%, and the gaps it hid
+
+The gate moved from 94/96/70 to **98 lines / 98 statements / 98 functions /
+74 branches**, and measured coverage rose from 97.71/98.20/74.47 to
+**98.05 / 99.10 / 75.38**.
+
+Closing it meant writing tests for code that had been uncovered because ordinary
+runs never reach it:
+
+- **The `expect` shim itself had no tests.** `testkit/expect.ts` is what every
+  assertion in the suite goes through, so a matcher that silently stopped
+  asserting would let thousands of tests pass while checking nothing. Now each
+  matcher is asserted to actually fail when it should — including that bare
+  `toThrow()` *requires* a throw.
+- **Spawn-failure classification**, which only executes when the spawn itself
+  throws. Notably `execAsync` reports `BINARY_NOT_FOUND` rather than
+  `SPAWN_FAILED`, because the binary is resolved before the spawn.
+- **The CLI arg builders' optional branches** (~46 statements) via the public
+  `mediaforge args <op>` task: global overwrite/noOverwrite/progress/
+  stats_interval/extra args, the HLS and DASH optional keys, GIF timing keys,
+  the JSON option's parse error, and `--chain` validation.
+- **Validation edge cases**, plus `exitWith` and `getDefaultQueue`'s environment
+  handling.
+
+### What 100% would require, and why it is not claimed
+
+Investigating the remainder turned up code that **cannot execute**, so this release
+does not claim 100%:
+
+- `lib/cli/parser.ts:130` — **dead code.** `"--" must be followed by at least one
+  argument` is unreachable: the `arg === '--'` case is consumed and `continue`s
+  earlier, so `body` is never empty at that point.
+- `lib/utils/validate.ts` "could not be read" branches — they require `statSync`
+  to throw *after* `existsSync` succeeded. ENOTDIR and a mode-000 directory both
+  land in other branches.
+- `isWindows` branches in `lib/helpers/process.ts` and `lib/utils/exec.ts`, and the
+  `beforeunload` hooks, which do not exist in Node.
+- `lib/cli/exit.ts` — a coverage-merge artefact: fully covered (49/49) in
+  isolation, reported missing when `lib/` and `dist/` both load the same file.
+
+Branches sit at 75.38% and cannot reach 98% without excluding roughly 850
+defensive arms, which would make the number meaningless. The gate is set to what
+is actually attainable and is verified to fail when a threshold is exceeded.
+
 ### Testing and coverage
 
-- **1,712 Node tests** (`npm test`), **285 Deno unit tests** (`deno task test`),
+- **1,785 Node tests** (`npm test`), **300 Deno unit tests** (`deno task test`),
   **65 Bun runtime checks** (`bun run runtime-tests/battle.ts`), and **606
   battle cases**. All green.
 - The two readline-based battle suites gained ~90 cases covering the new surface.
